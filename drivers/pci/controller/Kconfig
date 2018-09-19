@@ -284,7 +284,7 @@ config VMD
 config PCIE_BRCMSTB
 	bool "Broadcom Brcmstb PCIe host controller"
 	depends on ARCH_BRCMSTB || BMIPS_GENERIC
-	depends on OF
+	depends on OF && PCI_MSI
 	depends on SOC_BRCMSTB
 	default ARCH_BRCMSTB || BMIPS_GENERIC
 	help
