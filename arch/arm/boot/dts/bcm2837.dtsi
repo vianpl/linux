@@ -3,7 +3,7 @@
 / {
 	compatible = "brcm,bcm2837";
 
-	soc {
+	soc: soc {
 		ranges = <0x7e000000 0x3f000000 0x1000000>,
 			 <0x40000000 0x40000000 0x00001000>;
 		dma-ranges = <0xc0000000 0x00000000 0x3f000000>;
