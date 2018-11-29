@@ -26,6 +26,9 @@ Required properties:
  - interrupts:       interrupt specification for the touchdetect
                      interrupt
 
+ - poll-interval:    in the case interrutps are note available this
+		     allows setting the polling interval in milliseconds.
+
 Optional properties:
  - reset-gpios: GPIO specification for the RESET input
  - wake-gpios:  GPIO specification for the WAKE input
