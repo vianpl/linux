@@ -7,6 +7,7 @@
 #include "bcm2835.dtsi"
 #include "bcm2835-rpi.dtsi"
 #include "bcm283x-rpi-usb-otg.dtsi"
+#include "bcm283x-rpi-i2c0mux-0-28.dtsi"
 
 / {
 	compatible = "raspberrypi,model-zero-w", "brcm,bcm2835";
