@@ -19,6 +19,7 @@ Required properties:
            or:  "edt,edt-ft5306"
            or:  "edt,edt-ft5406"
            or:  "edt,edt-ft5506"
+           or:  "edt,edt-ft5426"
            or:  "focaltech,ft6236"
 
  - reg:         I2C slave address of the chip (0x38)
