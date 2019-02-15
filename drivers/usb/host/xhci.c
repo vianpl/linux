@@ -1417,6 +1417,70 @@ command_cleanup:
 	return ret;
 }
 
+static struct urb_priv *xhci_get_urb_priv(struct urb *urb, gfp_t mem_flags)
+{
+	struct usb_host_endpoint *ep = usb_pipe_endpoint(urb->dev, urb->pipe);
+	struct urb_priv	*urb_priv;
+	int num_tds;
+
+	if (usb_endpoint_xfer_isoc(&ep->desc))
+		num_tds = urb->number_of_packets;
+	else if (usb_endpoint_is_bulk_out(&ep->desc) &&
+	    urb->transfer_buffer_length > 0 &&
+	    urb->transfer_flags & URB_ZERO_PACKET &&
+	    !(urb->transfer_buffer_length % usb_endpoint_maxp(&ep->desc)))
+		num_tds = 2;
+	else
+		num_tds = 1;
+
+
+	/* If URB is pinned we don't need to reallocate hcpriv */
+	if (usb_urb_pinned(urb)) {
+		urb_priv = urb->hcpriv;
+	} else {
+		urb_priv = kzalloc(sizeof(struct urb_priv) +
+				   num_tds * sizeof(struct xhci_td), mem_flags);
+		if (!urb_priv)
+			return NULL;
+
+		urb->hcpriv = urb_priv;
+	}
+
+	urb_priv->num_tds = num_tds;
+	urb_priv->num_tds_done = 0;
+
+	return urb_priv;
+}
+
+static int xhci_urb_pin(struct usb_hcd *hcd, struct urb *urb, gfp_t mem_flags)
+{
+	struct xhci_hcd *xhci = hcd_to_xhci(hcd);
+	struct urb_priv	*urb_priv;
+
+	if (usb_urb_pinned(urb)) {
+		xhci_warn(xhci, "WARN: Can't pin URB twice\n");
+		return -EINVAL;
+	}
+
+	urb_priv = xhci_get_urb_priv(urb, mem_flags);
+	if (!urb_priv)
+		return -ENOMEM;
+
+	return 0;
+}
+
+static void xhci_urb_unpin(struct usb_hcd *hcd, struct urb *urb)
+{
+	struct xhci_hcd *xhci = hcd_to_xhci(hcd);
+
+	if (!usb_urb_pinned(urb)) {
+		xhci_warn(xhci, "WARN: Can't unpin URB twice\n");
+		return;
+	}
+
+	xhci_urb_free_priv(urb->hcpriv);
+}
+
 /*
  * non-error returns are a promise to giveback() the urb later
  * we drop ownership so next owner (or urb unlink) can get it
@@ -1429,7 +1493,6 @@ static int xhci_urb_enqueue(struct usb_hcd *hcd, struct urb *urb, gfp_t mem_flag
 	unsigned int slot_id, ep_index;
 	unsigned int *ep_state;
 	struct urb_priv	*urb_priv;
-	int num_tds;
 
 	if (!urb || xhci_check_args(hcd, urb->dev, urb->ep,
 					true, true, __func__) <= 0)
@@ -1445,24 +1508,9 @@ static int xhci_urb_enqueue(struct usb_hcd *hcd, struct urb *urb, gfp_t mem_flag
 		return -ESHUTDOWN;
 	}
 
-	if (usb_endpoint_xfer_isoc(&urb->ep->desc))
-		num_tds = urb->number_of_packets;
-	else if (usb_endpoint_is_bulk_out(&urb->ep->desc) &&
-	    urb->transfer_buffer_length > 0 &&
-	    urb->transfer_flags & URB_ZERO_PACKET &&
-	    !(urb->transfer_buffer_length % usb_endpoint_maxp(&urb->ep->desc)))
-		num_tds = 2;
-	else
-		num_tds = 1;
-
-	urb_priv = kzalloc(sizeof(struct urb_priv) +
-			   num_tds * sizeof(struct xhci_td), mem_flags);
+	urb_priv = xhci_get_urb_priv(urb, mem_flags);
 	if (!urb_priv)
 		return -ENOMEM;
-
-	urb_priv->num_tds = num_tds;
-	urb_priv->num_tds_done = 0;
-	urb->hcpriv = urb_priv;
 
 	trace_xhci_urb_enqueue(urb);
 
@@ -1474,8 +1522,10 @@ static int xhci_urb_enqueue(struct usb_hcd *hcd, struct urb *urb, gfp_t mem_flag
 			ret = xhci_check_maxpacket(xhci, slot_id,
 					ep_index, urb);
 			if (ret < 0) {
-				xhci_urb_free_priv(urb_priv);
-				urb->hcpriv = NULL;
+				if (!usb_urb_pinned(urb)) {
+					xhci_urb_free_priv(urb_priv);
+					urb->hcpriv = NULL;
+				}
 				return ret;
 			}
 		}
@@ -1522,8 +1572,10 @@ static int xhci_urb_enqueue(struct usb_hcd *hcd, struct urb *urb, gfp_t mem_flag
 
 	if (ret) {
 free_priv:
-		xhci_urb_free_priv(urb_priv);
-		urb->hcpriv = NULL;
+		if (!usb_urb_pinned(urb)) {
+			xhci_urb_free_priv(urb_priv);
+			urb->hcpriv = NULL;
+		}
 	}
 	spin_unlock_irqrestore(&xhci->lock, flags);
 	return ret;
@@ -1671,7 +1723,7 @@ done:
 	return ret;
 
 err_giveback:
-	if (urb_priv)
+	if (urb_priv && !usb_urb_pinned(urb))
 		xhci_urb_free_priv(urb_priv);
 	usb_hcd_unlink_urb_from_ep(hcd, urb);
 	spin_unlock_irqrestore(&xhci->lock, flags);
@@ -5155,6 +5207,8 @@ static const struct hc_driver xhci_hc_driver = {
 	/*
 	 * managing i/o requests and associated device resources
 	 */
+	.urb_pin =		xhci_urb_pin,
+	.urb_unpin =		xhci_urb_unpin,
 	.urb_enqueue =		xhci_urb_enqueue,
 	.urb_dequeue =		xhci_urb_dequeue,
 	.alloc_dev =		xhci_alloc_dev,

@@ -642,7 +642,9 @@ static void xhci_giveback_urb_in_irq(struct xhci_hcd *xhci,
 				usb_amd_quirk_pll_enable();
 		}
 	}
-	xhci_urb_free_priv(urb_priv);
+
+	if (!(urb->transfer_flags & URB_PINNED))
+		xhci_urb_free_priv(urb_priv);
 	usb_hcd_unlink_urb_from_ep(hcd, urb);
 	spin_unlock(&xhci->lock);
 	trace_xhci_urb_giveback(urb);
