@@ -281,6 +281,12 @@ struct hc_driver {
 	/* return current frame number */
 	int	(*get_frame_number) (struct usb_hcd *hcd);
 
+	/* pin URB to a specific HCD, it'll be able to preallocate any private
+	 * structure */
+	int	(*urb_pin)(struct usb_hcd *hcd, struct urb *urb,
+			   gfp_t mem_flags);
+	void	(*urb_unpin)(struct usb_hcd *hcd, struct urb *urb);
+
 	/* manage i/o requests, device state */
 	int	(*urb_enqueue)(struct usb_hcd *hcd,
 				struct urb *urb, gfp_t mem_flags);
@@ -420,6 +426,8 @@ extern int usb_hcd_check_unlink_urb(struct usb_hcd *hcd, struct urb *urb,
 		int status);
 extern void usb_hcd_unlink_urb_from_ep(struct usb_hcd *hcd, struct urb *urb);
 
+extern int usb_hcd_pin_urb(struct urb *urb, gfp_t mem_flags);
+extern void usb_hcd_unpin_urb(struct urb *urb);
 extern int usb_hcd_submit_urb(struct urb *urb, gfp_t mem_flags);
 extern int usb_hcd_unlink_urb(struct urb *urb, int status);
 extern void usb_hcd_giveback_urb(struct usb_hcd *hcd, struct urb *urb,

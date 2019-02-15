@@ -15,6 +15,7 @@
 
 #define to_urb(d) container_of(d, struct urb, kref)
 
+void usb_unpin_urb(struct urb *urb);
 
 static void urb_destroy(struct kref *kref)
 {
@@ -22,6 +23,8 @@ static void urb_destroy(struct kref *kref)
 
 	if (urb->transfer_flags & URB_FREE_BUFFER)
 		kfree(urb->transfer_buffer);
+
+	usb_unpin_urb(urb);
 
 	kfree(urb);
 }
@@ -184,6 +187,41 @@ void usb_unanchor_urb(struct urb *urb)
 	spin_unlock_irqrestore(&anchor->lock, flags);
 }
 EXPORT_SYMBOL_GPL(usb_unanchor_urb);
+
+
+/**
+ * usb_pin_urb - pins an URB to a specific host controller
+ * @urb: pointer to the urb to pin
+ * @mem_flags: the type of memory to allocate, see kmalloc() for a list
+ *	of valid options for this.
+ *
+ * Call this to pin an URB to a specific endpoint and configuration. Once
+ * pinned the URB properties must not change (pipe, buffer_length, etc...). The
+ * URB is not allowed to be submitted while this function is running.
+ */
+inline void usb_pin_urb(struct urb *urb, gfp_t mem_flags)
+{
+	if (!usb_hcd_pin_urb(urb, mem_flags))
+		urb->transfer_flags |= URB_PINNED;
+}
+EXPORT_SYMBOL_GPL(usb_pin_urb);
+
+/**
+ * usb_unpin_urb - unpins an URB from a specific host controller
+ * @urb: pointer to the urb to pin
+ *
+ * Call this to unpin an URB from a specific endpoint and configuration.
+ */
+void usb_unpin_urb(struct urb *urb)
+{
+	if (urb->transfer_flags & URB_PINNED) {
+		usb_hcd_unpin_urb(urb);
+		urb->hcpriv = NULL;
+	}
+
+	urb->transfer_flags &= ~URB_PINNED;
+}
+EXPORT_SYMBOL_GPL(usb_unpin_urb);
 
 /*-------------------------------------------------------------------*/
 
@@ -359,7 +397,7 @@ int usb_submit_urb(struct urb *urb, gfp_t mem_flags)
 
 	if (!urb || !urb->complete)
 		return -EINVAL;
-	if (urb->hcpriv) {
+	if (urb->hcpriv && !usb_urb_pinned(urb)) {
 		WARN_ONCE(1, "URB %pK submitted while active\n", urb);
 		return -EBUSY;
 	}
@@ -480,7 +518,7 @@ int usb_submit_urb(struct urb *urb, gfp_t mem_flags)
 
 	/* Check against a simple/standard policy */
 	allowed = (URB_NO_TRANSFER_DMA_MAP | URB_NO_INTERRUPT | URB_DIR_MASK |
-			URB_FREE_BUFFER);
+		   URB_FREE_BUFFER | URB_PINNED);
 	switch (xfertype) {
 	case USB_ENDPOINT_XFER_BULK:
 	case USB_ENDPOINT_XFER_INT:

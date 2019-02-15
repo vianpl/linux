@@ -1331,6 +1331,7 @@ extern int usb_disabled(void);
 #define URB_SETUP_MAP_LOCAL	0x00200000	/* HCD-local setup packet */
 #define URB_DMA_SG_COMBINED	0x00400000	/* S-G entries were combined */
 #define URB_ALIGNED_TEMP_BUFFER	0x00800000	/* Temp buffer was alloc'd */
+#define URB_PINNED		0x01000000	/* URB is pinned to a HC */
 
 struct usb_iso_packet_descriptor {
 	unsigned int offset;
@@ -1716,6 +1717,8 @@ extern void usb_anchor_suspend_wakeups(struct usb_anchor *anchor);
 extern void usb_anchor_resume_wakeups(struct usb_anchor *anchor);
 extern void usb_anchor_urb(struct urb *urb, struct usb_anchor *anchor);
 extern void usb_unanchor_urb(struct urb *urb);
+extern void usb_pin_urb(struct urb *urb, gfp_t mem_flags);
+extern void usb_unpin_urb(struct urb *urb);
 extern int usb_wait_anchor_empty_timeout(struct usb_anchor *anchor,
 					 unsigned int timeout);
 extern struct urb *usb_get_from_anchor(struct usb_anchor *anchor);
@@ -1746,6 +1749,17 @@ static inline int usb_urb_dir_in(struct urb *urb)
 static inline int usb_urb_dir_out(struct urb *urb)
 {
 	return (urb->transfer_flags & URB_DIR_MASK) == URB_DIR_OUT;
+}
+
+/**
+ * usb_urb_pinned - check if an URB is pinned
+ * @urb: URB to be checked
+ *
+ * Return: 1 if @urb is pinned otherwise 0.
+ */
+static inline int usb_urb_pinned(struct urb *urb)
+{
+	return !!(urb->transfer_flags & URB_PINNED);
 }
 
 int usb_urb_ep_type_check(const struct urb *urb);

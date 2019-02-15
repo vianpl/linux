@@ -1618,6 +1618,24 @@ EXPORT_SYMBOL_GPL(usb_hcd_map_urb_for_dma);
 
 /*-------------------------------------------------------------------------*/
 
+int usb_hcd_pin_urb(struct urb *urb, gfp_t mem_flags)
+{
+	struct usb_hcd *hcd = bus_to_hcd(urb->dev->bus);
+
+	if (hcd->driver->urb_pin)
+		return hcd->driver->urb_pin(hcd, urb, mem_flags);
+
+	return -ENOENT;
+}
+
+void usb_hcd_unpin_urb(struct urb *urb)
+{
+	struct usb_hcd *hcd = bus_to_hcd(urb->dev->bus);
+
+	if (hcd->driver->urb_unpin)
+		hcd->driver->urb_unpin(hcd, urb);
+}
+
 /* may be called in any context with a valid urb->dev usecount
  * caller surrenders "ownership" of urb
  * expects usb_submit_urb() to have sanity checked and conditioned all
@@ -1658,7 +1676,8 @@ int usb_hcd_submit_urb (struct urb *urb, gfp_t mem_flags)
 
 	if (unlikely(status)) {
 		usbmon_urb_submit_error(&hcd->self, urb, status);
-		urb->hcpriv = NULL;
+		if (!usb_urb_pinned(urb))
+			urb->hcpriv = NULL;
 		INIT_LIST_HEAD(&urb->urb_list);
 		atomic_dec(&urb->use_count);
 		atomic_dec(&urb->dev->urbnum);
@@ -1737,7 +1756,8 @@ static void __usb_hcd_giveback_urb(struct urb *urb)
 	struct usb_anchor *anchor = urb->anchor;
 	int status = urb->unlinked;
 
-	urb->hcpriv = NULL;
+	if (!usb_urb_pinned(urb))
+		urb->hcpriv = NULL;
 	if (unlikely((urb->transfer_flags & URB_SHORT_NOT_OK) &&
 	    urb->actual_length < urb->transfer_buffer_length &&
 	    !status))
