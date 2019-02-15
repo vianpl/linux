@@ -1128,6 +1128,7 @@ static int usbhid_start(struct hid_device *hid)
 					 hid_irq_in, hid, interval);
 			usbhid->urbin->transfer_dma = usbhid->inbuf_dma;
 			usbhid->urbin->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
+			usb_pin_urb(usbhid->urbin, GFP_KERNEL);
 		} else {
 			if (usbhid->urbout)
 				continue;
@@ -1138,6 +1139,7 @@ static int usbhid_start(struct hid_device *hid)
 					 hid_irq_out, hid, interval);
 			usbhid->urbout->transfer_dma = usbhid->outbuf_dma;
 			usbhid->urbout->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
+			usb_pin_urb(usbhid->urbout, GFP_KERNEL);
 		}
 	}
 
@@ -1151,6 +1153,7 @@ static int usbhid_start(struct hid_device *hid)
 			     usbhid->ctrlbuf, 1, hid_ctrl, hid);
 	usbhid->urbctrl->transfer_dma = usbhid->ctrlbuf_dma;
 	usbhid->urbctrl->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
+	usb_pin_urb(usbhid->urbctrl, GFP_KERNEL);
 
 	set_bit(HID_STARTED, &usbhid->iofl);
 
