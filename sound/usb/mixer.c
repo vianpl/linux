@@ -3392,6 +3392,7 @@ static int snd_usb_mixer_status_create(struct usb_mixer_interface *mixer)
 			 usb_rcvintpipe(mixer->chip->dev, epnum),
 			 transfer_buffer, buffer_length,
 			 snd_usb_mixer_interrupt, mixer, ep->bInterval);
+	usb_pin_urb(mixer->urb, GFP_KERNEL);
 	usb_submit_urb(mixer->urb, GFP_KERNEL);
 	return 0;
 }

@@ -233,8 +233,6 @@ static void prepare_outbound_urb(struct snd_usb_endpoint *ep,
 	struct urb *urb = ctx->urb;
 	unsigned char *cp = urb->transfer_buffer;
 
-	urb->dev = ep->chip->dev; /* we need to set this at each time */
-
 	switch (ep->type) {
 	case SND_USB_ENDPOINT_TYPE_DATA:
 		if (ep->prepare_data_urb) {
@@ -281,8 +279,6 @@ static inline void prepare_inbound_urb(struct snd_usb_endpoint *ep,
 {
 	int i, offs;
 	struct urb *urb = urb_ctx->urb;
-
-	urb->dev = ep->chip->dev; /* we need to set this at each time */
 
 	switch (ep->type) {
 	case SND_USB_ENDPOINT_TYPE_DATA:
@@ -786,12 +782,15 @@ static int data_ep_set_params(struct snd_usb_endpoint *ep,
 					   GFP_KERNEL, &u->urb->transfer_dma);
 		if (!u->urb->transfer_buffer)
 			goto out_of_memory;
+		u->urb->dev = ep->chip->dev;
 		u->urb->pipe = ep->pipe;
 		u->urb->transfer_flags = URB_NO_TRANSFER_DMA_MAP;
 		u->urb->interval = 1 << ep->datainterval;
 		u->urb->context = u;
 		u->urb->complete = snd_complete_urb;
+		u->urb->number_of_packets = u->packets;
 		INIT_LIST_HEAD(&u->ready_list);
+		usb_pin_urb(u->urb, GFP_KERNEL);
 	}
 
 	return 0;
@@ -824,12 +823,14 @@ static int sync_ep_set_params(struct snd_usb_endpoint *ep)
 		u->urb->transfer_buffer = ep->syncbuf + i * 4;
 		u->urb->transfer_dma = ep->sync_dma + i * 4;
 		u->urb->transfer_buffer_length = 4;
+		u->urb->dev = ep->chip->dev;
 		u->urb->pipe = ep->pipe;
 		u->urb->transfer_flags = URB_NO_TRANSFER_DMA_MAP;
 		u->urb->number_of_packets = 1;
 		u->urb->interval = 1 << ep->syncinterval;
 		u->urb->context = u;
 		u->urb->complete = snd_complete_urb;
+		usb_pin_urb(u->urb, GFP_KERNEL);
 	}
 
 	ep->nurbs = SYNC_URBS;

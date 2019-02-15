@@ -293,6 +293,7 @@ static int snd_usb_soundblaster_remote_init(struct usb_mixer_interface *mixer)
 			     usb_rcvctrlpipe(mixer->chip->dev, 0),
 			     (u8*)mixer->rc_setup_packet, mixer->rc_buffer, len,
 			     snd_usb_soundblaster_remote_complete, mixer);
+	usb_pin_urb(mixer->rc_urb, GFP_KERNEL);
 	return 0;
 }
 
