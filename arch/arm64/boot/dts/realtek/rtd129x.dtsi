@@ -15,6 +15,7 @@
 #include <dt-bindings/clock/realtek,rtd1295.h>
 #include <dt-bindings/interrupt-controller/arm-gic.h>
 #include <dt-bindings/reset/realtek,rtd1295.h>
+#include <dt-bindings/gpio/gpio.h>
 
 / {
 	interrupt-parent = <&gic>;
@@ -321,6 +322,23 @@
 			interrupts = <14>;
 			#address-cells = <1>;
 			#size-cells = <0>;
+			status = "disabled";
+		};
+
+		sdmmc: sdmmc@98010400 {
+			compatible = "realtek,rtk1295-sdmmc";
+			gpios = <&misc_gpio 99 GPIO_ACTIVE_LOW>;
+			reg = <0x98000000 0x400>, /* CRT */
+			      <0x98010400 0x200>, /* SDMMC */
+			      <0x9801A000 0x400>, /* BS2 */
+			      <0x98012000 0xa00>, /* EMMC */
+			      <0x98010A00 0x40>; /* SDIO */
+			interrupts = <GIC_SPI 44 IRQ_TYPE_LEVEL_HIGH>;
+			resets = <&reset2 RTD1295_RSTN_CR>;
+			clocks = <&clkc RTD1295_CLK_EN_CR>,
+				 <&clkc RTD1295_CLK_EN_SD_IP>;
+			clock-names = "clk_en_cr",
+				      "clk_en_sd_ip";
 			status = "disabled";
 		};
 
