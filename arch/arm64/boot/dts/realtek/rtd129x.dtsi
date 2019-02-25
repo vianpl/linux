@@ -342,6 +342,29 @@
 			status = "disabled";
 		};
 
+		gmac: gmac@98016000 {
+			compatible = "Realtek,r8168";
+			reg = <0x98016000 0x1000>,
+			      <0x98007000 0x1000>;
+			interrupts = <GIC_SPI 22 IRQ_TYPE_LEVEL_HIGH>;
+			rtl-config = <1>;
+			mac-version = <42>; /* RTL_GIGA_MAC_VER_42 */
+			rtl-features = <2>; /* BIT(2) GMii */
+			output-mode = <0>; /* 0:embedded PHY, 1:RGMII to MAC, 2:RGMII to PHY */
+			rgmii-voltage = <1>; /* 1:1.8V, 2: 2.5V, 3:3.3V */
+			rgmii-tx-delay = <0>; /* 0: 0ns, 1: 2ns */
+			rgmii-rx-delay = <0>; /* 0: 0ns, 1: 2ns */
+			ext-phy-id = <1>; /* 0 ~ 31, only valid when output-mode = 2 */
+			clocks = <&iso_clkc RTD1295_ISO_CLK_EN_ETN_250M>,
+				 <&iso_clkc RTD1295_ISO_CLK_EN_ETN_SYS>;
+			clock-names = "etn_250m",
+				      "etn_sys";
+			resets = <&iso_reset RTD1295_ISO_RSTN_GMAC>,
+				 <&iso_reset RTD1295_ISO_RSTN_GPHY>;
+			reset-names = "gmac",
+				      "gphy";
+		};
+
 		disp_pinctrl: pinctrl@9804d000 {
 			compatible = "realtek,rtd1295-disp-pinctrl";
 			reg = <0x9804d000 0x100>;
