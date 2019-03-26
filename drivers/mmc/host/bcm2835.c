@@ -150,13 +150,15 @@ struct bcm2835_host {
 
 	struct platform_device	*pdev;
 
-	int			clock;		/* Current clock speed */
-	unsigned int		max_clk;	/* Max possible freq */
 	struct work_struct	dma_work;
 	struct delayed_work	timeout_work;	/* Timer for timeouts */
 	struct sg_mapping_iter	sg_miter;	/* SG state for PIO */
 	unsigned int		blocks;		/* remaining PIO blocks */
 	int			irq;		/* Device IRQ */
+	unsigned long           parent_clk_rate;
+	int			clk_rate;
+	struct clk		*clk;
+	struct notifier_block	clk_notifier;
 
 	u32			ns_per_fifo_word;
 
@@ -263,7 +265,7 @@ static void bcm2835_reset_internal(struct bcm2835_host *host)
 	msleep(20);
 	writel(SDVDD_POWER_ON, host->ioaddr + SDVDD);
 	msleep(20);
-	host->clock = 0;
+	host->clk_rate = 0;
 	writel(host->hcfg, host->ioaddr + SDHCFG);
 	writel(host->cdiv, host->ioaddr + SDCDIV);
 }
@@ -283,10 +285,11 @@ static void bcm2835_finish_command(struct bcm2835_host *host);
 static void bcm2835_wait_transfer_complete(struct bcm2835_host *host)
 {
 	int timediff;
-	u32 alternate_idle;
+	u32 alternate_idle = 0;
 
-	alternate_idle = (host->mrq->data->flags & MMC_DATA_READ) ?
-		SDEDM_FSM_READWAIT : SDEDM_FSM_WRITESTART1;
+	if (host->mrq)
+		alternate_idle = (host->mrq->data->flags & MMC_DATA_READ) ?
+			SDEDM_FSM_READWAIT : SDEDM_FSM_WRITESTART1;
 
 	timediff = 0;
 
@@ -1132,29 +1135,46 @@ static void bcm2835_set_clock(struct bcm2835_host *host, unsigned int clock)
 		return;
 	}
 
-	div = host->max_clk / clock;
+	div = host->parent_clk_rate / clock;
 	if (div < 2)
 		div = 2;
-	if ((host->max_clk / div) > clock)
+	if ((host->parent_clk_rate / div) > clock)
 		div++;
 	div -= 2;
 
 	if (div > SDCDIV_MAX_CDIV)
 		div = SDCDIV_MAX_CDIV;
 
-	clock = host->max_clk / (div + 2);
-	mmc->actual_clock = clock;
+	host->clk_rate = host->parent_clk_rate / (div + 2);
+	mmc->actual_clock = host->clk_rate;
 
 	/* Calibrate some delays */
 
-	host->ns_per_fifo_word = (1000000000 / clock) *
+	host->ns_per_fifo_word = (1000000000 / host->clk_rate) *
 		((mmc->caps & MMC_CAP_4_BIT_DATA) ? 8 : 32);
 
 	host->cdiv = div;
 	writel(host->cdiv, host->ioaddr + SDCDIV);
 
 	/* Set the timeout to 500ms */
-	writel(mmc->actual_clock / 2, host->ioaddr + SDTOUT);
+	writel(host->clk_rate / 2, host->ioaddr + SDTOUT);
+}
+
+static int bcm2835_clk_notifier_cb(struct notifier_block *nb,
+				   unsigned long event, void * data)
+{
+	struct bcm2835_host *host = container_of(nb, struct bcm2835_host,
+						 clk_notifier);
+
+	switch (event) {
+	case POST_RATE_CHANGE:
+		mutex_lock(&host->mutex);
+		host->parent_clk_rate = clk_get_rate(host->clk);
+		bcm2835_set_clock(host, host->clk_rate);
+		mutex_unlock(&host->mutex);
+	}
+
+	return NOTIFY_OK;
 }
 
 static void bcm2835_request(struct mmc_host *mmc, struct mmc_request *mrq)
@@ -1236,9 +1256,9 @@ static void bcm2835_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 
 	mutex_lock(&host->mutex);
 
-	if (!ios->clock || ios->clock != host->clock) {
+	if (!ios->clock || ios->clock != host->clk_rate) {
 		bcm2835_set_clock(host, ios->clock);
-		host->clock = ios->clock;
+		host->clk_rate = ios->clock;
 	}
 
 	/* set bus width */
@@ -1269,9 +1289,9 @@ static int bcm2835_add_host(struct bcm2835_host *host)
 	char pio_limit_string[20];
 	int ret;
 
-	if (!mmc->f_max || mmc->f_max > host->max_clk)
-		mmc->f_max = host->max_clk;
-	mmc->f_min = host->max_clk / SDCDIV_MAX_CDIV;
+	if (!mmc->f_max || mmc->f_max > host->parent_clk_rate)
+		mmc->f_max = host->parent_clk_rate;
+	mmc->f_min = host->parent_clk_rate / SDCDIV_MAX_CDIV;
 
 	mmc->max_busy_timeout = ~0 / (mmc->f_max / 1000);
 
@@ -1356,7 +1376,6 @@ static int bcm2835_add_host(struct bcm2835_host *host)
 static int bcm2835_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	struct clk *clk;
 	struct resource *iomem;
 	struct bcm2835_host *host;
 	struct mmc_host *mmc;
@@ -1397,15 +1416,15 @@ static int bcm2835_probe(struct platform_device *pdev)
 
 	host->dma_chan_rxtx = dma_request_slave_channel(dev, "rx-tx");
 
-	clk = devm_clk_get(dev, NULL);
-	if (IS_ERR(clk)) {
-		ret = PTR_ERR(clk);
+	host->clk = devm_clk_get(dev, NULL);
+	if (IS_ERR(host->clk)) {
+		ret = PTR_ERR(host->clk);
 		if (ret != -EPROBE_DEFER)
 			dev_err(dev, "could not get clk: %d\n", ret);
 		goto err;
 	}
 
-	host->max_clk = clk_get_rate(clk);
+	host->parent_clk_rate = clk_get_rate(host->clk);
 
 	host->irq = platform_get_irq(pdev, 0);
 	if (host->irq <= 0) {
@@ -1423,6 +1442,13 @@ static int bcm2835_probe(struct platform_device *pdev)
 		goto err;
 
 	platform_set_drvdata(pdev, host);
+
+	/*host->clk_notifier.notifier_call = bcm2835_clk_notifier_cb;*/
+	/*ret = clk_notifier_register(host->clk, &host->clk_notifier);*/
+	/*if (ret) {*/
+		/*dev_err(dev, "Failed to register clock notifier.\n");*/
+		/*goto err;*/
+	/*}*/
 
 	dev_dbg(dev, "%s -> OK\n", __func__);
 
@@ -1454,6 +1480,7 @@ static int bcm2835_remove(struct platform_device *pdev)
 	if (host->dma_chan_rxtx)
 		dma_release_channel(host->dma_chan_rxtx);
 
+	clk_notifier_unregister(host->clk, &host->clk_notifier);
 	mmc_free_host(mmc);
 
 	return 0;
