@@ -410,6 +410,7 @@ struct bcm2835_pll_data {
 	u32 reference_enable_mask;
 	/* Bit in CM_LOCK to indicate when the PLL has locked. */
 	u32 lock_mask;
+	u32 flags;
 
 	const struct bcm2835_pll_ana_bits *ana;
 
@@ -1298,7 +1299,7 @@ static struct clk_hw *bcm2835_register_pll(struct bcm2835_cprman *cprman,
 	init.num_parents = 1;
 	init.name = data->name;
 	init.ops = &bcm2835_pll_clk_ops;
-	init.flags = CLK_IGNORE_UNUSED;
+	init.flags = data->flags | CLK_IGNORE_UNUSED;
 
 	pll = kzalloc(sizeof(*pll), GFP_KERNEL);
 	if (!pll)
@@ -1608,6 +1609,7 @@ static const struct bcm2835_clk_desc clk_desc_array[] = {
 		.ana_reg_base = A2W_PLLA_ANA0,
 		.reference_enable_mask = A2W_XOSC_CTRL_PLLA_ENABLE,
 		.lock_mask = CM_LOCK_FLOCKA,
+		.flags = CLK_GET_RATE_NOCACHE,
 
 		.ana = &bcm2835_ana_default,
 
@@ -1622,7 +1624,7 @@ static const struct bcm2835_clk_desc clk_desc_array[] = {
 		.load_mask = CM_PLLA_LOADCORE,
 		.hold_mask = CM_PLLA_HOLDCORE,
 		.fixed_divider = 1,
-		.flags = CLK_SET_RATE_PARENT),
+		.flags = CLK_SET_RATE_PARENT | CLK_GET_RATE_NOCACHE),
 	[BCM2835_PLLA_PER]	= REGISTER_PLL_DIV(
 		.name = "plla_per",
 		.source_pll = "plla",
@@ -1631,7 +1633,7 @@ static const struct bcm2835_clk_desc clk_desc_array[] = {
 		.load_mask = CM_PLLA_LOADPER,
 		.hold_mask = CM_PLLA_HOLDPER,
 		.fixed_divider = 1,
-		.flags = CLK_SET_RATE_PARENT),
+		.flags = CLK_SET_RATE_PARENT | CLK_GET_RATE_NOCACHE),
 	[BCM2835_PLLA_DSI0]	= REGISTER_PLL_DIV(
 		.name = "plla_dsi0",
 		.source_pll = "plla",
@@ -1639,7 +1641,8 @@ static const struct bcm2835_clk_desc clk_desc_array[] = {
 		.a2w_reg = A2W_PLLA_DSI0,
 		.load_mask = CM_PLLA_LOADDSI0,
 		.hold_mask = CM_PLLA_HOLDDSI0,
-		.fixed_divider = 1),
+		.fixed_divider = 1,
+		.flags = CLK_GET_RATE_NOCACHE),
 	[BCM2835_PLLA_CCP2]	= REGISTER_PLL_DIV(
 		.name = "plla_ccp2",
 		.source_pll = "plla",
@@ -1648,7 +1651,7 @@ static const struct bcm2835_clk_desc clk_desc_array[] = {
 		.load_mask = CM_PLLA_LOADCCP2,
 		.hold_mask = CM_PLLA_HOLDCCP2,
 		.fixed_divider = 1,
-		.flags = CLK_SET_RATE_PARENT),
+		.flags = CLK_SET_RATE_PARENT | CLK_GET_RATE_NOCACHE),
 
 	/* PLLB is used for the ARM's clock. */
 	[BCM2835_PLLB]		= REGISTER_PLL(
@@ -1659,6 +1662,7 @@ static const struct bcm2835_clk_desc clk_desc_array[] = {
 		.ana_reg_base = A2W_PLLB_ANA0,
 		.reference_enable_mask = A2W_XOSC_CTRL_PLLB_ENABLE,
 		.lock_mask = CM_LOCK_FLOCKB,
+		.flags = CLK_GET_RATE_NOCACHE,
 
 		.ana = &bcm2835_ana_default,
 
@@ -1673,7 +1677,7 @@ static const struct bcm2835_clk_desc clk_desc_array[] = {
 		.load_mask = CM_PLLB_LOADARM,
 		.hold_mask = CM_PLLB_HOLDARM,
 		.fixed_divider = 1,
-		.flags = CLK_SET_RATE_PARENT),
+		.flags = CLK_SET_RATE_PARENT | CLK_GET_RATE_NOCACHE),
 
 	/*
 	 * PLLC is the core PLL, used to drive the core VPU clock.
@@ -1689,6 +1693,7 @@ static const struct bcm2835_clk_desc clk_desc_array[] = {
 		.ana_reg_base = A2W_PLLC_ANA0,
 		.reference_enable_mask = A2W_XOSC_CTRL_PLLC_ENABLE,
 		.lock_mask = CM_LOCK_FLOCKC,
+		.flags = CLK_GET_RATE_NOCACHE,
 
 		.ana = &bcm2835_ana_default,
 
@@ -1703,7 +1708,7 @@ static const struct bcm2835_clk_desc clk_desc_array[] = {
 		.load_mask = CM_PLLC_LOADCORE0,
 		.hold_mask = CM_PLLC_HOLDCORE0,
 		.fixed_divider = 1,
-		.flags = CLK_SET_RATE_PARENT),
+		.flags = CLK_SET_RATE_PARENT | CLK_GET_RATE_NOCACHE),
 	[BCM2835_PLLC_CORE1]	= REGISTER_PLL_DIV(
 		.name = "pllc_core1",
 		.source_pll = "pllc",
@@ -1712,7 +1717,7 @@ static const struct bcm2835_clk_desc clk_desc_array[] = {
 		.load_mask = CM_PLLC_LOADCORE1,
 		.hold_mask = CM_PLLC_HOLDCORE1,
 		.fixed_divider = 1,
-		.flags = CLK_SET_RATE_PARENT),
+		.flags = CLK_SET_RATE_PARENT | CLK_GET_RATE_NOCACHE),
 	[BCM2835_PLLC_CORE2]	= REGISTER_PLL_DIV(
 		.name = "pllc_core2",
 		.source_pll = "pllc",
@@ -1721,7 +1726,7 @@ static const struct bcm2835_clk_desc clk_desc_array[] = {
 		.load_mask = CM_PLLC_LOADCORE2,
 		.hold_mask = CM_PLLC_HOLDCORE2,
 		.fixed_divider = 1,
-		.flags = CLK_SET_RATE_PARENT),
+		.flags = CLK_SET_RATE_PARENT | CLK_GET_RATE_NOCACHE),
 	[BCM2835_PLLC_PER]	= REGISTER_PLL_DIV(
 		.name = "pllc_per",
 		.source_pll = "pllc",
@@ -1730,7 +1735,7 @@ static const struct bcm2835_clk_desc clk_desc_array[] = {
 		.load_mask = CM_PLLC_LOADPER,
 		.hold_mask = CM_PLLC_HOLDPER,
 		.fixed_divider = 1,
-		.flags = CLK_SET_RATE_PARENT),
+		.flags = CLK_SET_RATE_PARENT | CLK_GET_RATE_NOCACHE),
 
 	/*
 	 * PLLD is the display PLL, used to drive DSI display panels.
@@ -1881,6 +1886,7 @@ static const struct bcm2835_clk_desc clk_desc_array[] = {
 		.div_reg = CM_H264DIV,
 		.int_bits = 4,
 		.frac_bits = 8,
+		.flags = CLK_GET_RATE_NOCACHE,
 		.tcnt_mux = 1),
 	[BCM2835_CLOCK_ISP]	= REGISTER_VPU_CLK(
 		.name = "isp",
@@ -1888,6 +1894,7 @@ static const struct bcm2835_clk_desc clk_desc_array[] = {
 		.div_reg = CM_ISPDIV,
 		.int_bits = 4,
 		.frac_bits = 8,
+		.flags = CLK_GET_RATE_NOCACHE,
 		.tcnt_mux = 2),
 
 	/*
@@ -1907,6 +1914,7 @@ static const struct bcm2835_clk_desc clk_desc_array[] = {
 		.div_reg = CM_V3DDIV,
 		.int_bits = 4,
 		.frac_bits = 8,
+		.flags = CLK_GET_RATE_NOCACHE,
 		.tcnt_mux = 4),
 	/*
 	 * VPU clock.  This doesn't have an enable bit, since it drives
@@ -1920,7 +1928,7 @@ static const struct bcm2835_clk_desc clk_desc_array[] = {
 		.div_reg = CM_VPUDIV,
 		.int_bits = 12,
 		.frac_bits = 8,
-		.flags = CLK_IS_CRITICAL,
+		.flags = CLK_IS_CRITICAL | CLK_GET_RATE_NOCACHE,
 		.is_vpu_clock = true,
 		.tcnt_mux = 5),
 
@@ -1967,6 +1975,7 @@ static const struct bcm2835_clk_desc clk_desc_array[] = {
 		.div_reg = CM_EMMCDIV,
 		.int_bits = 4,
 		.frac_bits = 8,
+		.flags = CLK_GET_RATE_NOCACHE,
 		.tcnt_mux = 39),
 
 	/* General purpose (GPIO) clocks */
