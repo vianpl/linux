@@ -1,0 +1,31 @@
+Binding for Raspberry Pi's CPUFreq driver
+=====================================
+
+Raspberry Pi's cpufreq driver controls the SoC's performance through a custom
+firmware interface. All CPUs are synchronised together, yet the interface might
+trigger changes on other unrelated clocks, which the driver takes care of
+refreshing.
+
+Properties:
+- clocks: A list of phandle + clock-specifier pairs for the clocks listed in clock names.
+
+- clock-names: Should contain the following:
+	"plla"		- Video decoding and DSI clocks
+	"pllb"		- ARM CPU's clock
+	"pllc"		- VPU and EMMC clocks
+	"vpu"		- VPU clock, used to notify peers
+	Please refer to Documentation/devicetree/bindings/clock/clock-bindings.txt for
+	generic clock consumer properties.
+
+Example (Raspberry Pi 3-B):
+
+	firmware: firmware {
+		cpufreq {
+			compatible = "raspberrypi,cpufreq";
+			clocks = <&clocks BCM2835_PLLA>,
+				 <&clocks BCM2835_PLLB>,
+				 <&clocks BCM2835_PLLC>,
+				 <&clocks BCM2835_CLOCK_VPU>;
+			clock-names = "plla", "pllb", "pllc", "vpu";
+		};
+	};
