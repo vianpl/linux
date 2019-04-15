@@ -572,7 +572,11 @@
 					     "dsi1_ddr2",
 					     "dsi1_ddr";
 
-			status = "disabled";
+			port {
+				dsi_out_port: endpoint {
+					remote-endpoint = <&panel_dsi_port>;
+				};
+			};
 		};
 
 		i2c1: i2c@7e804000 {
