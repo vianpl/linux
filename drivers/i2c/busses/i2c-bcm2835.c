@@ -52,10 +52,13 @@ struct bcm2835_i2c_dev {
 	struct device *dev;
 	void __iomem *regs;
 	struct clk *clk;
+	struct notifier_block clk_notifier;
+	bool clk_changing;
 	int irq;
 	u32 bus_clk_rate;
 	struct i2c_adapter adapter;
 	struct completion completion;
+	struct mutex clk_mutex;
 	struct i2c_msg *curr_msg;
 	int num_msgs;
 	u32 msg_err;
@@ -74,12 +77,12 @@ static inline u32 bcm2835_i2c_readl(struct bcm2835_i2c_dev *i2c_dev, u32 reg)
 	return readl(i2c_dev->regs + reg);
 }
 
-static int bcm2835_i2c_set_divider(struct bcm2835_i2c_dev *i2c_dev)
+static int bcm2835_i2c_set_divider(struct bcm2835_i2c_dev *i2c_dev,
+				   unsigned long clk_rate)
 {
 	u32 divider, redl, fedl;
 
-	divider = DIV_ROUND_UP(clk_get_rate(i2c_dev->clk),
-			       i2c_dev->bus_clk_rate);
+	divider = DIV_ROUND_UP(clk_rate, i2c_dev->bus_clk_rate);
 	/*
 	 * Per the datasheet, the register is always interpreted as an even
 	 * number, by rounding down. In other words, the LSB is ignored. So,
@@ -111,6 +114,30 @@ static int bcm2835_i2c_set_divider(struct bcm2835_i2c_dev *i2c_dev)
 	bcm2835_i2c_writel(i2c_dev, BCM2835_I2C_DEL,
 			   (fedl << BCM2835_I2C_FEDL_SHIFT) |
 			   (redl << BCM2835_I2C_REDL_SHIFT));
+	return 0;
+}
+
+static int bcm2835_i2c_clk_notifier_cb(struct notifier_block *nb,
+				       unsigned long event, void *data)
+{
+	struct bcm2835_i2c_dev *i2c_dev = container_of(nb, struct bcm2835_i2c_dev,
+						       clk_notifier);
+	/*
+	 * The IP doesn't seem to like clock stretching so we have to make sure
+	 * the clock transitions doesn't happen during a tranmission.
+	 */
+	switch (event) {
+	case PRE_RATE_CHANGE:
+		mutex_lock(&i2c_dev->clk_mutex);
+		return NOTIFY_OK;
+	case POST_RATE_CHANGE:
+	case ABORT_RATE_CHANGE:
+		mutex_unlock(&i2c_dev->clk_mutex);
+		return NOTIFY_OK;
+	default:
+		return NOTIFY_DONE;
+	}
+
 	return 0;
 }
 
@@ -280,7 +307,8 @@ static int bcm2835_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[],
 			return -EOPNOTSUPP;
 		}
 
-	ret = bcm2835_i2c_set_divider(i2c_dev);
+	mutex_lock(&i2c_dev->clk_mutex);
+	ret = bcm2835_i2c_set_divider(i2c_dev, clk_get_rate(i2c_dev->clk));
 	if (ret)
 		return ret;
 
@@ -292,6 +320,7 @@ static int bcm2835_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[],
 
 	time_left = wait_for_completion_timeout(&i2c_dev->completion,
 						adap->timeout);
+	mutex_unlock(&i2c_dev->clk_mutex);
 
 	bcm2835_i2c_finish_transfer(i2c_dev);
 
@@ -392,6 +421,16 @@ static int bcm2835_i2c_probe(struct platform_device *pdev)
 
 	bcm2835_i2c_writel(i2c_dev, BCM2835_I2C_C, 0);
 
+	mutex_init(&i2c_dev->clk_mutex);
+
+	i2c_dev->clk_notifier.notifier_call = bcm2835_i2c_clk_notifier_cb;
+	ret = clk_notifier_register(i2c_dev->clk, &i2c_dev->clk_notifier);
+	if (ret) {
+		dev_err(&pdev->dev, "unable to register cpufreq notifier - %d\n",
+			ret);
+		free_irq(i2c_dev->irq, i2c_dev);
+	}
+
 	ret = i2c_add_adapter(adap);
 	if (ret)
 		free_irq(i2c_dev->irq, i2c_dev);
@@ -404,6 +443,7 @@ static int bcm2835_i2c_remove(struct platform_device *pdev)
 	struct bcm2835_i2c_dev *i2c_dev = platform_get_drvdata(pdev);
 
 	free_irq(i2c_dev->irq, i2c_dev);
+	clk_notifier_unregister(i2c_dev->clk, &i2c_dev->clk_notifier);
 	i2c_del_adapter(&i2c_dev->adapter);
 
 	return 0;
