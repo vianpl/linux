@@ -330,7 +330,7 @@ static struct platform_driver *const component_drivers[] = {
 	&vc4_txp_driver,
 	&vc4_hvs_driver,
 	&vc4_crtc_driver,
-	&vc4_v3d_driver,
+	//&vc4_v3d_driver,
 };
 
 static int vc4_platform_drm_probe(struct platform_device *pdev)
