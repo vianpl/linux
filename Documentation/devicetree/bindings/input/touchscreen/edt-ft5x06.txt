@@ -24,10 +24,14 @@ Required properties:
            or:  "focaltech,ft6236"
 
  - reg:         I2C slave address of the chip (0x38)
- - interrupts:       interrupt specification for the touchdetect
-                     interrupt
 
 Optional properties:
+- interrupts: interrupt specification for the touchdetect interrupt, if not
+	      supplied the driver will deafult to polling.
+
+- poll-interval: Poll interval time in milliseconds, only relevant if no
+		 interrupt was provided.
+
  - reset-gpios: GPIO specification for the RESET input
  - wake-gpios:  GPIO specification for the WAKE input
 
