@@ -20,6 +20,15 @@
 		firmware: firmware {
 			compatible = "raspberrypi,bcm2835-firmware", "simple-bus";
 			mboxes = <&mailbox>;
+
+			cpufreq {
+				compatible = "raspberrypi,cpufreq";
+				clocks = <&clocks BCM2835_PLLA>,
+					 <&clocks BCM2835_PLLB>,
+					 <&clocks BCM2835_PLLC>,
+					 <&clocks BCM2835_CLOCK_VPU>;
+				clock-names = "plla", "pllb", "pllc", "vpu";
+			};
 		};
 
 		power: power {
