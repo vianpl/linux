@@ -1367,6 +1367,33 @@ static int __clk_notify(struct clk_core *core, unsigned long msg,
 	return ret;
 }
 
+int clk_notify(struct clk *clk, unsigned long msg, unsigned long old_rate,
+	       unsigned long new_rate)
+{
+	struct clk_core *child;
+	int ret;
+
+	if (!clk)
+		return 0;
+
+	clk_prepare_lock();
+
+	ret = __clk_notify(clk->core, msg, old_rate, new_rate);
+	if (ret & NOTIFY_STOP_MASK)
+		return ret;
+
+	hlist_for_each_entry(child, &clk->core->children, child_node) {
+		ret = __clk_notify(child, msg, old_rate, new_rate);
+		if (ret & NOTIFY_STOP_MASK)
+			return ret;
+	}
+
+	clk_prepare_unlock();
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(clk_notify);
+
 /**
  * __clk_recalc_accuracies
  * @core: first clk in the subtree
