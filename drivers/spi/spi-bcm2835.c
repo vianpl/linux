@@ -101,6 +101,9 @@
 struct bcm2835_spi {
 	void __iomem *regs;
 	struct clk *clk;
+	struct notifier_block clk_notifier;
+	struct mutex clk_mutex;
+	unsigned long transfer_hz;
 	int irq;
 	struct spi_transfer *tfr;
 	const u8 *tx_buf;
@@ -276,6 +279,49 @@ static void bcm2835_spi_reset_hw(struct spi_master *master)
 	bcm2835_wr(bs, BCM2835_SPI_DLEN, 0);
 }
 
+static int bcm2835_spi_set_divider(struct bcm2835_spi *bs, unsigned long clk_hz)
+{
+	unsigned long cdiv;
+
+	if (bs->transfer_hz >= clk_hz / 2) {
+		cdiv = 2; /* clk_hz/2 is the fastest we can go */
+	} else if (bs->transfer_hz) {
+		/* CDIV must be a multiple of two */
+		cdiv = DIV_ROUND_UP(clk_hz, bs->transfer_hz);
+		cdiv += (cdiv % 2);
+
+		if (cdiv >= 65536)
+			cdiv = 0; /* 0 is the slowest we can go */
+	} else {
+		cdiv = 0; /* 0 is the slowest we can go */
+	}
+
+	bcm2835_wr(bs, BCM2835_SPI_CLK, cdiv);
+
+	return cdiv ? (clk_hz / cdiv) : (clk_hz / 65536);
+}
+
+static int bcm2835_spi_clk_notifier_cb(struct notifier_block *nb,
+				       unsigned long event, void *data)
+{
+	struct bcm2835_spi *bs = container_of(nb, struct bcm2835_spi,
+					      clk_notifier);
+
+	switch (event) {
+	case PRE_RATE_CHANGE:
+		mutex_lock(&bs->clk_mutex);
+		return NOTIFY_OK;
+	case POST_RATE_CHANGE:
+	case ABORT_RATE_CHANGE:
+		mutex_unlock(&bs->clk_mutex);
+		return NOTIFY_OK;
+	default:
+		return NOTIFY_DONE;
+	}
+
+	return 0;
+}
+
 static irqreturn_t bcm2835_spi_interrupt(int irq, void *dev_id)
 {
 	struct spi_master *master = dev_id;
@@ -302,6 +348,9 @@ static irqreturn_t bcm2835_spi_interrupt(int irq, void *dev_id)
 	if (!bs->rx_len) {
 		/* Transfer complete - reset SPI HW */
 		bcm2835_spi_reset_hw(master);
+
+		mutex_unlock(&bs->clk_mutex);
+
 		/* wake up the framework */
 		complete(&master->xfer_completion);
 	}
@@ -517,6 +566,8 @@ static void bcm2835_spi_dma_done(void *data)
 		dmaengine_terminate_async(master->dma_tx);
 		bcm2835_spi_undo_prologue(bs);
 	}
+
+	mutex_unlock(&bs->clk_mutex);
 
 	/* and mark as completed */;
 	complete(&master->xfer_completion);
@@ -776,29 +827,16 @@ static int bcm2835_spi_transfer_one(struct spi_master *master,
 				    struct spi_transfer *tfr)
 {
 	struct bcm2835_spi *bs = spi_master_get_devdata(master);
-	unsigned long spi_hz, clk_hz, cdiv;
-	unsigned long spi_used_hz;
 	unsigned long long xfer_time_us;
+	unsigned long spi_used_hz;
+	unsigned long clk_hz;
 	u32 cs = bcm2835_rd(bs, BCM2835_SPI_CS);
+	int ret;
 
-	/* set clock */
-	spi_hz = tfr->speed_hz;
 	clk_hz = clk_get_rate(bs->clk);
-
-	if (spi_hz >= clk_hz / 2) {
-		cdiv = 2; /* clk_hz/2 is the fastest we can go */
-	} else if (spi_hz) {
-		/* CDIV must be a multiple of two */
-		cdiv = DIV_ROUND_UP(clk_hz, spi_hz);
-		cdiv += (cdiv % 2);
-
-		if (cdiv >= 65536)
-			cdiv = 0; /* 0 is the slowest we can go */
-	} else {
-		cdiv = 0; /* 0 is the slowest we can go */
-	}
-	spi_used_hz = cdiv ? (clk_hz / cdiv) : (clk_hz / 65536);
-	bcm2835_wr(bs, BCM2835_SPI_CLK, cdiv);
+	mutex_lock(&bs->clk_mutex);
+	bs->transfer_hz = tfr->speed_hz;
+	spi_used_hz = bcm2835_spi_set_divider(bs, clk_hz);
 
 	/* handle all the 3-wire mode */
 	if ((spi->mode & SPI_3WIRE) && (tfr->rx_buf))
@@ -826,9 +864,14 @@ static int bcm2835_spi_transfer_one(struct spi_master *master,
 	do_div(xfer_time_us, spi_used_hz);
 
 	/* for short requests run polling*/
-	if (xfer_time_us <= BCM2835_SPI_POLLING_LIMIT_US)
-		return bcm2835_spi_transfer_one_poll(master, spi, tfr,
-						     cs, xfer_time_us);
+	if (xfer_time_us <= BCM2835_SPI_POLLING_LIMIT_US) {
+		ret = bcm2835_spi_transfer_one_poll(master, spi, tfr, cs,
+						    xfer_time_us);
+		if (!ret)
+			mutex_unlock(&bs->clk_mutex);
+
+		return ret;
+	}
 
 	/* run in dma mode if conditions are right */
 	if (master->can_dma && bcm2835_spi_can_dma(master, spi, tfr))
@@ -983,6 +1026,15 @@ static int bcm2835_spi_probe(struct platform_device *pdev)
 			       dev_name(&pdev->dev), master);
 	if (err) {
 		dev_err(&pdev->dev, "could not request IRQ: %d\n", err);
+		goto out_clk_disable;
+	}
+
+	mutex_init(&bs->clk_mutex);
+	bs->clk_notifier.notifier_call = bcm2835_spi_clk_notifier_cb;
+	err = clk_notifier_register(bs->clk, &bs->clk_notifier);
+	if (err) {
+		dev_err(&pdev->dev, "unable to register cpufreq notifier: %d\n",
+			err);
 		goto out_clk_disable;
 	}
 
