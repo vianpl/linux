@@ -163,14 +163,67 @@ static void __init reserve_elfcorehdr(void)
 {
 }
 #endif /* CONFIG_CRASH_DUMP */
+
+static int __init early_init_dt_scan_dma_ranges(unsigned long node,
+		const char *uname, int depth, void *data)
+{
+	phys_addr_t *dma_phys_limit = data;
+	u64 phys_addr, dma_addr, size;
+	int dma_addr_cells;
+	const __be32 *reg;
+	const void *prop;
+	int len;
+
+	/* We keep looking if this isn't the root node or an interconnect */
+	if (!(depth == 0 ||
+	    (depth == 1 && of_flat_dt_is_compatible(node, "simple-bus"))))
+		return 0;
+
+	prop = of_get_flat_dt_prop(node, "#address-cells", NULL);
+	if (prop)
+		dma_addr_cells = be32_to_cpup(prop);
+	else
+		dma_addr_cells = 1; /* arm64's default addr_cell size */
+
+	reg = of_get_flat_dt_prop(node, "dma-ranges", &len);
+	if (!reg ||
+	    len < (dma_addr_cells + dt_root_addr_cells + dt_root_size_cells))
+		return 0;
+
+	dma_addr = dt_mem_next_cell(dma_addr_cells, &reg);
+	phys_addr = dt_mem_next_cell(dt_root_addr_cells, &reg);
+	size = dt_mem_next_cell(dt_root_size_cells, &reg);
+
+	/* We're in ZONE_DMA32 */
+	if (size > (1ULL << 32))
+		size = 1ULL << 32;
+
+	if (*dma_phys_limit > (phys_addr + size))
+		*dma_phys_limit = phys_addr + size;
+
+	return 0;
+}
+
 /*
- * Return the maximum physical address for ZONE_DMA32 (DMA_BIT_MASK(32)). It
- * currently assumes that for memory starting above 4G, 32-bit devices will
- * use a DMA offset.
+ * Return the maximum physical address for ZONE_DMA32. It currently assumes
+ * that for memory starting above 4G, 32-bit devices will use a DMA offset.
  */
 static phys_addr_t __init max_zone_dma_phys(void)
 {
-	phys_addr_t offset = memblock_start_of_DRAM() & GENMASK_ULL(63, 32);
+	phys_addr_t dma_phys_limit = ~0;
+	phys_addr_t offset;
+
+	/*
+	 * We walk the whole fdt looking for nodes with dma-ranges, calculate
+	 * the max_zone_dma_phys for them and keep going. We end-up getting the
+	 * lowest common denominator of all the matches.
+	 */
+	of_scan_flat_dt(early_init_dt_scan_dma_ranges, &dma_phys_limit);
+	if (dma_phys_limit != ~0)
+		return dma_phys_limit;
+
+	/* If no dma-ranges property was found we try to infer the value */
+	offset = memblock_start_of_DRAM() & GENMASK_ULL(63, 32);
 	return min(offset + (1ULL << 32), memblock_end_of_DRAM());
 }
 
