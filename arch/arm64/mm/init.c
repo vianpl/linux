@@ -194,7 +194,7 @@ static int __init early_init_dt_scan_dma_ranges(unsigned long node,
 	phys_addr = dt_mem_next_cell(dt_root_addr_cells, &reg);
 	size = dt_mem_next_cell(dt_root_size_cells, &reg);
 
-	/* We're in ZONE_DMA32 */
+	/* We're in ZONE_DMA */
 	if (size > (1ULL << 32))
 		size = 1ULL << 32;
 
@@ -205,7 +205,7 @@ static int __init early_init_dt_scan_dma_ranges(unsigned long node,
 }
 
 /*
- * Return the maximum physical address for ZONE_DMA32. It currently assumes
+ * Return the maximum physical address for ZONE_DMA. It currently assumes
  * that for memory starting above 4G, 32-bit devices will use a DMA offset.
  */
 static phys_addr_t __init max_zone_dma_phys(void)
@@ -233,8 +233,8 @@ static void __init zone_sizes_init(unsigned long min, unsigned long max)
 {
 	unsigned long max_zone_pfns[MAX_NR_ZONES]  = {0};
 
-#ifdef CONFIG_ZONE_DMA32
-	max_zone_pfns[ZONE_DMA32] = PFN_DOWN(arm64_dma_phys_limit);
+#ifdef CONFIG_ZONE_DMA
+	max_zone_pfns[ZONE_DMA] = PFN_DOWN(arm64_dma_phys_limit);
 #endif
 	max_zone_pfns[ZONE_NORMAL] = max;
 
@@ -252,9 +252,9 @@ static void __init zone_sizes_init(unsigned long min, unsigned long max)
 	memset(zone_size, 0, sizeof(zone_size));
 
 	/* 4GB maximum for 32-bit only capable devices */
-#ifdef CONFIG_ZONE_DMA32
+#ifdef CONFIG_ZONE_DMA
 	max_dma = PFN_DOWN(arm64_dma_phys_limit);
-	zone_size[ZONE_DMA32] = max_dma - min;
+	zone_size[ZONE_DMA] = max_dma - min;
 #endif
 	zone_size[ZONE_NORMAL] = max - max_dma;
 
@@ -267,10 +267,10 @@ static void __init zone_sizes_init(unsigned long min, unsigned long max)
 		if (start >= max)
 			continue;
 
-#ifdef CONFIG_ZONE_DMA32
+#ifdef CONFIG_ZONE_DMA
 		if (start < max_dma) {
 			unsigned long dma_end = min(end, max_dma);
-			zhole_size[ZONE_DMA32] -= dma_end - start;
+			zhole_size[ZONE_DMA] -= dma_end - start;
 		}
 #endif
 		if (end > max_dma) {
@@ -459,7 +459,7 @@ void __init arm64_memblock_init(void)
 	early_init_fdt_scan_reserved_mem();
 
 	/* 4GB maximum for 32-bit only capable devices */
-	if (IS_ENABLED(CONFIG_ZONE_DMA32))
+	if (IS_ENABLED(CONFIG_ZONE_DMA))
 		arm64_dma_phys_limit = max_zone_dma_phys();
 	else
 		arm64_dma_phys_limit = PHYS_MASK + 1;
