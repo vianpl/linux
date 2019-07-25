@@ -1137,9 +1137,9 @@ static const struct dma_map_ops *arm_get_dma_map_ops(bool coherent)
 	 * latter is also selected by the Xen code, but that code for now relies
 	 * on non-NULL dev_dma_ops.  To be cleaned up later.
 	 */
-	if (IS_ENABLED(CONFIG_ARM_LPAE))
+	//if (IS_ENABLED(CONFIG_ARM_LPAE))
 		return NULL;
-	return coherent ? &arm_coherent_dma_ops : &arm_dma_ops;
+	//return coherent ? &arm_coherent_dma_ops : &arm_dma_ops;
 }
 
 #ifdef CONFIG_ARM_DMA_USE_IOMMU
