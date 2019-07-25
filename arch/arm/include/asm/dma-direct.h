@@ -1,4 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
+#include <linux/memblock.h>
+
 #ifndef ASM_ARM_DMA_DIRECT_H
 #define ASM_ARM_DMA_DIRECT_H 1
 
@@ -16,6 +18,7 @@ static inline phys_addr_t __dma_to_phys(struct device *dev, dma_addr_t dev_addr)
 
 static inline bool dma_capable(struct device *dev, dma_addr_t addr, size_t size)
 {
+	unsigned long dma_min_addr = __phys_to_dma(dev, min_low_pfn << PAGE_SHIFT);
 	u64 limit, mask;
 
 	if (!dev->dma_mask)
@@ -28,6 +31,9 @@ static inline bool dma_capable(struct device *dev, dma_addr_t addr, size_t size)
 		return 0;
 
 	if ((addr | (addr + size - 1)) & ~mask)
+		return 0;
+
+	if (addr < dma_min_addr || addr + size - 1 < dma_min_addr)
 		return 0;
 
 	return 1;
