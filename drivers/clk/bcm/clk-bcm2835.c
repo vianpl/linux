@@ -116,6 +116,10 @@
 #define CM_EMMCDIV		0x1c4
 #define CM_EMMC2CTL		0x1d0
 #define CM_EMMC2DIV		0x1d4
+#define CM_GENET250CTL		0x1e8
+#define CM_GENET250DIV		0x1ec
+#define CM_GENET125CTL		0x210
+#define CM_GENET125DIV		0x214
 
 /* General bits for the CM_*CTL regs */
 # define CM_ENABLE			BIT(4)
@@ -2020,6 +2024,25 @@ static const struct bcm2835_clk_desc clk_desc_array[] = {
 		.int_bits = 4,
 		.frac_bits = 8,
 		.tcnt_mux = 42),
+
+	/* GENET clocks (only available for BCM2711) */
+	[BCM2711_CLOCK_GENET250]	= REGISTER_PER_CLK(
+		SOC_BCM2711,
+		.name = "genet250",
+		.ctl_reg = CM_GENET250CTL,
+		.div_reg = CM_GENET250DIV,
+		.int_bits = 4,
+		.frac_bits = 8,
+		.tcnt_mux = 45),
+
+	[BCM2711_CLOCK_GENET125]	= REGISTER_PER_CLK(
+		SOC_BCM2711,
+		.name = "genet125",
+		.ctl_reg = CM_GENET125CTL,
+		.div_reg = CM_GENET125DIV,
+		.int_bits = 4,
+		.frac_bits = 8,
+		.tcnt_mux = 50),
 
 	/* General purpose (GPIO) clocks */
 	[BCM2835_CLOCK_GP0]	= REGISTER_PER_CLK(
