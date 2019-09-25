@@ -97,6 +97,27 @@
 	status = "okay";
 };
 
+&genet {
+	phy-handle = <&phy1>;
+	phy-mode = "rgmii";
+	status = "okay";
+
+	mdio@e14 {
+		compatible = "brcm,genet-mdio-v5";
+		reg = <0xe14 0x8>;
+		reg-names = "mdio";
+		#address-cells = <0x0>;
+		#size-cells = <0x1>;
+
+		phy1: ethernet-phy@1 {
+			compatible = "ethernet-phy-ieee802.3-c22";
+			/* No PHY interrupt */
+			max-speed = <1000>;
+			reg = <0x1>;
+		};
+	};
+};
+
 /* uart0 communicates with the BT module */
 &uart0 {
 	pinctrl-names = "default";
