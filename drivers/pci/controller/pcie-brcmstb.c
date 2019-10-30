@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /* Copyright (C) 2009 - 2018 Broadcom */
+/* Copyright (C) 2019 Nicolas Saenz Julienne <nsaenzjulienne@suse.de> */
 
 #include <linux/clk.h>
 #include <linux/compiler.h>
@@ -190,10 +191,7 @@ enum {
 };
 
 enum pcie_type {
-	BCM7425,
-	BCM7435,
-	GENERIC,
-	BCM7278,
+	BCM2711,
 };
 
 struct brcm_window {
@@ -206,14 +204,12 @@ struct brcm_window {
 struct brcm_pcie {
 	struct device		*dev;
 	void __iomem		*base;
-	struct list_head	resources;
 	int			irq;
 	struct clk		*clk;
 	struct pci_bus		*root_bus;
 	struct device_node	*dn;
 	int			id;
 	bool			suspended;
-	int			num_out_wins;
 	bool			ssc;
 	int			gen;
 	struct brcm_window	out_wins[BRCM_NUM_PCIE_OUT_WINS];
@@ -234,51 +230,16 @@ static const int pcie_reg_field_info[] = {
 	[RGR1_SW_INIT_1_INIT_SHIFT] = 0x1,
 };
 
-static const int pcie_reg_field_info_bcm7278[] = {
-	[RGR1_SW_INIT_1_INIT_MASK] = 0x1,
-	[RGR1_SW_INIT_1_INIT_SHIFT] = 0x0,
-};
-
-static const int pcie_offset_bcm7425[] = {
-	[RGR1_SW_INIT_1] = 0x8010,
-	[EXT_CFG_INDEX]  = 0x8300,
-	[EXT_CFG_DATA]   = 0x8304,
-};
-
-static const struct pcie_cfg_data bcm7425_cfg = {
-	.reg_field_info	= pcie_reg_field_info,
-	.offsets	= pcie_offset_bcm7425,
-	.type		= BCM7425,
-};
-
-static const int pcie_offsets[] = {
+static const int pcie_offset_bcm2711[] = {
 	[RGR1_SW_INIT_1] = 0x9210,
 	[EXT_CFG_INDEX]  = 0x9000,
-	[EXT_CFG_DATA]   = 0x9004,
+	[EXT_CFG_DATA]   = 0x8000,
 };
 
-static const struct pcie_cfg_data bcm7435_cfg = {
+static const struct pcie_cfg_data bcm2711_cfg = {
 	.reg_field_info	= pcie_reg_field_info,
-	.offsets	= pcie_offsets,
-	.type		= BCM7435,
-};
-
-static const struct pcie_cfg_data generic_cfg = {
-	.reg_field_info	= pcie_reg_field_info,
-	.offsets	= pcie_offsets,
-	.type		= GENERIC,
-};
-
-static const int pcie_offset_bcm7278[] = {
-	[RGR1_SW_INIT_1] = 0xc010,
-	[EXT_CFG_INDEX] = 0x9000,
-	[EXT_CFG_DATA] = 0x9004,
-};
-
-static const struct pcie_cfg_data bcm7278_cfg = {
-	.reg_field_info = pcie_reg_field_info_bcm7278,
-	.offsets	= pcie_offset_bcm7278,
-	.type		= BCM7278,
+	.offsets	= pcie_offset_bcm2711,
+	.type		= BCM2711,
 };
 
 static void __iomem *brcm_pcie_map_conf(struct pci_bus *bus, unsigned int devfn,
@@ -290,18 +251,10 @@ static struct pci_ops brcm_pcie_ops = {
 	.write = pci_generic_config_write,
 };
 
-#if defined(CONFIG_MIPS)
-/* Broadcom MIPs HW implicitly does the swapping if necessary */
-#define bcm_readl(a)		__raw_readl(a)
-#define bcm_writel(d, a)	__raw_writel(d, a)
-#define bcm_readw(a)		__raw_readw(a)
-#define bcm_writew(d, a)	__raw_writew(d, a)
-#else
 #define bcm_readl(a)		readl(a)
 #define bcm_writel(d, a)	writel(d, a)
 #define bcm_readw(a)		readw(a)
 #define bcm_writew(d, a)	writew(d, a)
-#endif
 
 /* These macros extract/insert fields to host controller's register set. */
 #define RD_FLD(base, reg, field) \
@@ -319,11 +272,6 @@ static struct pci_ops brcm_pcie_ops = {
 #define INSERT_FIELD(val, reg, field, field_val) \
 	(((val) & ~reg##_##field##_MASK) | \
 	 (reg##_##field##_MASK & (field_val << reg##_##field##_SHIFT)))
-
-static phys_addr_t scb_size[BRCM_MAX_SCB];
-static int num_memc;
-static int num_pcie;
-static DEFINE_MUTEX(brcm_pcie_lock);
 
 static u32 rd_fld(void __iomem *p, u32 mask, int shift)
 {
@@ -516,20 +464,18 @@ static void brcm_pcie_set_outbound_win(struct brcm_pcie *pcie,
 			   PCIE_MISC_CPU_2_PCIE_MEM_WIN0_BASE_LIMIT,
 			   LIMIT, limit_addr_mb);
 
-	if (pcie->type != BCM7435 && pcie->type != BCM7425) {
-		/* Write the cpu addr high register */
-		tmp = (u32)(cpu_addr_mb >>
-			PCIE_MISC_CPU_2_PCIE_MEM_WIN0_BASE_LIMIT_NUM_MASK_BITS);
-		WR_FLD_WITH_OFFSET(base, (win * 8),
-				   PCIE_MISC_CPU_2_PCIE_MEM_WIN0_BASE_HI,
-				   BASE, tmp);
-		/* Write the cpu limit high register */
-		tmp = (u32)(limit_addr_mb >>
-			PCIE_MISC_CPU_2_PCIE_MEM_WIN0_BASE_LIMIT_NUM_MASK_BITS);
-		WR_FLD_WITH_OFFSET(base, (win * 8),
-				   PCIE_MISC_CPU_2_PCIE_MEM_WIN0_LIMIT_HI,
-				   LIMIT, tmp);
-	}
+	/* Write the cpu addr high register */
+	tmp = (u32)(cpu_addr_mb >>
+		PCIE_MISC_CPU_2_PCIE_MEM_WIN0_BASE_LIMIT_NUM_MASK_BITS);
+	WR_FLD_WITH_OFFSET(base, (win * 8),
+			   PCIE_MISC_CPU_2_PCIE_MEM_WIN0_BASE_HI,
+			   BASE, tmp);
+	/* Write the cpu limit high register */
+	tmp = (u32)(limit_addr_mb >>
+		PCIE_MISC_CPU_2_PCIE_MEM_WIN0_BASE_LIMIT_NUM_MASK_BITS);
+	WR_FLD_WITH_OFFSET(base, (win * 8),
+			   PCIE_MISC_CPU_2_PCIE_MEM_WIN0_LIMIT_HI,
+			   LIMIT, tmp);
 }
 
 /* Configuration space read/write support */
@@ -572,9 +518,9 @@ static void __iomem *brcm_pcie_map_conf(struct pci_bus *bus, unsigned int devfn,
 		return PCI_SLOT(devfn) ? NULL : base + where;
 
 	/* For devices, write to the config space index register */
-	idx = cfg_index(bus->number, devfn, where);
+	idx = cfg_index(bus->number, devfn, 0);
 	bcm_writel(idx, pcie->base + IDX_ADDR(pcie));
-	return base + DATA_ADDR(pcie) + (where & 0x3);
+	return base + DATA_ADDR(pcie) + where;
 }
 
 static inline void brcm_pcie_bridge_sw_init_set(struct brcm_pcie *pcie,
@@ -589,104 +535,82 @@ static inline void brcm_pcie_bridge_sw_init_set(struct brcm_pcie *pcie,
 static inline void brcm_pcie_perst_set(struct brcm_pcie *pcie,
 				       unsigned int val)
 {
-	if (pcie->type != BCM7278)
-		wr_fld_rb(pcie->base + PCIE_RGR1_SW_INIT_1(pcie),
-			  PCIE_RGR1_SW_INIT_1_PERST_MASK,
-			  PCIE_RGR1_SW_INIT_1_PERST_SHIFT, val);
-	else
-		/* Assert = 0, de-assert = 1 on 7278 */
-		WR_FLD_RB(pcie->base, PCIE_MISC_PCIE_CTRL, PCIE_PERSTB, !val);
+	wr_fld_rb(pcie->base + PCIE_RGR1_SW_INIT_1(pcie),
+		  PCIE_RGR1_SW_INIT_1_PERST_MASK,
+		  PCIE_RGR1_SW_INIT_1_PERST_SHIFT, val);
 }
 
-static int brcm_pcie_add_controller(struct brcm_pcie *pcie)
+static inline int brcm_pcie_get_rc_bar2_size_and_offset(struct brcm_pcie *pcie,
+							u64 *rc_bar2_size,
+							u64 *rc_bar2_offset)
 {
-	int i, ret = 0;
+	struct pci_host_bridge *bridge = pci_host_bridge_from_priv(pcie);
 	struct device *dev = pcie->dev;
+	struct resource_entry *entry;
+	u64 total_mem_size = 0;
 
-	mutex_lock(&brcm_pcie_lock);
-	if (num_pcie > 0) {
-		num_pcie++;
-		goto done;
+	*rc_bar2_offset = -1;
+
+	resource_list_for_each_entry(entry, &bridge->dma_ranges) {
+		/*
+		 * We're promissed the RC will provide a contiguous view of
+		 * memory to downstream devices. We can then infer the
+		 * rc_bar2_offset from the lower avaiable dma-range offset.
+		 */
+		if (entry->offset < *rc_bar2_offset)
+			*rc_bar2_offset = entry->offset;
+
+		total_mem_size += entry->res->end - entry->res->start + 1;
 	}
 
-	/* Determine num_memc and their sizes */
-	for (i = 0, num_memc = 0; i < BRCM_MAX_SCB; i++) {
-		u64 size = brcmstb_memory_memc_size(i);
+	*rc_bar2_size = roundup_pow_of_two_64(total_mem_size);
 
-		if (size == (u64)-1) {
-			dev_err(dev, "cannot get memc%d size\n", i);
-			ret = -EINVAL;
-			goto done;
-		} else if (size) {
-			scb_size[i] = roundup_pow_of_two_64(size);
-			num_memc++;
-		} else {
-			break;
-		}
-	}
-	if (!ret && num_memc == 0) {
-		ret = -EINVAL;
-		goto done;
-	}
-
-	num_pcie++;
-done:
-	mutex_unlock(&brcm_pcie_lock);
-	return ret;
-}
-
-static void brcm_pcie_remove_controller(struct brcm_pcie *pcie)
-{
-	mutex_lock(&brcm_pcie_lock);
-	if (--num_pcie == 0)
-		num_memc = 0;
-	mutex_unlock(&brcm_pcie_lock);
-}
-
-static int brcm_pcie_parse_request_of_pci_ranges(struct brcm_pcie *pcie)
-{
-	struct resource_entry *win;
-	int ret;
-
-	ret = devm_of_pci_get_host_bridge_resources(pcie->dev, 0, 0xff,
-						    &pcie->resources, NULL);
-	if (ret) {
-		dev_err(pcie->dev, "failed to get host resources\n");
-		return ret;
+	/*
+	 * Validate the results:
+	 *
+	 * The PCIe host controller by design must set the inbound viewport to
+	 * be a contiguous arrangement of all of the system's memory.  In
+	 * addition, its size mut be a power of two.  To further complicate
+	 * matters, the viewport must start on a pcie-address that is aligned
+	 * on a multiple of its size.  If a portion of the viewport does not
+	 * represent system memory -- e.g. 3GB of memory requires a 4GB
+	 * viewport -- we can map the outbound memory in or after 3GB and even
+	 * though the viewport will overlap the outbound memory the controller
+	 * will know to send outbound memory downstream and everything else
+	 * upstream.
+	 *
+	 * For example:
+	 *
+	 * - The best-case scenario, memory up to 3GB, is to place the inbound
+	 *   region in the first 4GB of pcie-space, as some legacy devices can
+	 *   only address 32bits. We would also like to put the MSI under 4GB
+	 *   as well, since some devices require a 32bit MSI target address.
+	 *
+	 * - If the system memory is 4GB or larger we cannot start the inbound
+	 *   region at location 0 (since we have to allow some space for
+	 *   outbound memory @ 3GB). So instead it will  start at the 1x
+	 *   multiple of its size
+	 */
+	if (!*rc_bar2_size || *rc_bar2_offset % *rc_bar2_size ||
+	    (*rc_bar2_offset < SZ_4G && *rc_bar2_offset > SZ_2G)) {
+		dev_err(dev, "Invalid rc_bar2_offset/size: size 0x%llx, off 0x%llx\n",
+			*rc_bar2_size, *rc_bar2_offset);
+		return -EINVAL;
 	}
 
-	resource_list_for_each_entry(win, &pcie->resources) {
-		struct resource *res = win->res;
-		dma_addr_t offset = (dma_addr_t)win->offset;
-
-		if (resource_type(res) != IORESOURCE_MEM)
-			continue;
-
-		if (pcie->num_out_wins >= BRCM_NUM_PCIE_OUT_WINS) {
-			dev_err(pcie->dev, "too many outbound wins\n");
-			return -EINVAL;
-		}
-		pcie->out_wins[pcie->num_out_wins].cpu_addr =
-			(phys_addr_t)res->start;
-		pcie->out_wins[pcie->num_out_wins].pcie_addr =
-			(dma_addr_t)(res->start - (phys_addr_t)offset);
-		pcie->out_wins[pcie->num_out_wins].size =
-			(dma_addr_t)(res->end - res->start + 1);
-		pcie->num_out_wins++;
-	}
-
-	ret = devm_request_pci_bus_resources(pcie->dev, &pcie->resources);
-	if (ret)
-		dev_err(pcie->dev, "failed to request pci resources\n");
-	return ret;
+	return 0;
 }
 
 static int brcm_pcie_setup(struct brcm_pcie *pcie)
 {
+	struct pci_host_bridge *bridge = pci_host_bridge_from_priv(pcie);
+	u64 rc_bar2_offset, rc_bar2_size;
 	void __iomem *base = pcie->base;
+	struct resource_entry *entry;
 	unsigned int scb_size_val;
-	u64 rc_bar2_offset, rc_bar2_size, total_mem_size = 0;
-	u32 tmp, burst;
+	struct resource *res;
+	int num_out_wins = 0;
+	u32 tmp;
 	int i, j, ret, limit;
 	u16 nlw, cls, lnksta;
 	bool ssc_good = false;
@@ -694,13 +618,6 @@ static int brcm_pcie_setup(struct brcm_pcie *pcie)
 
 	/* Reset the bridge */
 	brcm_pcie_bridge_sw_init_set(pcie, 1);
-
-	/*
-	 * Ensure that the fundamental reset is asserted, except for 7278,
-	 * which fails if we do this.
-	 */
-	if (pcie->type != BCM7278)
-		brcm_pcie_perst_set(pcie, 1);
 
 	usleep_range(100, 200);
 
@@ -718,39 +635,14 @@ static int brcm_pcie_setup(struct brcm_pcie *pcie)
 	/* Set SCB_MAX_BURST_SIZE, CFG_READ_UR_MODE, SCB_ACCESS_EN */
 	tmp = INSERT_FIELD(0, PCIE_MISC_MISC_CTRL, SCB_ACCESS_EN, 1);
 	tmp = INSERT_FIELD(tmp, PCIE_MISC_MISC_CTRL, CFG_READ_UR_MODE, 1);
-	burst = (pcie->type == GENERIC || pcie->type == BCM7278)
-		? BURST_SIZE_512 : BURST_SIZE_256;
-	tmp = INSERT_FIELD(tmp, PCIE_MISC_MISC_CTRL, MAX_BURST_SIZE, burst);
+	tmp = INSERT_FIELD(tmp, PCIE_MISC_MISC_CTRL, MAX_BURST_SIZE,
+			   BURST_SIZE_128);
 	bcm_writel(tmp, base + PCIE_MISC_MISC_CTRL);
 
-	/*
-	 * Set up inbound memory view for the EP (called RC_BAR2,
-	 * not to be confused with the BARs that are advertised by
-	 * the EP).
-	 */
-	for (i = 0; i < num_memc; i++)
-		total_mem_size += scb_size[i];
-
-	/*
-	 * The PCIe host controller by design must set the inbound
-	 * viewport to be a contiguous arrangement of all of the
-	 * system's memory.  In addition, its size mut be a power of
-	 * two.  To further complicate matters, the viewport must
-	 * start on a pcie-address that is aligned on a multiple of its
-	 * size.  If a portion of the viewport does not represent
-	 * system memory -- e.g. 3GB of memory requires a 4GB viewport
-	 * -- we can map the outbound memory in or after 3GB and even
-	 * though the viewport will overlap the outbound memory the
-	 * controller will know to send outbound memory downstream and
-	 * everything else upstream.
-	 */
-	rc_bar2_size = roundup_pow_of_two_64(total_mem_size);
-
-	/*
-	 * Set simple configuration based on memory sizes
-	 * only.  We always start the viewport at address 0.
-	 */
-	rc_bar2_offset = 0;
+	ret = brcm_pcie_get_rc_bar2_size_and_offset(pcie, &rc_bar2_size,
+						    &rc_bar2_offset);
+	if (ret)
+		return ret;
 
 	tmp = lower_32_bits(rc_bar2_offset);
 	tmp = INSERT_FIELD(tmp, PCIE_MISC_RC_BAR2_CONFIG_LO, SIZE,
@@ -759,21 +651,9 @@ static int brcm_pcie_setup(struct brcm_pcie *pcie)
 	bcm_writel(upper_32_bits(rc_bar2_offset),
 		   base + PCIE_MISC_RC_BAR2_CONFIG_HI);
 
-	scb_size_val = scb_size[0]
-		? ilog2(scb_size[0]) - 15 : 0xf; /* 0xf is 1GB */
+	scb_size_val = rc_bar2_size ?
+		       ilog2(rc_bar2_size) - 15 : 0xf; /* 0xf is 1GB */
 	WR_FLD(base, PCIE_MISC_MISC_CTRL, SCB0_SIZE, scb_size_val);
-
-	if (num_memc > 1) {
-		scb_size_val = scb_size[1]
-			? ilog2(scb_size[1]) - 15 : 0xf; /* 0xf is 1GB */
-		WR_FLD(base, PCIE_MISC_MISC_CTRL, SCB1_SIZE, scb_size_val);
-	}
-
-	if (num_memc > 2) {
-		scb_size_val = scb_size[2]
-			? ilog2(scb_size[2]) - 15 : 0xf; /* 0xf is 1GB */
-		WR_FLD(base, PCIE_MISC_MISC_CTRL, SCB2_SIZE, scb_size_val);
-	}
 
 	/* disable the PCIe->GISB memory window (RC_BAR1) */
 	WR_FLD(base, PCIE_MISC_RC_BAR1_CONFIG_LO, SIZE, 0);
@@ -818,10 +698,22 @@ static int brcm_pcie_setup(struct brcm_pcie *pcie)
 		return -EINVAL;
 	}
 
-	for (i = 0; i < pcie->num_out_wins; i++)
-		brcm_pcie_set_outbound_win(pcie, i, pcie->out_wins[i].cpu_addr,
-					   pcie->out_wins[i].pcie_addr,
-					   pcie->out_wins[i].size);
+	resource_list_for_each_entry(entry, &bridge->windows) {
+		res = entry->res;
+
+		if (resource_type(res) != IORESOURCE_MEM)
+			continue;
+
+		if (num_out_wins >= BRCM_NUM_PCIE_OUT_WINS) {
+			dev_err(pcie->dev, "too many outbound wins\n");
+			return -EINVAL;
+		}
+
+		brcm_pcie_set_outbound_win(pcie, num_out_wins, res->start,
+					   res->start - entry->offset,
+					   res->end - res->start + 1);
+		num_out_wins++;
+	}
 
 	/*
 	 * For config space accesses on the RC, show the right class for
@@ -935,8 +827,6 @@ static void _brcm_pcie_remove(struct brcm_pcie *pcie)
 	turn_off(pcie);
 	clk_disable_unprepare(pcie->clk);
 	clk_put(pcie->clk);
-	pci_free_resource_list(&pcie->resources);
-	brcm_pcie_remove_controller(pcie);
 }
 
 static int brcm_pcie_remove(struct platform_device *pdev)
@@ -951,10 +841,7 @@ static int brcm_pcie_remove(struct platform_device *pdev)
 }
 
 static const struct of_device_id brcm_pcie_match[] = {
-	{ .compatible = "brcm,bcm7425-pcie", .data = &bcm7425_cfg },
-	{ .compatible = "brcm,bcm7435-pcie", .data = &bcm7435_cfg },
-	{ .compatible = "brcm,bcm7278-pcie", .data = &bcm7278_cfg },
-	{ .compatible = "brcm,bcm7445-pcie", .data = &generic_cfg },
+	{ .compatible = "brcm,bcm2711-pcie", .data = &bcm2711_cfg },
 	{},
 };
 MODULE_DEVICE_TABLE(of, brcm_pcie_match);
@@ -964,11 +851,10 @@ static int brcm_pcie_probe(struct platform_device *pdev)
 	struct device_node *dn = pdev->dev.of_node;
 	const struct of_device_id *of_id;
 	const struct pcie_cfg_data *data;
+	struct resource *res;
 	int ret;
 	struct brcm_pcie *pcie;
-	struct resource *res;
 	void __iomem *base;
-	u32 tmp;
 	struct pci_host_bridge *bridge;
 	struct pci_bus *child;
 
@@ -977,16 +863,10 @@ static int brcm_pcie_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	pcie = pci_host_bridge_priv(bridge);
-	INIT_LIST_HEAD(&pcie->resources);
 
 	of_id = of_match_node(brcm_pcie_match, dn);
 	if (!of_id) {
 		dev_err(&pdev->dev, "failed to look up compatible string\n");
-		return -EINVAL;
-	}
-
-	if (of_property_read_u32(dn, "dma-ranges", &tmp) == 0) {
-		dev_err(&pdev->dev, "cannot yet handle dma-ranges\n");
 		return -EINVAL;
 	}
 
@@ -1029,7 +909,8 @@ static int brcm_pcie_probe(struct platform_device *pdev)
 	else
 		pcie->irq = ret;
 
-	ret = brcm_pcie_parse_request_of_pci_ranges(pcie);
+	ret = pci_parse_request_of_pci_ranges(pcie->dev, &bridge->windows,
+					      &bridge->dma_ranges, NULL);
 	if (ret)
 		return ret;
 
@@ -1039,15 +920,10 @@ static int brcm_pcie_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	ret = brcm_pcie_add_controller(pcie);
-	if (ret)
-		return ret;
-
 	ret = brcm_pcie_setup(pcie);
 	if (ret)
 		goto fail;
 
-	list_splice_init(&pcie->resources, &bridge->windows);
 	bridge->dev.parent = &pdev->dev;
 	bridge->busnr = 0;
 	bridge->ops = &brcm_pcie_ops;
