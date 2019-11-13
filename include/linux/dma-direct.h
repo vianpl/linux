@@ -39,7 +39,7 @@ static inline bool dma_capable(struct device *dev, dma_addr_t addr, size_t size)
 	    min(addr, end) < phys_to_dma(dev, PFN_PHYS(min_low_pfn)))
 		return false;
 
-	return end <= min_not_zero(*dev->dma_mask, dev->bus_dma_mask);
+	return end <= min_not_zero(*dev->dma_mask, dev->bus_dma_limit);
 }
 
 #ifdef CONFIG_ARCH_HAS_FORCE_DMA_UNENCRYPTED
