@@ -39,7 +39,7 @@ static bool cxl_pci_enable_device_hook(struct pci_dev *dev)
 		return false;
 	}
 
-	dev->dev.archdata.dma_offset = PAGE_OFFSET;
+	dev->dev.dma_pfn_offset = PHYS_PFN(-PAGE_OFFSET);
 
 	/*
 	 * Allocate a context to do cxl things too.  If we eventually do real

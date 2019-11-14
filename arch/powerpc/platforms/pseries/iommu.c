@@ -1208,8 +1208,8 @@ static bool iommu_bypass_supported_pSeriesLP(struct pci_dev *pdev, u64 dma_mask)
 	}
 
 	if (pdn && PCI_DN(pdn)) {
-		pdev->dev.archdata.dma_offset = enable_ddw(pdev, pdn);
-		if (pdev->dev.archdata.dma_offset)
+		pdev->dev.dma_pfn_offset = PHYS_PFN(-enable_ddw(pdev, pdn));
+		if (pdev->dev.dma_pfn_offset)
 			return true;
 	}
 

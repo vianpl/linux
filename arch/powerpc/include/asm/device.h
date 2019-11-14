@@ -23,12 +23,6 @@ struct dev_archdata {
 	 * window instead of dynamically mapping memory.
 	 */
 	bool			iommu_bypass : 1;
-	/*
-	 * These two used to be a union. However, with the hybrid ops we need
-	 * both so here we store both a DMA offset for direct mappings and
-	 * an iommu_table for remapped DMA.
-	 */
-	dma_addr_t		dma_offset;
 
 #ifdef CONFIG_PPC64
 	struct iommu_table	*iommu_table_base;

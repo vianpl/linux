@@ -564,10 +564,11 @@ static void cell_dma_dev_setup(struct device *dev)
 		u64 addr = cell_iommu_get_fixed_address(dev);
 
 		if (addr != OF_BAD_ADDR)
-			dev->archdata.dma_offset = addr + dma_iommu_fixed_base;
+			dev->dma_pfn_offset =
+				PHYS_PFN(-(addr + dma_iommu_fixed_base));
 		set_iommu_table_base(dev, cell_get_iommu_table(dev));
 	} else {
-		dev->archdata.dma_offset = cell_dma_nommu_offset;
+		dev->dma_pfn_offset = PHYS_PFN(-cell_dma_nommu_offset);
 	}
 }
 
