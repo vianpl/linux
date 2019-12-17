@@ -55,7 +55,7 @@ void ef4_schedule_slow_fill(struct ef4_rx_queue *rx_queue);
 
 #define EF4_MAX_DMAQ_SIZE 4096UL
 #define EF4_DEFAULT_DMAQ_SIZE 1024UL
-#define EF4_MIN_DMAQ_SIZE 512UL
+#define EF4_MIN_DMAQ_SIZE 512U
 
 #define EF4_MAX_EVQ_SIZE 16384UL
 #define EF4_MIN_EVQ_SIZE 512UL

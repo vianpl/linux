@@ -14199,10 +14199,10 @@ static int qos_rmt_entries(struct hfi1_devdata *dd, unsigned int *mp,
 			max_by_vl = krcvqs[i];
 	if (max_by_vl > 32)
 		goto no_qos;
-	m = ilog2(__roundup_pow_of_two(max_by_vl));
+	m = ilog2(roundup_pow_of_two(max_by_vl));
 
 	/* determine bits for vl */
-	n = ilog2(__roundup_pow_of_two(num_vls));
+	n = ilog2(roundup_pow_of_two(num_vls));
 
 	/* reject if too much is used */
 	if ((m + n) > 7)

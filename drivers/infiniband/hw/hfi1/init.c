@@ -467,7 +467,7 @@ int hfi1_create_ctxtdata(struct hfi1_pportdata *ppd, int numa,
 		 * MTU supported.
 		 */
 		if (rcd->egrbufs.size < hfi1_max_mtu) {
-			rcd->egrbufs.size = __roundup_pow_of_two(hfi1_max_mtu);
+			rcd->egrbufs.size = roundup_pow_of_two(hfi1_max_mtu);
 			hfi1_cdbg(PROC,
 				  "ctxt%u: eager bufs size too small. Adjusting to %u\n",
 				    rcd->ctxt, rcd->egrbufs.size);
@@ -1928,7 +1928,7 @@ int hfi1_setup_eagerbufs(struct hfi1_ctxtdata *rcd)
 	gfp_t gfp_flags;
 	u16 order, idx = 0;
 	int ret = 0;
-	u16 round_mtu = roundup_pow_of_two(hfi1_max_mtu);
+	u32 round_mtu = roundup_pow_of_two(hfi1_max_mtu);
 
 	/*
 	 * GFP_USER, but without GFP_FS, so buffer cache can be
@@ -1959,7 +1959,7 @@ int hfi1_setup_eagerbufs(struct hfi1_ctxtdata *rcd)
 	 * to satisfy the "multiple of 8 RcvArray entries" requirement.
 	 */
 	if (rcd->egrbufs.size <= (1 << 20))
-		rcd->egrbufs.rcvtid_size = max((unsigned long)round_mtu,
+		rcd->egrbufs.rcvtid_size = max(round_mtu,
 			rounddown_pow_of_two(rcd->egrbufs.size / 8));
 
 	while (alloced_bytes < rcd->egrbufs.size &&

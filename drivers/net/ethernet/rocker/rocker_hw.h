@@ -88,8 +88,8 @@ enum rocker_dma_type {
 };
 
 /* Rocker DMA ring size limits and default sizes */
-#define ROCKER_DMA_SIZE_MIN		2ul
-#define ROCKER_DMA_SIZE_MAX		65536ul
+#define ROCKER_DMA_SIZE_MIN		2u
+#define ROCKER_DMA_SIZE_MAX		65536u
 #define ROCKER_DMA_CMD_DEFAULT_SIZE	32ul
 #define ROCKER_DMA_EVENT_DEFAULT_SIZE	32ul
 #define ROCKER_DMA_TX_DEFAULT_SIZE	64ul

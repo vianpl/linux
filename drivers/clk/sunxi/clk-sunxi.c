@@ -311,7 +311,7 @@ static void sun6i_get_ahb1_factors(struct factors_request *req)
 
 		calcm = DIV_ROUND_UP(div, 1 << calcp);
 	} else {
-		calcp = __roundup_pow_of_two(div);
+		calcp = roundup_pow_of_two(div);
 		calcp = calcp > 3 ? 3 : calcp;
 	}
 

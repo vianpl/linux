@@ -950,7 +950,7 @@ static size_t rounded_hashtable_size(const struct rhashtable_params *params)
 
 	if (params->nelem_hint)
 		retsize = max(roundup_pow_of_two(params->nelem_hint * 4 / 3),
-			      (unsigned long)params->min_size);
+			      (int)params->min_size);
 	else
 		retsize = max(HASH_DEFAULT_SIZE,
 			      (unsigned long)params->min_size);

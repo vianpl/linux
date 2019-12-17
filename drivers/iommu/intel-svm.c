@@ -115,7 +115,7 @@ static void intel_flush_svm_range_dev (struct intel_svm *svm, struct intel_svm_d
 			QI_EIOTLB_TYPE;
 		desc.qw1 = 0;
 	} else {
-		int mask = ilog2(__roundup_pow_of_two(pages));
+		int mask = ilog2(roundup_pow_of_two(pages));
 
 		desc.qw0 = QI_EIOTLB_PASID(svm->pasid) |
 				QI_EIOTLB_DID(sdev->did) |
@@ -142,7 +142,7 @@ static void intel_flush_svm_range_dev (struct intel_svm *svm, struct intel_svm_d
 			 * for example, an "address" value of 0x12345f000 will
 			 * flush from 0x123440000 to 0x12347ffff (256KiB). */
 			unsigned long last = address + ((unsigned long)(pages - 1) << VTD_PAGE_SHIFT);
-			unsigned long mask = __rounddown_pow_of_two(address ^ last);
+			unsigned long mask = rounddown_pow_of_two(address ^ last);
 
 			desc.qw1 = QI_DEV_EIOTLB_ADDR((address & ~mask) |
 					(mask - 1)) | QI_DEV_EIOTLB_SIZE;

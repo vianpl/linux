@@ -113,7 +113,7 @@ static int alloc_irte(struct intel_iommu *iommu,
 		return -1;
 
 	if (count > 1) {
-		count = __roundup_pow_of_two(count);
+		count = roundup_pow_of_two(count);
 		mask = ilog2(count);
 	}
 

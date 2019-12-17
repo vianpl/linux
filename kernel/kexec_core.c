@@ -1094,7 +1094,7 @@ static int __init crash_notes_memory_init(void)
 	 * crash_notes is allocated inside one physical page.
 	 */
 	size = sizeof(note_buf_t);
-	align = min(roundup_pow_of_two(sizeof(note_buf_t)), PAGE_SIZE);
+	align = min(roundup_pow_of_two(sizeof(note_buf_t)), (size_t)PAGE_SIZE);
 
 	/*
 	 * Break compile if size is bigger than PAGE_SIZE since crash_notes

@@ -1076,7 +1076,7 @@ found_ep:
 		case USB_ENDPOINT_XFER_INT:
 			if (desc->wMaxPacketSize == 0)
 				ep->fifo_size =
-				    roundup_pow_of_two(_ep->maxpacket_limit);
+				    roundup_pow_of_two((u16)_ep->maxpacket_limit);
 			else
 				ep->fifo_size =
 				    roundup_pow_of_two(le16_to_cpu(desc->wMaxPacketSize));

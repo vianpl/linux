@@ -96,7 +96,7 @@ int mlx4_ib_create_srq(struct ib_srq *ib_srq,
 	srq->msrq.max    = roundup_pow_of_two(init_attr->attr.max_wr + 1);
 	srq->msrq.max_gs = init_attr->attr.max_sge;
 
-	desc_size = max(32UL,
+	desc_size = max(32,
 			roundup_pow_of_two(sizeof (struct mlx4_wqe_srq_next_seg) +
 					   srq->msrq.max_gs *
 					   sizeof (struct mlx4_wqe_data_seg)));

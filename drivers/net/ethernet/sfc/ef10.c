@@ -27,7 +27,7 @@ enum {
 };
 /* The maximum size of a shared RSS context */
 /* TODO: this should really be from the mcdi protocol export */
-#define EFX_EF10_MAX_SHARED_RSS_CONTEXT_SIZE 64UL
+#define EFX_EF10_MAX_SHARED_RSS_CONTEXT_SIZE 64U
 
 /* The filter table(s) are managed by firmware and we have write-only
  * access.  When removing filters we must identify them to the

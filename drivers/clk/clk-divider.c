@@ -222,7 +222,7 @@ static int _div_round_up(const struct clk_div_table *table,
 	int div = DIV_ROUND_UP_ULL((u64)parent_rate, rate);
 
 	if (flags & CLK_DIVIDER_POWER_OF_TWO)
-		div = __roundup_pow_of_two(div);
+		div = roundup_pow_of_two(div);
 	if (table)
 		div = _round_up_table(table, div);
 
@@ -240,8 +240,8 @@ static int _div_round_closest(const struct clk_div_table *table,
 	down = parent_rate / rate;
 
 	if (flags & CLK_DIVIDER_POWER_OF_TWO) {
-		up = __roundup_pow_of_two(up);
-		down = __rounddown_pow_of_two(down);
+		up = roundup_pow_of_two(up);
+		down = rounddown_pow_of_two(down);
 	} else if (table) {
 		up = _round_up_table(table, up);
 		down = _round_down_table(table, down);
@@ -278,7 +278,7 @@ static int _next_div(const struct clk_div_table *table, int div,
 	div++;
 
 	if (flags & CLK_DIVIDER_POWER_OF_TWO)
-		return __roundup_pow_of_two(div);
+		return roundup_pow_of_two(div);
 	if (table)
 		return _round_up_table(table, div);
 

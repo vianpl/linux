@@ -680,13 +680,13 @@ static int xgbe_set_ringparam(struct net_device *netdev,
 		return -EINVAL;
 	}
 
-	rx = __rounddown_pow_of_two(ringparam->rx_pending);
+	rx = rounddown_pow_of_two(ringparam->rx_pending);
 	if (rx != ringparam->rx_pending)
 		netdev_notice(netdev,
 			      "rx ring parameter rounded to power of two: %u\n",
 			      rx);
 
-	tx = __rounddown_pow_of_two(ringparam->tx_pending);
+	tx = rounddown_pow_of_two(ringparam->tx_pending);
 	if (tx != ringparam->tx_pending)
 		netdev_notice(netdev,
 			      "tx ring parameter rounded to power of two: %u\n",

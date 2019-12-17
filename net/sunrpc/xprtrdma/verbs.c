@@ -1015,7 +1015,7 @@ struct rpcrdma_req *rpcrdma_req_create(struct rpcrdma_xprt *r_xprt, size_t size,
 	maxhdrsize = rpcrdma_fixed_maxsz + 3 +
 		     r_xprt->rx_ia.ri_max_segs * rpcrdma_readchunk_maxsz;
 	maxhdrsize *= sizeof(__be32);
-	rb = rpcrdma_regbuf_alloc(__roundup_pow_of_two(maxhdrsize),
+	rb = rpcrdma_regbuf_alloc(roundup_pow_of_two(maxhdrsize),
 				  DMA_TO_DEVICE, flags);
 	if (!rb)
 		goto out2;
