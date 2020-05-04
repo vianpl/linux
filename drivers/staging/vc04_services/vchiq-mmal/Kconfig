@@ -5,4 +5,5 @@ config BCM2835_VCHIQ_MMAL
 	help
 	  Enables the MMAL API over VCHIQ interface as used for the
 	  majority of the multimedia services on VideoCore.
-	  Defaults to Y when the Broadcomd BCM2835 camera host is selected.
+	  Defaults to Y when the Broadcomd BCM2835 camera host or ISP are
+	  selected.
