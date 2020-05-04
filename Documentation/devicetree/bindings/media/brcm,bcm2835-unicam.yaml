@@ -1,0 +1,155 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+# Copyright (C) 2020 Raspberry Pi (Trading) Ltd.
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/media/brcm,bcm2835-unicam.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Broadcom BCM283x Camera Interface (Unicam)
+
+maintainers:
+  - Dave Stevenson <dave.stevenson@raspberrypi.com>
+  - Raspberry Pi kernel list <kernel-list@raspberrypi.com>
+
+description:
+  The Unicam block on BCM283x SoCs is the receiver for either CSI-2 or CCP2
+  data from image sensors or similar devices.
+
+  The main platform using this SoC is the Raspberry Pi family of boards. On the
+  Pi the VideoCore firmware can also control this hardware block, and driving
+  it from two different processors will cause issues. To avoid this, the
+  firmware checks the device tree configuration during boot. If it finds device
+  tree nodes whose name starts with "csi" then it will stop the firmware
+  accessing the block, and it can then safely be used via the device tree
+  binding.
+
+properties:
+  compatible:
+    const: brcm,bcm2835-unicam
+
+  reg:
+    items:
+      - description: Main registers block
+      - description: Clock registers block
+
+  interrupts:
+    maxItems: 1
+
+  clocks:
+    minItems: 1
+    maxItems: 2
+
+  clock-names:
+    minItems: 1
+    items:
+      - const: lp
+      - const: core
+
+  power-domains:
+    maxItems: 1
+
+  brcm,num-data-lanes:
+    description:
+      The number of data lanes supported by this Unicam instance. It may be
+      larger than the number of data lanes routed on the board, as described by
+      the data-lanes property of the endpoint.
+    allOf:
+      - $ref: "/schemas/types.yaml#/definitions/uint32"
+      - enum: [1, 2, 4]
+
+  port:
+    type: object
+    description:
+      Input port node, as described in video-interfaces.txt.
+
+    properties:
+      endpoint:
+        type: object
+
+        properties:
+          clock-lanes:
+            items:
+              - const: 0
+
+          data-lanes:
+            description:
+              Lane reordering is not supported, items shall be in order,
+              starting at 1.
+            allOf:
+              - $ref: "/schemas/types.yaml#/definitions/uint32-array"
+              - maxItems: 1
+                items:
+                  minItems: 1
+                  maxItems: 4
+                  items:
+                    - const: 1
+                    - const: 2
+                    - const: 3
+                    - const: 4
+
+          lane-polarities:
+            description:
+              Lane inversion is not supported. If the property is specified, it
+              shall contain all 0's.
+            allOf:
+              - $ref: "/schemas/types.yaml#/definitions/uint32-array"
+              - maxItems: 1
+                items:
+                  minItems: 2
+                  maxItems: 5
+                  items:
+                    - const: 0
+                    - const: 0
+                    - const: 0
+                    - const: 0
+                    - const: 0
+
+          remote-endpoint: true
+
+        required:
+          - data-lanes
+          - remote-endpoint
+
+        additionalProperties: false
+
+    required:
+      - endpoint
+
+    additionalProperties: false
+
+required:
+  - compatible
+  - reg
+  - interrupts
+  - clocks
+  - clock-names
+  - power-domains
+  - brcm,num-data-lanes
+  - port
+
+additionalProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/clock/bcm2835.h>
+    #include <dt-bindings/interrupt-controller/arm-gic.h>
+    #include <dt-bindings/power/raspberrypi-power.h>
+
+    csi@7e801000 {
+        compatible = "brcm,bcm2835-unicam";
+        reg = <0x7e801000 0x800>,
+              <0x7e802004 0x4>;
+        interrupts = <2 7>;
+        clocks = <&clocks BCM2835_CLOCK_CAM1>;
+        clock-names = "lp";
+        power-domains = <&power RPI_POWER_DOMAIN_UNICAM1>;
+        brcm,num-data-lanes = <4>;
+
+        port {
+            csi1_ep: endpoint {
+                remote-endpoint = <&imx219_0>;
+                data-lanes = <1 2>;
+            };
+        };
+    };
+...
