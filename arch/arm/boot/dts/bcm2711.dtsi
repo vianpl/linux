@@ -2,6 +2,7 @@
 #include "bcm283x.dtsi"
 
 #include <dt-bindings/interrupt-controller/arm-gic.h>
+#include <dt-bindings/power/raspberrypi-power.h>
 #include <dt-bindings/soc/bcm2835-pm.h>
 
 / {
@@ -243,6 +244,48 @@
 
 		hvs@7e400000 {
 			interrupts = <GIC_SPI 97 IRQ_TYPE_LEVEL_HIGH>;
+		};
+
+		csi0: csi@7e800000 {
+			compatible = "brcm,bcm2835-unicam";
+			reg = <0x7e800000 0x800>,
+			      <0x7e802000 0x4>;
+			interrupts = <GIC_SPI 102 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&clocks BCM2835_CLOCK_CAM0>;
+			clock-names = "lp";
+			power-domains = <&power RPI_POWER_DOMAIN_UNICAM0>;
+			brcm,num-data-lanes = <2>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			#clock-cells = <1>;
+			status = "disabled";
+
+			port {
+				endpoint {
+					data-lanes = <1 2>;
+				};
+			};
+		};
+
+		csi1: csi@7e801000 {
+			compatible = "brcm,bcm2835-unicam";
+			reg = <0x7e801000 0x800>,
+			      <0x7e802004 0x4>;
+			interrupts = <GIC_SPI 103 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&clocks BCM2835_CLOCK_CAM1>;
+			clock-names = "lp";
+			power-domains = <&power RPI_POWER_DOMAIN_UNICAM1>;
+			brcm,num-data-lanes = <4>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			#clock-cells = <1>;
+			status = "disabled";
+
+			port {
+				endpoint {
+					data-lanes = <1 2 3 4>;
+				};
+			};
 		};
 	};
 
