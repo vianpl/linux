@@ -1,16 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
 /* Copyright (c) 2010-2012 Broadcom. All rights reserved. */
 
-#include "vchiq_util.h"
+#include <linux/log2.h>
 
-static inline int is_pow2(int i)
-{
-	return i && !(i & (i - 1));
-}
+#include "vchiq_util.h"
 
 int vchiu_queue_init(struct vchiu_queue *queue, int size)
 {
-	WARN_ON(!is_pow2(size));
+	WARN_ON(!is_power_of_2(size));
 
 	queue->size = size;
 	queue->read = 0;
