@@ -23,7 +23,7 @@ struct shim_service {
  *
  * Arguments:  struct vchi_service_handle *handle,
  *             void **data,
- *             uint32_t *msg_size,
+ *             unsigned *msg_size,
 
  *             enum vchi_flags flags
  *
@@ -31,12 +31,12 @@ struct shim_service {
  *              place processing). The message can be removed using
  *              vchi_msg_remove when you're finished
  *
- * Returns: int32_t - success == 0
+ * Returns: int - success == 0
  *
  ***********************************************************/
-int32_t vchi_msg_peek(struct vchi_service_handle *handle,
+int vchi_msg_peek(struct vchi_service_handle *handle,
 		      void **data,
-		      uint32_t *msg_size,
+		      unsigned *msg_size,
 		      enum vchi_flags flags)
 {
 	struct shim_service *service = (struct shim_service *)handle;
@@ -66,10 +66,10 @@ EXPORT_SYMBOL(vchi_msg_peek);
  * Description: Routine to remove a message (after it has been read with
  *              vchi_msg_peek)
  *
- * Returns: int32_t - success == 0
+ * Returns: int - success == 0
  *
  ***********************************************************/
-int32_t vchi_msg_remove(struct vchi_service_handle *handle)
+int vchi_msg_remove(struct vchi_service_handle *handle)
 {
 	struct shim_service *service = (struct shim_service *)handle;
 	struct vchiq_header *header;
@@ -111,17 +111,17 @@ EXPORT_SYMBOL(vchi_queue_kernel_message);
  *
  * Arguments:  VCHI_BULK_HANDLE_T handle,
  *             void *data_dst,
- *             const uint32_t data_size,
+ *             const unsigned data_size,
  *             enum vchi_flags flags
  *             void *bulk_handle
  *
  * Description: Routine to setup a rcv buffer
  *
- * Returns: int32_t - success == 0
+ * Returns: int - success == 0
  *
  ***********************************************************/
-int32_t vchi_bulk_queue_receive(struct vchi_service_handle *handle, void *data_dst,
-				uint32_t data_size, enum vchi_flags flags,
+int vchi_bulk_queue_receive(struct vchi_service_handle *handle, void *data_dst,
+				unsigned data_size, enum vchi_flags flags,
 				void *bulk_handle)
 {
 	struct shim_service *service = (struct shim_service *)handle;
@@ -169,18 +169,18 @@ EXPORT_SYMBOL(vchi_bulk_queue_receive);
  *
  * Arguments:  VCHI_BULK_HANDLE_T handle,
  *             const void *data_src,
- *             uint32_t data_size,
+ *             unsigned data_size,
  *             enum vchi_flags flags,
  *             void *bulk_handle
  *
  * Description: Routine to transmit some data
  *
- * Returns: int32_t - success == 0
+ * Returns: int - success == 0
  *
  ***********************************************************/
-int32_t vchi_bulk_queue_transmit(struct vchi_service_handle *handle,
+int vchi_bulk_queue_transmit(struct vchi_service_handle *handle,
 				 const void *data_src,
-				 uint32_t data_size,
+				 unsigned data_size,
 				 enum vchi_flags flags,
 				 void *bulk_handle)
 {
@@ -231,18 +231,18 @@ EXPORT_SYMBOL(vchi_bulk_queue_transmit);
  *
  * Arguments:  struct vchi_service_handle *handle,
  *             void *data,
- *             uint32_t max_data_size_to_read,
- *             uint32_t *actual_msg_size
+ *             unsigned max_data_size_to_read,
+ *             unsigned *actual_msg_size
  *             enum vchi_flags flags
  *
  * Description: Routine to dequeue a message into the supplied buffer
  *
- * Returns: int32_t - success == 0
+ * Returns: int - success == 0
  *
  ***********************************************************/
-int32_t vchi_msg_dequeue(struct vchi_service_handle *handle, void *data,
-			 uint32_t max_data_size_to_read,
-			 uint32_t *actual_msg_size, enum vchi_flags flags)
+int vchi_msg_dequeue(struct vchi_service_handle *handle, void *data,
+			 unsigned max_data_size_to_read,
+			 unsigned *actual_msg_size, enum vchi_flags flags)
 {
 	struct shim_service *service = (struct shim_service *)handle;
 	struct vchiq_header *header;
@@ -275,10 +275,10 @@ EXPORT_SYMBOL(vchi_msg_dequeue);
  * Description: Routine to release a held message (after it has been read with
  *              vchi_msg_hold)
  *
- * Returns: int32_t - success == 0
+ * Returns: int - success == 0
  *
  ***********************************************************/
-int32_t vchi_held_msg_release(struct vchi_held_msg *message)
+int vchi_held_msg_release(struct vchi_held_msg *message)
 {
 	/*
 	 * Convert the service field pointer back to an
@@ -300,7 +300,7 @@ EXPORT_SYMBOL(vchi_held_msg_release);
  *
  * Arguments:  struct vchi_service_handle *handle,
  *             void **data,
- *             uint32_t *msg_size,
+ *             unsigned *msg_size,
  *             enum vchi_flags flags,
  *             struct vchi_held_msg *message_handle
  *
@@ -309,11 +309,11 @@ EXPORT_SYMBOL(vchi_held_msg_release);
  *              to release the message using vchi_held_msg_release when you're
  *              finished.
  *
- * Returns: int32_t - success == 0
+ * Returns: int - success == 0
  *
  ***********************************************************/
-int32_t vchi_msg_hold(struct vchi_service_handle *handle, void **data,
-		      uint32_t *msg_size, enum vchi_flags flags,
+int vchi_msg_hold(struct vchi_service_handle *handle, void **data,
+		      unsigned *msg_size, enum vchi_flags flags,
 		      struct vchi_held_msg *message_handle)
 {
 	struct shim_service *service = (struct shim_service *)handle;
@@ -360,7 +360,7 @@ EXPORT_SYMBOL(vchi_msg_hold);
  *
  ***********************************************************/
 
-int32_t vchi_initialise(struct vchi_instance_handle **instance_handle)
+int vchi_initialise(struct vchi_instance_handle **instance_handle)
 {
 	struct vchiq_instance *instance;
 	enum vchiq_status status;
@@ -384,7 +384,7 @@ EXPORT_SYMBOL(vchi_initialise);
  * Returns: 0 if successful, failure otherwise
  *
  ***********************************************************/
-int32_t vchi_connect(struct vchi_instance_handle *instance_handle)
+int vchi_connect(struct vchi_instance_handle *instance_handle)
 {
 	struct vchiq_instance *instance = (struct vchiq_instance *)instance_handle;
 
@@ -403,7 +403,7 @@ EXPORT_SYMBOL(vchi_connect);
  * Returns: 0 if successful, failure otherwise
  *
  ***********************************************************/
-int32_t vchi_disconnect(struct vchi_instance_handle *instance_handle)
+int vchi_disconnect(struct vchi_instance_handle *instance_handle)
 {
 	struct vchiq_instance *instance = (struct vchiq_instance *)instance_handle;
 
@@ -421,7 +421,7 @@ EXPORT_SYMBOL(vchi_disconnect);
  *
  * Description: Routine to open a service
  *
- * Returns: int32_t - success == 0
+ * Returns: int - success == 0
  *
  ***********************************************************/
 
@@ -515,7 +515,7 @@ static void service_free(struct shim_service *service)
 	}
 }
 
-int32_t vchi_service_open(struct vchi_instance_handle *instance_handle,
+int vchi_service_open(struct vchi_instance_handle *instance_handle,
 	struct service_creation *setup,
 	struct vchi_service_handle **handle)
 {
@@ -548,9 +548,9 @@ int32_t vchi_service_open(struct vchi_instance_handle *instance_handle,
 }
 EXPORT_SYMBOL(vchi_service_open);
 
-int32_t vchi_service_close(const struct vchi_service_handle *handle)
+int vchi_service_close(const struct vchi_service_handle *handle)
 {
-	int32_t ret = -1;
+	int ret = -1;
 	struct shim_service *service = (struct shim_service *)handle;
 
 	if (service) {
@@ -564,9 +564,9 @@ int32_t vchi_service_close(const struct vchi_service_handle *handle)
 }
 EXPORT_SYMBOL(vchi_service_close);
 
-int32_t vchi_get_peer_version(const struct vchi_service_handle *handle, short *peer_version)
+int vchi_get_peer_version(const struct vchi_service_handle *handle, short *peer_version)
 {
-	int32_t ret = -1;
+	int ret = -1;
 	struct shim_service *service = (struct shim_service *)handle;
 
 	if (service) {
@@ -589,9 +589,9 @@ EXPORT_SYMBOL(vchi_get_peer_version);
  * Returns: void
  *
  ***********************************************************/
-int32_t vchi_service_use(const struct vchi_service_handle *handle)
+int vchi_service_use(const struct vchi_service_handle *handle)
 {
-	int32_t ret = -1;
+	int ret = -1;
 
 	struct shim_service *service = (struct shim_service *)handle;
 	if (service)
@@ -610,9 +610,9 @@ EXPORT_SYMBOL(vchi_service_use);
  * Returns: void
  *
  ***********************************************************/
-int32_t vchi_service_release(const struct vchi_service_handle *handle)
+int vchi_service_release(const struct vchi_service_handle *handle)
 {
-	int32_t ret = -1;
+	int ret = -1;
 
 	struct shim_service *service = (struct shim_service *)handle;
 	if (service)

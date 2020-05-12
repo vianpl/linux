@@ -99,8 +99,8 @@ vchi_queue_kernel_message(struct vchi_service_handle *handle,
 // Dequeue is equivalent to hold, copy into client buffer, release
 extern int32_t vchi_msg_dequeue(struct vchi_service_handle *handle,
 				void *data,
-				uint32_t max_data_size_to_read,
-				uint32_t *actual_msg_size,
+				unsigned max_data_size_to_read,
+				unsigned *actual_msg_size,
 				enum vchi_flags flags);
 
 // Routine to look at a message in place.
@@ -108,7 +108,7 @@ extern int32_t vchi_msg_dequeue(struct vchi_service_handle *handle,
 // will return the same message.
 extern int32_t vchi_msg_peek(struct vchi_service_handle *handle,
 			     void **data,
-			     uint32_t *msg_size,
+			     unsigned *msg_size,
 			     enum vchi_flags flags);
 
 // Routine to remove a message after it has been read in place with peek
@@ -120,7 +120,7 @@ extern int32_t vchi_msg_remove(struct vchi_service_handle *handle);
 // filled in and must be released when the user has finished with the message.
 extern int32_t vchi_msg_hold(struct vchi_service_handle *handle,
 			     void **data,        // } may be NULL, as info can be
-			     uint32_t *msg_size, // } obtained from HELD_MSG_T
+			     unsigned *msg_size, // } obtained from HELD_MSG_T
 			     enum vchi_flags flags,
 			     struct vchi_held_msg *message_descriptor);
 
@@ -139,14 +139,14 @@ extern int32_t vchi_held_msg_release(struct vchi_held_msg *message);
 // Routine to prepare interface for a transfer from the other side
 extern int32_t vchi_bulk_queue_receive(struct vchi_service_handle *handle,
 				       void *data_dst,
-				       uint32_t data_size,
+				       unsigned data_size,
 				       enum vchi_flags flags,
 				       void *transfer_handle);
 
 // Routine to queue up data ready for transfer to the other (once they have signalled they are ready)
 extern int32_t vchi_bulk_queue_transmit(struct vchi_service_handle *handle,
 					const void *data_src,
-					uint32_t data_size,
+					unsigned data_size,
 					enum vchi_flags flags,
 					void *transfer_handle);
 
