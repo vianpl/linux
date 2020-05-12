@@ -282,6 +282,8 @@ struct vchiq_service {
 	struct completion bulk_remove_event;
 	struct mutex bulk_mutex;
 
+	ssize_t (*copy_callback)(void *context, void *dest, size_t maxsize);
+
 	struct service_stats_struct {
 		int quota_stalls;
 		int slot_stalls;

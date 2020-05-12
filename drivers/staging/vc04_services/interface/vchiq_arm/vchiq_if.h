@@ -76,6 +76,7 @@ struct vchiq_service_params {
 	void *userdata;
 	short version;       /* Increment for non-trivial changes */
 	short version_min;   /* Update for incompatible changes */
+	ssize_t (*copy_callback)(void *context, void *dest, size_t maxsize);
 };
 
 struct vchiq_config {
@@ -105,12 +106,8 @@ extern enum vchiq_status vchiq_close_service(unsigned int service);
 extern enum vchiq_status vchiq_remove_service(unsigned int service);
 extern enum vchiq_status vchiq_use_service(unsigned int service);
 extern enum vchiq_status vchiq_release_service(unsigned int service);
-extern enum vchiq_status
-vchiq_queue_message(unsigned int handle,
-		    ssize_t (*copy_callback)(void *context, void *dest,
-					     size_t offset, size_t maxsize),
-		    void *context,
-		    size_t size);
+extern enum vchiq_status vchiq_queue_message(unsigned int handle, void *context,
+					     size_t size);
 extern void           vchiq_release_message(unsigned int service,
 	struct vchiq_header *header);
 extern enum vchiq_status vchiq_bulk_transmit(unsigned int service,

@@ -703,8 +703,7 @@ struct vchiq_io_copy_callback_context {
 	unsigned long elements_to_go;
 };
 
-static ssize_t vchiq_ioc_copy_element_data(void *context, void *dest,
-					   size_t offset, size_t maxsize)
+static ssize_t vchiq_ioc_copy_element_data(void *context, void *dest, size_t maxsize)
 {
 	struct vchiq_io_copy_callback_context *cc = context;
 	size_t total_bytes_copied = 0;
@@ -767,8 +766,7 @@ vchiq_ioc_queue_message(unsigned int handle,
 		total_size += elements[i].size;
 	}
 
-	return vchiq_queue_message(handle, vchiq_ioc_copy_element_data,
-				   &context, total_size);
+	return vchiq_queue_message(handle, &context, total_size);
 }
 
 /****************************************************************************
@@ -877,6 +875,7 @@ vchiq_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		userdata = args.params.userdata;
 		args.params.callback = service_callback;
 		args.params.userdata = user_service;
+		args.params.copy_callback = vchiq_ioc_copy_element_data;
 		service = vchiq_add_service_internal(
 				instance->state,
 				&args.params, srvstate,
