@@ -15,7 +15,6 @@
 #define VCHIQ_GET_SERVICE_USERDATA(service) vchiq_get_service_userdata(service)
 
 enum vchiq_reason {
-	VCHIQ_SERVICE_OPENED,         /* service, -, -             */
 	VCHIQ_SERVICE_CLOSED,         /* service, -, -             */
 	VCHIQ_MESSAGE_AVAILABLE,      /* service, header, -        */
 	VCHIQ_BULK_TRANSMIT_DONE,     /* service, -, bulk_userdata */
