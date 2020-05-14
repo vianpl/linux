@@ -285,7 +285,7 @@ static void vc_sm_cma_vchi_callback(void *param,
 	}
 }
 
-struct sm_instance *vc_sm_cma_vchi_init(struct vchi_instance_handle *vchi_instance,
+struct sm_instance *vc_sm_cma_vchi_init(struct vchiq_instance *vchiq_instance,
 					unsigned int num_connections,
 					vpu_event_cb vpu_event)
 {
@@ -328,7 +328,7 @@ struct sm_instance *vc_sm_cma_vchi_init(struct vchi_instance_handle *vchi_instan
 			.callback_param = instance,
 		};
 
-		status = vchi_service_open(vchi_instance,
+		status = vchi_service_open(vchiq_instance,
 					   &params, &instance->vchi_handle[i]);
 		if (status) {
 			pr_err("%s: failed to open VCHI service (%d)",
