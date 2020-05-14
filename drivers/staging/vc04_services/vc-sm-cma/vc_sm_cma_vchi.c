@@ -47,7 +47,7 @@ struct sm_cmd_rsp_blk {
 
 struct sm_instance {
 	u32 num_connections;
-	struct vchi_service_handle *vchi_handle[VCHI_MAX_NUM_CONNECTIONS];
+	struct vchi_service *service[VCHI_MAX_NUM_CONNECTIONS];
 	struct task_struct *io_thread;
 	struct completion io_cmplt;
 
@@ -76,11 +76,11 @@ struct sm_instance {
 
 /* ---- Private Functions ------------------------------------------------ */
 static int
-bcm2835_vchi_msg_queue(struct vchi_service_handle *handle,
+bcm2835_vchi_msg_queue(struct vchi_service *service,
 		       void *data,
 		       unsigned int size)
 {
-	return vchi_queue_kernel_message(handle,
+	return vchi_queue_kernel_message(service,
 					 data,
 					 size);
 }
@@ -187,13 +187,13 @@ static int vc_sm_cma_vchi_videocore_io(void *arg)
 
 	while (1) {
 		if (svc_use)
-			vchi_service_release(instance->vchi_handle[0]);
+			vchi_service_release(instance->service[0]);
 		svc_use = 0;
 
 		if (wait_for_completion_interruptible(&instance->io_cmplt))
 			continue;
 
-		vchi_service_use(instance->vchi_handle[0]);
+		vchi_service_use(instance->service[0]);
 		svc_use = 1;
 
 		do {
@@ -214,7 +214,7 @@ static int vc_sm_cma_vchi_videocore_io(void *arg)
 
 			/* Send the command */
 			status =
-				bcm2835_vchi_msg_queue(instance->vchi_handle[0],
+				bcm2835_vchi_msg_queue(instance->service[0],
 						       cmd->msg, cmd->length);
 			if (status) {
 				pr_err("%s: failed to queue message (%d)",
@@ -237,7 +237,7 @@ static int vc_sm_cma_vchi_videocore_io(void *arg)
 
 		} while (1);
 
-		while (!vchi_msg_hold(instance->vchi_handle[0], (void **)&reply,
+		while (!vchi_msg_hold(instance->service[0], (void **)&reply,
 				       &reply_len, VCHI_FLAGS_NONE, &msg)) {
 			if (reply->trans_id & 0x80000000) {
 				/* Async event or cmd from the VPU */
@@ -329,7 +329,7 @@ struct sm_instance *vc_sm_cma_vchi_init(struct vchiq_instance *vchiq_instance,
 		};
 
 		status = vchi_service_open(vchiq_instance,
-					   &params, &instance->vchi_handle[i]);
+					   &params, &instance->service[i]);
 		if (status) {
 			pr_err("%s: failed to open VCHI service (%d)",
 			       __func__, status);
@@ -355,8 +355,8 @@ struct sm_instance *vc_sm_cma_vchi_init(struct vchiq_instance *vchiq_instance,
 
 err_close_services:
 	for (i = 0; i < instance->num_connections; i++) {
-		if (instance->vchi_handle[i])
-			vchi_service_close(instance->vchi_handle[i]);
+		if (instance->service[i])
+			vchi_service_close(instance->service[i]);
 	}
 	kfree(instance);
 err_null:
@@ -385,9 +385,9 @@ int vc_sm_cma_vchi_stop(struct sm_instance **handle)
 	for (i = 0; i < instance->num_connections; i++) {
 		s32 success;
 
-		vchi_service_use(instance->vchi_handle[i]);
+		vchi_service_use(instance->service[i]);
 
-		success = vchi_service_close(instance->vchi_handle[i]);
+		success = vchi_service_close(instance->service[i]);
 	}
 
 	kfree(instance);
