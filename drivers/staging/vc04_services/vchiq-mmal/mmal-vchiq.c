@@ -32,7 +32,6 @@
 
 #include "vc-sm-cma/vc_sm_knl.h"
 
-#define USE_VCHIQ_ARM
 #include "interface/vchi/vchi.h"
 
 /*
