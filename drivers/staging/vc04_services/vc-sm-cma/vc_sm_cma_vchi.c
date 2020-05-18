@@ -237,7 +237,7 @@ static int vc_sm_cma_vchi_videocore_io(void *arg)
 		} while (1);
 
 		while (!vchi_msg_hold(instance->service, (void **)&reply,
-				       &reply_len, VCHI_FLAGS_NONE, &msg)) {
+				      &reply_len, &msg)) {
 			if (reply->trans_id & 0x80000000) {
 				/* Async event or cmd from the VPU */
 				if (instance->vpu_event)
