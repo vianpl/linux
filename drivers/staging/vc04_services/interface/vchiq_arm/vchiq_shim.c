@@ -194,7 +194,6 @@ EXPORT_SYMBOL(vchi_held_msg_release);
  * Arguments:  struct vchi_service *service,
  *             void **data,
  *             unsigned *msg_size,
- *             enum vchi_flags flags,
  *             struct vchi_held_msg *message_handle
  *
  * Description: Routine to return a pointer to the current message (to allow
@@ -205,18 +204,13 @@ EXPORT_SYMBOL(vchi_held_msg_release);
  * Returns: int - success == 0
  *
  ***********************************************************/
-int vchi_msg_hold(struct vchi_service *service, void **data,
-		      unsigned *msg_size, enum vchi_flags flags,
-		      struct vchi_held_msg *message_handle)
+int vchi_msg_hold(struct vchi_service *service, void **data, unsigned *msg_size,
+		  struct vchi_held_msg *message_handle)
 {
 	struct vchiq_header *header;
 
-	WARN_ON((flags != VCHI_FLAGS_NONE) &&
-		(flags != VCHI_FLAGS_BLOCK_UNTIL_OP_COMPLETE));
-
-	if (flags == VCHI_FLAGS_NONE)
-		if (vchiu_queue_is_empty(&service->queue))
-			return -1;
+	if (vchiu_queue_is_empty(&service->queue))
+		return -1;
 
 	header = vchiu_queue_pop(&service->queue);
 
