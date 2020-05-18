@@ -19,6 +19,7 @@
 #include <linux/slab.h>
 #include <linux/types.h>
 
+#include "interface/vchiq_arm/vchiq_if.h"
 #include "vc_sm_cma_vchi.h"
 
 #define VC_SM_VER  1
