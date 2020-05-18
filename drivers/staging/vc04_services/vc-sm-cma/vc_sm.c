@@ -1532,8 +1532,7 @@ static void vc_sm_connected_init(void)
 	}
 
 	/* Initialize an instance of the shared memory service. */
-	sm_state->sm_handle = vc_sm_cma_vchi_init(instance, 1,
-						  vc_sm_vpu_event);
+	sm_state->sm_handle = vc_sm_cma_vchi_init(instance, vc_sm_vpu_event);
 	if (!sm_state->sm_handle) {
 		pr_err("[%s]: failed to initialize shared memory service\n",
 		       __func__);
