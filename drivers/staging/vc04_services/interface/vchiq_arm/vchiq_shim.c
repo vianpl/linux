@@ -13,8 +13,6 @@
 struct vchi_service {
 	unsigned int handle;
 
-	struct vchiu_queue queue;
-
 	vchi_callback callback;
 	void *callback_param;
 };
@@ -171,10 +169,9 @@ int vchi_msg_hold(struct vchi_service *service, void **data, unsigned *msg_size,
 {
 	struct vchiq_header *header;
 
-	if (vchiu_queue_is_empty(&service->queue))
-		return -1;
-
-	header = vchiu_queue_pop(&service->queue);
+	header = vchiq_msg_hold(service->handle);
+	if (!header)
+		return -ENOENT;
 
 	*data = header->data;
 	*msg_size = header->size;
@@ -271,7 +268,7 @@ static enum vchiq_status shim_callback(enum vchiq_reason reason,
 		(struct vchi_service *)VCHIQ_GET_SERVICE_USERDATA(handle);
 
 	if (reason == VCHIQ_MESSAGE_AVAILABLE)
-		vchiu_queue_push(&service->queue, header);
+		vchiq_msg_queue_push(service->handle, header);
 
 	service->callback(service->callback_param, reason, bulk_user);
 
@@ -284,13 +281,8 @@ static struct vchi_service *service_alloc(struct vchiq_instance *instance,
 	struct vchi_service *service = kzalloc(sizeof(struct vchi_service), GFP_KERNEL);
 
 	if (service) {
-		if (!vchiu_queue_init(&service->queue, 64)) {
-			service->callback = setup->callback;
-			service->callback_param = setup->callback_param;
-		} else {
-			kfree(service);
-			service = NULL;
-		}
+		service->callback = setup->callback;
+		service->callback_param = setup->callback_param;
 	}
 
 	return service;
@@ -298,10 +290,8 @@ static struct vchi_service *service_alloc(struct vchiq_instance *instance,
 
 static void service_free(struct vchi_service *service)
 {
-	if (service) {
-		vchiu_queue_delete(&service->queue);
+	if (service)
 		kfree(service);
-	}
 }
 
 int vchi_service_open(struct vchiq_instance *instance,
