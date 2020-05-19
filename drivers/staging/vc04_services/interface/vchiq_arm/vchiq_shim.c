@@ -279,8 +279,6 @@ static enum vchiq_status shim_callback(enum vchiq_reason reason,
 	service->callback(service->callback_param, reason, bulk_user);
 
 release:
-	if (reason != VCHIQ_MESSAGE_AVAILABLE)
-		vchiq_release_message(service->handle, header);
 	return VCHIQ_SUCCESS;
 }
 
