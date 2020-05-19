@@ -19,6 +19,7 @@
 #include <linux/slab.h>
 #include <linux/types.h>
 
+#include "vchiq_if.h"
 #include "vc_sm_cma_vchi.h"
 
 #define VC_SM_VER  1
@@ -264,8 +265,7 @@ static int vc_sm_cma_vchi_videocore_io(void *arg)
 	return 0;
 }
 
-static void vc_sm_cma_vchi_callback(void *param,
-				    const enum vchi_callback_reason reason,
+static void vc_sm_cma_vchi_callback(void *param, const enum vchiq_reason reason,
 				    void *msg_handle)
 {
 	struct sm_instance *instance = param;
@@ -273,11 +273,11 @@ static void vc_sm_cma_vchi_callback(void *param,
 	(void)msg_handle;
 
 	switch (reason) {
-	case VCHI_CALLBACK_MSG_AVAILABLE:
+	case VCHIQ_MESSAGE_AVAILABLE:
 		complete(&instance->io_cmplt);
 		break;
 
-	case VCHI_CALLBACK_SERVICE_CLOSED:
+	case VCHIQ_SERVICE_CLOSED:
 		pr_info("%s: service CLOSED!!", __func__);
 	default:
 		break;
