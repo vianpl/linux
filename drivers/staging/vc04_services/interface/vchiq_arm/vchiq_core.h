@@ -532,6 +532,8 @@ vchiq_shutdown_internal(struct vchiq_state *state, struct vchiq_instance *instan
 extern void
 remote_event_pollall(struct vchiq_state *state);
 
+extern void vchiq_msg_queue_push(unsigned handle, struct vchiq_header *header);
+
 extern enum vchiq_status
 vchiq_bulk_transfer(unsigned int handle, void *offset, int size,
 		    void *userdata, enum vchiq_bulk_mode mode,

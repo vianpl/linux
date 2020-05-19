@@ -373,6 +373,10 @@ make_service_callback(struct vchiq_service *service, enum vchiq_reason reason,
 	vchiq_log_trace(vchiq_core_log_level, "%d: callback:%d (%s, %pK, %pK)",
 		service->state->id, service->localport, reason_names[reason],
 		header, bulk_userdata);
+
+	if (reason == VCHIQ_MESSAGE_AVAILABLE)
+		vchiq_msg_queue_push(service->handle, header);
+
 	status = service->base.callback(reason, header, service->handle,
 		bulk_userdata);
 	if (status == VCHIQ_ERROR) {
@@ -2241,7 +2245,6 @@ void vchiq_msg_queue_push(unsigned handle, struct vchiq_header *header)
 
 	complete(&service->msg_queue_push);
 }
-EXPORT_SYMBOL(vchiq_msg_queue_push);
 
 struct vchiq_header *vchiq_msg_hold(unsigned handle)
 {
