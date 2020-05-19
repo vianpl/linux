@@ -252,30 +252,9 @@ EXPORT_SYMBOL(vchi_disconnect);
  *
  ***********************************************************/
 
-static enum vchiq_status shim_callback(enum vchiq_reason reason,
-				    struct vchiq_header *header,
-				    unsigned int handle,
-				    void *bulk_user)
+static struct vchi_service *service_alloc(void)
 {
-	struct vchi_service *service =
-		(struct vchi_service *)VCHIQ_GET_SERVICE_USERDATA(handle);
-
-	service->callback(service->callback_param, reason, bulk_user);
-
-	return VCHIQ_SUCCESS;
-}
-
-static struct vchi_service *service_alloc(struct vchiq_instance *instance,
-	struct service_creation *setup)
-{
-	struct vchi_service *service = kzalloc(sizeof(struct vchi_service), GFP_KERNEL);
-
-	if (service) {
-		service->callback = setup->callback;
-		service->callback_param = setup->callback_param;
-	}
-
-	return service;
+	return kzalloc(sizeof(struct vchi_service), GFP_KERNEL);
 }
 
 static void service_free(struct vchi_service *service)
@@ -289,7 +268,7 @@ int vchi_service_open(struct vchiq_instance *instance,
 	struct vchi_service **service)
 {
 
-	*service = service_alloc(instance, setup);
+	*service = service_alloc();
 	if (service) {
 		struct vchiq_service_params params;
 		enum vchiq_status status;

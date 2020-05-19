@@ -29,9 +29,6 @@ struct vchi_held_msg {
 
 struct vchi_service {
 	unsigned int handle;
-
-	vchi_callback callback;
-	void *callback_param;
 };
 
 // structure used to provide the information needed to open a server or a client
