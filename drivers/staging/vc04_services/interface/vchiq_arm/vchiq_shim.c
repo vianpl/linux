@@ -157,12 +157,12 @@ EXPORT_SYMBOL(vchi_held_msg_release);
  * Returns: int - success == 0
  *
  ***********************************************************/
-int vchi_msg_hold(struct vchi_service *service, void **data, unsigned *msg_size,
+int vchi_msg_hold(unsigned handle, void **data, unsigned *msg_size,
 		  struct vchi_held_msg *message_handle)
 {
 	struct vchiq_header *header;
 
-	header = vchiq_msg_hold(service->handle);
+	header = vchiq_msg_hold(handle);
 	if (!header)
 		return -ENOENT;
 
@@ -178,7 +178,7 @@ int vchi_msg_hold(struct vchi_service *service, void **data, unsigned *msg_size,
 	 */
 
 	message_handle->service =
-		(struct opaque_vchi_service_t *)(long)service->handle;
+		(struct opaque_vchi_service_t *)(long)handle;
 	message_handle->message = header;
 
 	return 0;
@@ -296,8 +296,8 @@ int vchi_service_open(struct vchiq_instance *instance,
 
 		memset(&params, 0, sizeof(params));
 		params.fourcc = setup->service_id;
-		params.callback = shim_callback;
-		params.userdata = service;
+		params.callback = setup->callback;
+		params.userdata = setup->callback_param;
 		params.version = setup->version.version;
 		params.version_min = setup->version.version_min;
 

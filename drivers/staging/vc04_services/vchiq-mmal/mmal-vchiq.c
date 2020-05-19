@@ -674,10 +674,11 @@ static void bulk_abort_cb(struct vchiq_mmal_instance *instance,
 }
 
 /* incoming event service callback */
-static void service_callback(void *param, const enum vchiq_reason reason,
-			     void *bulk_ctx)
+static enum vchiq_status service_callback(enum vchiq_reason reason,
+					  struct vchiq_header *header,
+					  unsigned handle, void *bulk_ctx)
 {
-	struct vchiq_mmal_instance *instance = param;
+	struct vchiq_mmal_instance *instance = vchiq_get_service_userdata(handle);
 	int status;
 	u32 msg_len;
 	struct mmal_msg *msg;
@@ -686,12 +687,12 @@ static void service_callback(void *param, const enum vchiq_reason reason,
 
 	if (!instance) {
 		pr_err("Message callback passed NULL instance\n");
-		return;
+		return VCHIQ_SUCCESS;
 	}
 
 	switch (reason) {
 	case VCHIQ_MESSAGE_AVAILABLE:
-		status = vchi_msg_hold(instance->service, (void **)&msg,
+		status = vchi_msg_hold(handle, (void **)&msg,
 				       &msg_len, &msg_handle);
 		if (status) {
 			pr_err("Unable to dequeue a message (%d)\n", status);
@@ -773,6 +774,8 @@ static void service_callback(void *param, const enum vchiq_reason reason,
 		pr_err("Received unhandled message reason %d\n", reason);
 		break;
 	}
+
+	return VCHIQ_SUCCESS;
 }
 
 static int send_synchronous_mmal_msg(struct vchiq_mmal_instance *instance,
