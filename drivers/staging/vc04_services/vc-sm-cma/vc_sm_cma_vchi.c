@@ -237,8 +237,8 @@ static int vc_sm_cma_vchi_videocore_io(void *arg)
 
 		} while (1);
 
-		while (!vchi_msg_hold(instance->service, (void **)&reply,
-				      &reply_len, &msg)) {
+		while (!vchi_msg_hold(instance->service->handle,
+				      (void **)&reply, &reply_len, &msg)) {
 			if (reply->trans_id & 0x80000000) {
 				/* Async event or cmd from the VPU */
 				if (instance->vpu_event)
@@ -265,12 +265,12 @@ static int vc_sm_cma_vchi_videocore_io(void *arg)
 	return 0;
 }
 
-static void vc_sm_cma_vchi_callback(void *param, const enum vchiq_reason reason,
-				    void *msg_handle)
+static enum vchiq_status vc_sm_cma_vchi_callback(enum vchiq_reason reason,
+						 struct vchiq_header *header,
+						 unsigned handle,
+						 void *user_data)
 {
-	struct sm_instance *instance = param;
-
-	(void)msg_handle;
+	struct sm_instance *instance = vchiq_get_service_userdata(handle);
 
 	switch (reason) {
 	case VCHIQ_MESSAGE_AVAILABLE:
@@ -282,6 +282,8 @@ static void vc_sm_cma_vchi_callback(void *param, const enum vchiq_reason reason,
 	default:
 		break;
 	}
+
+	return VCHIQ_SUCCESS;
 }
 
 struct sm_instance *vc_sm_cma_vchi_init(struct vchiq_instance *vchiq_instance,
