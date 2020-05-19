@@ -48,6 +48,7 @@
 #include <linux/types.h>
 #include <asm/cacheflush.h>
 
+#include "vchiq_if.h"
 #include "vchiq_connected.h"
 #include "vc_sm_cma_vchi.h"
 
