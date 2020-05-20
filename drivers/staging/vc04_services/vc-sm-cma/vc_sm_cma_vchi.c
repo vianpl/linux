@@ -290,11 +290,12 @@ static enum vchiq_status vc_sm_cma_vchi_callback(enum vchiq_reason reason,
 struct sm_instance *vc_sm_cma_vchi_init(struct vchiq_instance *vchiq_instance,
 					vpu_event_cb vpu_event)
 {
-	struct service_creation params = {
-		.version = VCHI_VERSION_EX(VC_SM_VER, VC_SM_MIN_VER),
-		.service_id = VC_SM_SERVER_NAME,
+	struct vchiq_service_params params = {
+		.version = VC_SM_VER,
+		.version_min = VC_SM_MIN_VER,
+		.fourcc = VC_SM_SERVER_NAME,
 		.callback = vc_sm_cma_vchi_callback,
-		.callback_param = NULL,
+		.userdata = NULL,
 	};
 	struct sm_instance *instance;
 	int status;
@@ -318,7 +319,7 @@ struct sm_instance *vc_sm_cma_vchi_init(struct vchiq_instance *vchiq_instance,
 		init_completion(&instance->free_blk[i].cmplt);
 		list_add(&instance->free_blk[i].head, &instance->free_list);
 	}
-	params.callback_param = instance;
+	params.userdata = instance;
 
 	/* Open the VCHI service connections */
 	status = vchi_service_open(vchiq_instance, &params, &instance->service);
