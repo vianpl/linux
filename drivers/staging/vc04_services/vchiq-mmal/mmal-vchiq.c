@@ -170,7 +170,7 @@ struct mmal_msg_context {
 };
 
 struct vchiq_mmal_instance {
-	struct vchi_service *service;
+	unsigned service_handle;
 
 	/* ensure serialised access to service */
 	struct mutex vchiq_mutex;
@@ -292,8 +292,8 @@ static void buffer_to_host_work_cb(struct work_struct *work)
 		/* Dummy receive to ensure the buffers remain in order */
 		len = 8;
 	/* queue the bulk submission */
-	vchi_service_use(instance->service);
-	ret = vchi_bulk_queue_receive(instance->service,
+	vchi_service_use(instance->service_handle);
+	ret = vchi_bulk_queue_receive(instance->service_handle,
 				      msg_context->u.bulk.buffer->buffer,
 				      /* Actual receive needs to be a multiple
 				       * of 4 bytes
@@ -302,7 +302,7 @@ static void buffer_to_host_work_cb(struct work_struct *work)
 				      VCHIQ_BULK_MODE_CALLBACK,
 				      msg_context);
 
-	vchi_service_release(instance->service);
+	vchi_service_release(instance->service_handle);
 
 	if (ret != 0)
 		pr_err("%s: ctx: %p, vchi_bulk_queue_receive failed %d\n",
@@ -382,7 +382,7 @@ buffer_from_host(struct vchiq_mmal_instance *instance,
 	if (!port->enabled)
 		return -EINVAL;
 
-	pr_debug("instance:%p buffer:%p\n", instance->service, buf);
+	pr_debug("instance:%u buffer:%p\n", instance->service_handle, buf);
 
 	/* get context */
 	if (!buf->msg_context) {
@@ -450,14 +450,14 @@ buffer_from_host(struct vchiq_mmal_instance *instance,
 	/* no payload in message */
 	m.u.buffer_from_host.payload_in_message = 0;
 
-	vchi_service_use(instance->service);
+	vchi_service_use(instance->service_handle);
 
-	ret = vchi_queue_kernel_message(instance->service,
+	ret = vchi_queue_kernel_message(instance->service_handle,
 					&m,
 					sizeof(struct mmal_msg_header) +
 					sizeof(m.u.buffer_from_host));
 
-	vchi_service_release(instance->service);
+	vchi_service_release(instance->service_handle);
 
 	return ret;
 }
@@ -810,14 +810,14 @@ static int send_synchronous_mmal_msg(struct vchiq_mmal_instance *instance,
 	DBG_DUMP_MSG(msg, (sizeof(struct mmal_msg_header) + payload_len),
 		     ">>> sync message");
 
-	vchi_service_use(instance->service);
+	vchi_service_use(instance->service_handle);
 
-	ret = vchi_queue_kernel_message(instance->service,
+	ret = vchi_queue_kernel_message(instance->service_handle,
 					msg,
 					sizeof(struct mmal_msg_header) +
 					payload_len);
 
-	vchi_service_release(instance->service);
+	vchi_service_release(instance->service_handle);
 
 	if (ret) {
 		pr_err("error %d queuing message\n", ret);
@@ -2074,9 +2074,9 @@ int vchiq_mmal_finalise(struct vchiq_mmal_instance *instance)
 	if (mutex_lock_interruptible(&instance->vchiq_mutex))
 		return -EINTR;
 
-	vchi_service_use(instance->service);
+	vchi_service_use(instance->service_handle);
 
-	status = vchi_service_close(instance->service);
+	status = vchi_service_close(instance->service_handle);
 	if (status != 0)
 		pr_err("mmal-vchiq: VCHIQ close failed\n");
 
@@ -2154,21 +2154,22 @@ int vchiq_mmal_init(struct vchiq_mmal_instance **out_instance)
 	if (!instance->bulk_wq)
 		goto err_free;
 
-	status = vchi_service_open(vchiq_instance, &params, &instance->service);
+	status = vchi_service_open(vchiq_instance, &params,
+				   &instance->service_handle);
 	if (status) {
 		pr_err("Failed to open VCHI service connection (status=%d)\n",
 		       status);
 		goto err_close_services;
 	}
 
-	vchi_service_release(instance->service);
+	vchi_service_release(instance->service_handle);
 
 	*out_instance = instance;
 
 	return 0;
 
 err_close_services:
-	vchi_service_close(instance->service);
+	vchi_service_close(instance->service_handle);
 	destroy_workqueue(instance->bulk_wq);
 err_free:
 	vfree(instance->bulk_scratch);
