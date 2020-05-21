@@ -3163,6 +3163,28 @@ error_exit:
 	return status;
 }
 
+int vchiq_queue_kernel_message(unsigned handle, void *data, unsigned size)
+{
+	enum vchiq_status status;
+
+	while (1) {
+		status = vchiq_queue_message(handle, data, size);
+
+		/*
+		 * vchiq_queue_message() may return VCHIQ_RETRY, so we need to
+		 * implement a retry mechanism since this function is supposed
+		 * to block until queued
+		 */
+		if (status != VCHIQ_RETRY)
+			break;
+
+		msleep(1);
+	}
+
+	return status;
+}
+EXPORT_SYMBOL(vchiq_queue_kernel_message);
+
 void
 vchiq_release_message(unsigned int handle,
 		      struct vchiq_header *header)

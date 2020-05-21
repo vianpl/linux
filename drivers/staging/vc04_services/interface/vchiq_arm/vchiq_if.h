@@ -94,6 +94,8 @@ extern enum vchiq_status vchiq_queue_message(unsigned int handle, void *context,
 					     size_t size);
 extern void           vchiq_release_message(unsigned int service,
 	struct vchiq_header *header);
+extern int vchiq_queue_kernel_message(unsigned handle, void *data,
+				      unsigned size);
 extern enum vchiq_status vchiq_bulk_transmit(unsigned int service,
 	const void *data, unsigned int size, void *userdata,
 	enum vchiq_bulk_mode mode);
