@@ -23,13 +23,13 @@
 #include <linux/slab.h>
 #include <linux/completion.h>
 #include <linux/vmalloc.h>
+#include <linux/raspberrypi/vchiq.h>
 #include <media/videobuf2-vmalloc.h>
+#include <linux/raspberrypi/vchiq.h>
 
 #include "mmal-common.h"
 #include "mmal-vchiq.h"
 #include "mmal-msg.h"
-
-#include "interface/vchiq_arm/vchiq.h"
 
 /*
  * maximum number of components supported.
