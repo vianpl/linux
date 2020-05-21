@@ -679,7 +679,6 @@ static enum vchiq_status service_callback(enum vchiq_reason reason,
 					  unsigned handle, void *bulk_ctx)
 {
 	struct vchiq_mmal_instance *instance = vchiq_get_service_userdata(handle);
-	int status;
 	u32 msg_len;
 	struct mmal_msg *msg;
 	struct vchiq_header *msg_handle;
@@ -692,12 +691,13 @@ static enum vchiq_status service_callback(enum vchiq_reason reason,
 
 	switch (reason) {
 	case VCHIQ_MESSAGE_AVAILABLE:
-		status = vchi_msg_hold(handle, (void **)&msg,
-				       &msg_len, &msg_handle);
-		if (status) {
-			pr_err("Unable to dequeue a message (%d)\n", status);
+		msg_handle = vchi_msg_hold(handle);
+		if (!msg_handle) {
+			pr_err("Unable to dequeue a message\n");
 			break;
 		}
+		msg = (struct mmal_msg *)msg_handle->data;
+		msg_len = msg_handle->size;
 
 		DBG_DUMP_MSG(msg, msg_len, "<<< reply message");
 

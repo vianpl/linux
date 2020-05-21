@@ -96,16 +96,15 @@ static enum vchiq_status audio_vchi_callback(enum vchiq_reason reason,
 	struct bcm2835_audio_instance *instance = vchiq_get_service_userdata(handle);
 	struct vchiq_header *msg_handle;
 	struct vc_audio_msg *m;
-	unsigned size;
-	int status;
 
 	if (reason != VCHIQ_MESSAGE_AVAILABLE)
 		return VCHIQ_SUCCESS;
 
-	status = vchi_msg_hold(handle, (void **)&m, &size, &msg_handle);
-	if (status)
+	msg_handle = vchi_msg_hold(handle);
+	if (!msg_handle)
 		return VCHIQ_SUCCESS;
 
+	m = (struct vc_audio_msg *)msg_handle->data;
 	if (m->type == VC_AUDIO_MSG_TYPE_RESULT) {
 		instance->result = m->result.success;
 		complete(&instance->msg_avail_comp);
