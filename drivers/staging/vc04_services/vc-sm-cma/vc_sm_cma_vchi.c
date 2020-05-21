@@ -78,7 +78,7 @@ struct sm_instance {
 static int
 bcm2835_vchi_msg_queue(unsigned handle, void *data, unsigned int size)
 {
-	return vchi_queue_kernel_message(handle, data, size);
+	return vchiq_queue_kernel_message(handle, data, size);
 }
 
 static struct
