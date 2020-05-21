@@ -1516,7 +1516,7 @@ static void vc_sm_connected_init(void)
 	 * Initialize and create a VCHI connection for the shared memory service
 	 * running on videocore.
 	 */
-	ret = vchi_initialise(&instance);
+	ret = vchiq_initialise(&instance);
 	if (ret) {
 		pr_err("[%s]: failed to initialise VCHI instance (ret=%d)\n",
 		       __func__, ret);
@@ -1524,7 +1524,7 @@ static void vc_sm_connected_init(void)
 		return;
 	}
 
-	ret = vchi_connect(instance);
+	ret = vchiq_connect(instance);
 	if (ret) {
 		pr_err("[%s]: failed to connect VCHI instance (ret=%d)\n",
 		       __func__, ret);
