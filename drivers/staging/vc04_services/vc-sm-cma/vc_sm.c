@@ -46,9 +46,9 @@
 #include <linux/seq_file.h>
 #include <linux/syscalls.h>
 #include <linux/types.h>
+#include <linux/raspberrypi/vchiq.h>
 #include <asm/cacheflush.h>
 
-#include "vchiq.h"
 #include "vchiq_connected.h"
 #include "vc_sm_cma_vchi.h"
 

@@ -18,8 +18,8 @@
 #include <linux/semaphore.h>
 #include <linux/slab.h>
 #include <linux/types.h>
+#include <linux/raspberrypi/vchiq.h>
 
-#include "vchiq.h"
 #include "vc_sm_cma_vchi.h"
 
 #define VC_SM_VER  1
