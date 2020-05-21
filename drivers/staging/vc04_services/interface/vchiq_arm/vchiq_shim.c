@@ -32,46 +32,6 @@ int vchi_queue_kernel_message(unsigned handle, void *data, unsigned int size)
 EXPORT_SYMBOL(vchi_queue_kernel_message);
 
 /***********************************************************
- * Name: vchi_bulk_queue_transmit
- *
- * Arguments:  VCHI_BULK_HANDLE_T handle,
- *             const void *data_src,
- *             unsigned data_size,
- *             enum vchi_flags flags,
- *             void *bulk_handle
- *
- * Description: Routine to transmit some data
- *
- * Returns: int - success == 0
- *
- ***********************************************************/
-int vchi_bulk_queue_transmit(unsigned handle, const void *data_src,
-			     unsigned data_size, enum vchiq_bulk_mode mode,
-			     void *bulk_handle)
-{
-	enum vchiq_status status;
-
-	while (1) {
-		status = vchiq_bulk_transmit(handle, data_src, data_size,
-					     bulk_handle, mode);
-
-		/*
-		 * vchiq_bulk_transmit() may return VCHIQ_RETRY, so we need to
-		 * implement a retry mechanism since this function is supposed
-		 * to block until queued
-		 */
-		if (status != VCHIQ_RETRY)
-			break;
-
-		msleep(1);
-	}
-
-	return status;
-}
-EXPORT_SYMBOL(vchi_bulk_queue_transmit);
-
-
-/***********************************************************
  * Name: vchi_held_msg_release
  *
  * Arguments:  unsgined handle
