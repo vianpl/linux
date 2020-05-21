@@ -1,6 +1,5 @@
 ccflags-y += \
 	-I$(srctree)/$(src)/../ \
-	-I$(srctree)/$(src)/../interface/vchi \
 	-I$(srctree)/$(src)/../interface/vchiq_arm\
 	-I$(srctree)/$(src)/../include
 
