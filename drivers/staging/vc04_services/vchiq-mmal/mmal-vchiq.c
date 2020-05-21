@@ -33,7 +33,6 @@
 #include "vc-sm-cma/vc_sm_knl.h"
 
 #include "interface/vchiq_arm/vchiq_if.h"
-#include "interface/vchi/vchi.h"
 
 /*
  * maximum number of components supported.
@@ -292,7 +291,7 @@ static void buffer_to_host_work_cb(struct work_struct *work)
 		/* Dummy receive to ensure the buffers remain in order */
 		len = 8;
 	/* queue the bulk submission */
-	vchi_service_use(instance->service_handle);
+	vchiq_use_service(instance->service_handle);
 	ret = vchiq_bulk_receive(instance->service_handle,
 				 msg_context->u.bulk.buffer->buffer,
 			         /* Actual receive needs to be a multiple
@@ -302,7 +301,7 @@ static void buffer_to_host_work_cb(struct work_struct *work)
 			         msg_context,
 			         VCHIQ_BULK_MODE_CALLBACK);
 
-	vchi_service_release(instance->service_handle);
+	vchiq_release_service(instance->service_handle);
 
 	if (ret != 0)
 		pr_err("%s: ctx: %p, vchiq_bulk_receive failed %d\n",
@@ -450,14 +449,14 @@ buffer_from_host(struct vchiq_mmal_instance *instance,
 	/* no payload in message */
 	m.u.buffer_from_host.payload_in_message = 0;
 
-	vchi_service_use(instance->service_handle);
+	vchiq_use_service(instance->service_handle);
 
 	ret = vchiq_queue_kernel_message(instance->service_handle,
 					 &m,
 					 sizeof(struct mmal_msg_header) +
 					 sizeof(m.u.buffer_from_host));
 
-	vchi_service_release(instance->service_handle);
+	vchiq_release_service(instance->service_handle);
 
 	return ret;
 }
@@ -691,7 +690,7 @@ static enum vchiq_status service_callback(enum vchiq_reason reason,
 
 	switch (reason) {
 	case VCHIQ_MESSAGE_AVAILABLE:
-		msg_handle = vchi_msg_hold(handle);
+		msg_handle = vchiq_msg_hold(handle);
 		if (!msg_handle) {
 			pr_err("Unable to dequeue a message\n");
 			break;
@@ -704,25 +703,25 @@ static enum vchiq_status service_callback(enum vchiq_reason reason,
 		/* handling is different for buffer messages */
 		switch (msg->h.type) {
 		case MMAL_MSG_TYPE_BUFFER_FROM_HOST:
-			vchi_held_msg_release(handle, msg_handle);
+			vchiq_release_message(handle, msg_handle);
 			break;
 
 		case MMAL_MSG_TYPE_EVENT_TO_HOST:
 			event_to_host_cb(instance, msg, msg_len);
-			vchi_held_msg_release(handle, msg_handle);
+			vchiq_release_message(handle, msg_handle);
 
 			break;
 
 		case MMAL_MSG_TYPE_BUFFER_TO_HOST:
 			buffer_to_host_cb(instance, msg, msg_len);
-			vchi_held_msg_release(handle, msg_handle);
+			vchiq_release_message(handle, msg_handle);
 			break;
 
 		default:
 			/* messages dependent on header context to complete */
 			if (!msg->h.context) {
 				pr_err("received message context was null!\n");
-				vchi_held_msg_release(handle, msg_handle);
+				vchiq_release_message(handle, msg_handle);
 				break;
 			}
 
@@ -731,7 +730,7 @@ static enum vchiq_status service_callback(enum vchiq_reason reason,
 			if (!msg_context) {
 				pr_err("received invalid message context %u!\n",
 				       msg->h.context);
-				vchi_held_msg_release(handle, msg_handle);
+				vchiq_release_message(handle, msg_handle);
 				break;
 			}
 
@@ -810,14 +809,14 @@ static int send_synchronous_mmal_msg(struct vchiq_mmal_instance *instance,
 	DBG_DUMP_MSG(msg, (sizeof(struct mmal_msg_header) + payload_len),
 		     ">>> sync message");
 
-	vchi_service_use(instance->service_handle);
+	vchiq_use_service(instance->service_handle);
 
 	ret = vchiq_queue_kernel_message(instance->service_handle,
 					 msg,
 					 sizeof(struct mmal_msg_header) +
 					 payload_len);
 
-	vchi_service_release(instance->service_handle);
+	vchiq_release_service(instance->service_handle);
 
 	if (ret) {
 		pr_err("error %d queuing message\n", ret);
@@ -957,7 +956,7 @@ static int port_info_set(struct vchiq_mmal_instance *instance,
 		 port->component->handle, port->handle);
 
 release_msg:
-	vchi_held_msg_release(instance->service_handle, rmsg_handle);
+	vchiq_release_message(instance->service_handle, rmsg_handle);
 
 	return ret;
 }
@@ -1052,7 +1051,7 @@ release_msg:
 	pr_debug("%s:result:%d component:0x%x port:%d\n",
 		 __func__, ret, port->component->handle, port->handle);
 
-	vchi_held_msg_release(instance->service_handle, rmsg_handle);
+	vchiq_release_message(instance->service_handle, rmsg_handle);
 
 	return ret;
 }
@@ -1100,7 +1099,7 @@ static int create_component(struct vchiq_mmal_instance *instance,
 		 component->inputs, component->outputs, component->clocks);
 
 release_msg:
-	vchi_held_msg_release(instance->service_handle, rmsg_handle);
+	vchiq_release_message(instance->service_handle, rmsg_handle);
 
 	return ret;
 }
@@ -1133,7 +1132,7 @@ static int destroy_component(struct vchiq_mmal_instance *instance,
 
 release_msg:
 
-	vchi_held_msg_release(instance->service_handle, rmsg_handle);
+	vchiq_release_message(instance->service_handle, rmsg_handle);
 
 	return ret;
 }
@@ -1165,7 +1164,7 @@ static int enable_component(struct vchiq_mmal_instance *instance,
 	ret = -rmsg->u.component_enable_reply.status;
 
 release_msg:
-	vchi_held_msg_release(instance->service_handle, rmsg_handle);
+	vchiq_release_message(instance->service_handle, rmsg_handle);
 
 	return ret;
 }
@@ -1198,7 +1197,7 @@ static int disable_component(struct vchiq_mmal_instance *instance,
 
 release_msg:
 
-	vchi_held_msg_release(instance->service_handle, rmsg_handle);
+	vchiq_release_message(instance->service_handle, rmsg_handle);
 
 	return ret;
 }
@@ -1230,7 +1229,7 @@ static int get_version(struct vchiq_mmal_instance *instance,
 	*minor_out = rmsg->u.version.minor;
 
 release_msg:
-	vchi_held_msg_release(instance->service_handle, rmsg_handle);
+	vchiq_release_message(instance->service_handle, rmsg_handle);
 
 	return ret;
 }
@@ -1272,7 +1271,7 @@ static int port_action_port(struct vchiq_mmal_instance *instance,
 		 port_action_type_names[action_type], action_type);
 
 release_msg:
-	vchi_held_msg_release(instance->service_handle, rmsg_handle);
+	vchiq_release_message(instance->service_handle, rmsg_handle);
 
 	return ret;
 }
@@ -1320,7 +1319,7 @@ static int port_action_handle(struct vchiq_mmal_instance *instance,
 		 action_type, connect_component_handle, connect_port_handle);
 
 release_msg:
-	vchi_held_msg_release(instance->service_handle, rmsg_handle);
+	vchiq_release_message(instance->service_handle, rmsg_handle);
 
 	return ret;
 }
@@ -1361,7 +1360,7 @@ static int port_parameter_set(struct vchiq_mmal_instance *instance,
 		 ret, port->component->handle, port->handle, parameter_id);
 
 release_msg:
-	vchi_held_msg_release(instance->service_handle, rmsg_handle);
+	vchiq_release_message(instance->service_handle, rmsg_handle);
 
 	return ret;
 }
@@ -1420,7 +1419,7 @@ static int port_parameter_get(struct vchiq_mmal_instance *instance,
 		 ret, port->component->handle, port->handle, parameter_id);
 
 release_msg:
-	vchi_held_msg_release(instance->service_handle, rmsg_handle);
+	vchiq_release_message(instance->service_handle, rmsg_handle);
 
 	return ret;
 }
@@ -2074,9 +2073,9 @@ int vchiq_mmal_finalise(struct vchiq_mmal_instance *instance)
 	if (mutex_lock_interruptible(&instance->vchiq_mutex))
 		return -EINTR;
 
-	vchi_service_use(instance->service_handle);
+	vchiq_use_service(instance->service_handle);
 
-	status = vchi_service_close(instance->service_handle);
+	status = vchiq_close_service(instance->service_handle);
 	if (status != 0)
 		pr_err("mmal-vchiq: VCHIQ close failed\n");
 
@@ -2122,14 +2121,14 @@ int vchiq_mmal_init(struct vchiq_mmal_instance **out_instance)
 	BUILD_BUG_ON(sizeof(struct mmal_port) != 64);
 
 	/* create a vchi instance */
-	status = vchi_initialise(&vchiq_instance);
+	status = vchiq_initialise(&vchiq_instance);
 	if (status) {
 		pr_err("Failed to initialise VCHI instance (status=%d)\n",
 		       status);
 		return -EIO;
 	}
 
-	status = vchi_connect(vchiq_instance);
+	status = vchiq_connect(vchiq_instance);
 	if (status) {
 		pr_err("Failed to connect VCHI instance (status=%d)\n", status);
 		return -EIO;
@@ -2154,22 +2153,22 @@ int vchiq_mmal_init(struct vchiq_mmal_instance **out_instance)
 	if (!instance->bulk_wq)
 		goto err_free;
 
-	status = vchi_service_open(vchiq_instance, &params,
-				   &instance->service_handle);
+	status = vchiq_open_service(vchiq_instance, &params,
+				    &instance->service_handle);
 	if (status) {
 		pr_err("Failed to open VCHI service connection (status=%d)\n",
 		       status);
 		goto err_close_services;
 	}
 
-	vchi_service_release(instance->service_handle);
+	vchiq_release_service(instance->service_handle);
 
 	*out_instance = instance;
 
 	return 0;
 
 err_close_services:
-	vchi_service_close(instance->service_handle);
+	vchiq_close_service(instance->service_handle);
 	destroy_workqueue(instance->bulk_wq);
 err_free:
 	vfree(instance->bulk_scratch);
