@@ -176,7 +176,7 @@ static int vc_sm_cma_vchi_videocore_io(void *arg)
 	struct sm_instance *instance = arg;
 	struct sm_cmd_rsp_blk *cmd = NULL, *cmd_tmp;
 	struct vc_sm_result_t *reply;
-	struct vchi_held_msg msg;
+	struct vchiq_header *message;
 	u32 reply_len;
 	s32 status;
 	int svc_use = 1;
@@ -234,7 +234,7 @@ static int vc_sm_cma_vchi_videocore_io(void *arg)
 		} while (1);
 
 		while (!vchi_msg_hold(instance->service_handle,
-				      (void **)&reply, &reply_len, &msg)) {
+				      (void **)&reply, &reply_len, &message)) {
 			if (reply->trans_id & 0x80000000) {
 				/* Async event or cmd from the VPU */
 				if (instance->vpu_event)
@@ -245,7 +245,7 @@ static int vc_sm_cma_vchi_videocore_io(void *arg)
 						      reply_len);
 			}
 
-			vchi_held_msg_release(&msg);
+			vchi_held_msg_release(instance->service_handle, message);
 		}
 
 		/* Go through the dead list and free them */
