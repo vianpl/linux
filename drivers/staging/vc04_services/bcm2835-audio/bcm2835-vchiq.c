@@ -94,7 +94,7 @@ static enum vchiq_status audio_vchi_callback(enum vchiq_reason reason,
 					     unsigned handle, void *userdata)
 {
 	struct bcm2835_audio_instance *instance = vchiq_get_service_userdata(handle);
-	struct vchi_held_msg msg_handle;
+	struct vchiq_header *msg_handle;
 	struct vc_audio_msg *m;
 	unsigned size;
 	int status;
@@ -120,7 +120,7 @@ static enum vchiq_status audio_vchi_callback(enum vchiq_reason reason,
 		dev_err(instance->dev, "unexpected callback type=%d\n", m->type);
 	}
 
-	vchi_held_msg_release(&msg_handle);
+	vchi_held_msg_release(handle, msg_handle);
 	return VCHIQ_SUCCESS;
 }
 
