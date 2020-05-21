@@ -294,7 +294,7 @@ struct sm_instance *vc_sm_cma_vchi_init(struct vchiq_instance *vchiq_instance,
 	struct vchiq_service_params params = {
 		.version = VC_SM_VER,
 		.version_min = VC_SM_MIN_VER,
-		.fourcc = VC_SM_SERVER_NAME,
+		.fourcc = VCHIQ_MAKE_FOURCC('S', 'M', 'E', 'M'),
 		.callback = vc_sm_cma_vchi_callback,
 		.userdata = NULL,
 	};
