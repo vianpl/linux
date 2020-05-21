@@ -183,13 +183,13 @@ static int vc_sm_cma_vchi_videocore_io(void *arg)
 
 	while (1) {
 		if (svc_use)
-			vchi_service_release(instance->service_handle);
+			vchiq_release_service(instance->service_handle);
 		svc_use = 0;
 
 		if (wait_for_completion_interruptible(&instance->io_cmplt))
 			continue;
 
-		vchi_service_use(instance->service_handle);
+		vchiq_use_service(instance->service_handle);
 		svc_use = 1;
 
 		do {
@@ -234,7 +234,7 @@ static int vc_sm_cma_vchi_videocore_io(void *arg)
 		} while (1);
 
 		while (1) {
-			message = vchi_msg_hold(instance->service_handle);
+			message = vchiq_msg_hold(instance->service_handle);
 			if (!message)
 				break;
 			reply = (struct vc_sm_result_t *)message->data;
@@ -250,7 +250,7 @@ static int vc_sm_cma_vchi_videocore_io(void *arg)
 						      reply_len);
 			}
 
-			vchi_held_msg_release(instance->service_handle, message);
+			vchiq_release_message(instance->service_handle, message);
 		}
 
 		/* Go through the dead list and free them */
@@ -323,7 +323,8 @@ struct sm_instance *vc_sm_cma_vchi_init(struct vchiq_instance *vchiq_instance,
 	params.userdata = instance;
 
 	/* Open the VCHI service connections */
-	status = vchi_service_open(vchiq_instance, &params, &instance->service_handle);
+	status = vchiq_open_service(vchiq_instance, &params,
+				    &instance->service_handle);
 	if (status) {
 		pr_err("%s: failed to open VCHI service (%d)",
 		       __func__, status);
@@ -347,7 +348,7 @@ struct sm_instance *vc_sm_cma_vchi_init(struct vchiq_instance *vchiq_instance,
 	return instance;
 
 err_close_services:
-	vchi_service_close(instance->service_handle);
+	vchiq_close_service(instance->service_handle);
 	kfree(instance);
 	pr_debug("%s: FAILED", __func__);
 	return NULL;
@@ -369,8 +370,8 @@ int vc_sm_cma_vchi_stop(struct sm_instance **handle)
 
 	instance = *handle;
 
-	vchi_service_use(instance->service_handle);
-	vchi_service_close(instance->service_handle);
+	vchiq_use_service(instance->service_handle);
+	vchiq_close_service(instance->service_handle);
 
 	kfree(instance);
 

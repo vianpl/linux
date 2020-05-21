@@ -13,8 +13,6 @@
 #ifndef __VC_SM_CMA_VCHI_H__INCLUDED__
 #define __VC_SM_CMA_VCHI_H__INCLUDED__
 
-#include "interface/vchi/vchi.h"
-
 #include "vc_sm_defs.h"
 
 /*
