@@ -46,8 +46,7 @@ struct sm_cmd_rsp_blk {
 };
 
 struct sm_instance {
-	u32 num_connections;
-	struct vchi_service *service[VCHI_MAX_NUM_CONNECTIONS];
+	struct vchi_service *service;
 	struct task_struct *io_thread;
 	struct completion io_cmplt;
 
@@ -187,13 +186,13 @@ static int vc_sm_cma_vchi_videocore_io(void *arg)
 
 	while (1) {
 		if (svc_use)
-			vchi_service_release(instance->service[0]);
+			vchi_service_release(instance->service);
 		svc_use = 0;
 
 		if (wait_for_completion_interruptible(&instance->io_cmplt))
 			continue;
 
-		vchi_service_use(instance->service[0]);
+		vchi_service_use(instance->service);
 		svc_use = 1;
 
 		do {
@@ -214,7 +213,7 @@ static int vc_sm_cma_vchi_videocore_io(void *arg)
 
 			/* Send the command */
 			status =
-				bcm2835_vchi_msg_queue(instance->service[0],
+				bcm2835_vchi_msg_queue(instance->service,
 						       cmd->msg, cmd->length);
 			if (status) {
 				pr_err("%s: failed to queue message (%d)",
@@ -237,7 +236,7 @@ static int vc_sm_cma_vchi_videocore_io(void *arg)
 
 		} while (1);
 
-		while (!vchi_msg_hold(instance->service[0], (void **)&reply,
+		while (!vchi_msg_hold(instance->service, (void **)&reply,
 				       &reply_len, VCHI_FLAGS_NONE, &msg)) {
 			if (reply->trans_id & 0x80000000) {
 				/* Async event or cmd from the VPU */
@@ -286,21 +285,20 @@ static void vc_sm_cma_vchi_callback(void *param,
 }
 
 struct sm_instance *vc_sm_cma_vchi_init(struct vchiq_instance *vchiq_instance,
-					unsigned int num_connections,
 					vpu_event_cb vpu_event)
 {
-	u32 i;
+	struct service_creation params = {
+		.version = VCHI_VERSION_EX(VC_SM_VER, VC_SM_MIN_VER),
+		.service_id = VC_SM_SERVER_NAME,
+		.callback = vc_sm_cma_vchi_callback,
+		.callback_param = NULL,
+	};
 	struct sm_instance *instance;
 	int status;
+	int i;
 
 	pr_debug("%s: start", __func__);
 
-	if (num_connections > VCHI_MAX_NUM_CONNECTIONS) {
-		pr_err("%s: unsupported number of connections %u (max=%u)",
-		       __func__, num_connections, VCHI_MAX_NUM_CONNECTIONS);
-
-		goto err_null;
-	}
 	/* Allocate memory for this instance */
 	instance = kzalloc(sizeof(*instance), GFP_KERNEL);
 
@@ -317,25 +315,15 @@ struct sm_instance *vc_sm_cma_vchi_init(struct vchiq_instance *vchiq_instance,
 		init_completion(&instance->free_blk[i].cmplt);
 		list_add(&instance->free_blk[i].head, &instance->free_list);
 	}
+	params.callback_param = instance;
 
 	/* Open the VCHI service connections */
-	instance->num_connections = num_connections;
-	for (i = 0; i < num_connections; i++) {
-		struct service_creation params = {
-			.version = VCHI_VERSION_EX(VC_SM_VER, VC_SM_MIN_VER),
-			.service_id = VC_SM_SERVER_NAME,
-			.callback = vc_sm_cma_vchi_callback,
-			.callback_param = instance,
-		};
+	status = vchi_service_open(vchiq_instance, &params, &instance->service);
+	if (status) {
+		pr_err("%s: failed to open VCHI service (%d)",
+		       __func__, status);
 
-		status = vchi_service_open(vchiq_instance,
-					   &params, &instance->service[i]);
-		if (status) {
-			pr_err("%s: failed to open VCHI service (%d)",
-			       __func__, status);
-
-			goto err_close_services;
-		}
+		goto err_close_services;
 	}
 
 	/* Create the thread which takes care of all io to/from videoocore. */
@@ -354,12 +342,8 @@ struct sm_instance *vc_sm_cma_vchi_init(struct vchiq_instance *vchiq_instance,
 	return instance;
 
 err_close_services:
-	for (i = 0; i < instance->num_connections; i++) {
-		if (instance->service[i])
-			vchi_service_close(instance->service[i]);
-	}
+	vchi_service_close(instance->service);
 	kfree(instance);
-err_null:
 	pr_debug("%s: FAILED", __func__);
 	return NULL;
 }
@@ -367,7 +351,6 @@ err_null:
 int vc_sm_cma_vchi_stop(struct sm_instance **handle)
 {
 	struct sm_instance *instance;
-	u32 i;
 
 	if (!handle) {
 		pr_err("%s: invalid pointer to handle %p", __func__, handle);
@@ -381,14 +364,8 @@ int vc_sm_cma_vchi_stop(struct sm_instance **handle)
 
 	instance = *handle;
 
-	/* Close all VCHI service connections */
-	for (i = 0; i < instance->num_connections; i++) {
-		s32 success;
-
-		vchi_service_use(instance->service[i]);
-
-		success = vchi_service_close(instance->service[i]);
-	}
+	vchi_service_use(instance->service);
+	vchi_service_close(instance->service);
 
 	kfree(instance);
 

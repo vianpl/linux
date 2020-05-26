@@ -29,7 +29,6 @@ typedef void (*vpu_event_cb)(struct sm_instance *instance,
  * Initialize the shared memory service, opens up vchi connection to talk to it.
  */
 struct sm_instance *vc_sm_cma_vchi_init(struct vchiq_instance *vchiq_instance,
-					unsigned int num_connections,
 					vpu_event_cb vpu_event);
 
 /*
