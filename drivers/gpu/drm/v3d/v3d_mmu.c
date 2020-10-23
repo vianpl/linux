@@ -32,23 +32,27 @@
 #define V3D_PTE_WRITEABLE BIT(29)
 #define V3D_PTE_VALID BIT(28)
 
-static int v3d_mmu_flush_all(struct v3d_dev *v3d)
+static int v3d_mmu_flush_all(struct v3d_dev *v3d, bool rpm)
 {
 	int ret;
 
-	/* Keep power on the device on until we're done with this call, but
-	 * skip the flush if the device is already in suspended state.
-	 * Otherwise, the MMU will be reset when powered back on.
-	 *
-	 * We don't use 'pm_runtime_get_if_in_use()' so as to avoid skipping
-	 * the flush based on the device's 'usage_count'. We only care for
-	 * 'runtime_status', since we use delayed auto-suspend and can't
-	 * predict if the deferred suspend operation will actually happen or
-	 * will be negated by another operation coming in.
-	 */
-	ret = pm_runtime_get_if_active(v3d->drm.dev, true);
-	if (ret == 0)
-		return 0;
+	if (rpm) {
+		/* Keep power on the device on until we're done with this call,
+		 * but skip the flush if the device is already in suspended
+		 * state. Otherwise, the MMU will be reset when powered back
+		 * on.
+		 *
+		 * We don't use 'pm_runtime_get_if_in_use()' so as to avoid
+		 * skipping the flush based on the device's 'usage_count'. We
+		 * only care for 'runtime_status', since we use delayed
+		 * auto-suspend and can't predict if the deferred suspend
+		 * operation will actually happen or will be negated by another
+		 * operation coming in.
+		 */
+		ret = pm_runtime_get_if_active(v3d->drm.dev, true);
+		if (ret == 0)
+			return 0;
+	}
 
 	/* Make sure that another flush isn't already running when we
 	 * start this one.
@@ -77,8 +81,10 @@ static int v3d_mmu_flush_all(struct v3d_dev *v3d)
 	if (ret)
 		dev_err(v3d->drm.dev, "MMUC flush wait idle failed\n");
 
-	pm_runtime_mark_last_busy(v3d->drm.dev);
-	pm_runtime_put_autosuspend(v3d->drm.dev);
+	if (rpm) {
+		pm_runtime_mark_last_busy(v3d->drm.dev);
+		pm_runtime_put_autosuspend(v3d->drm.dev);
+	}
 
 	return ret;
 }
@@ -100,7 +106,12 @@ int v3d_mmu_set_page_table(struct v3d_dev *v3d)
 		  V3D_MMU_ILLEGAL_ADDR_ENABLE);
 	V3D_WRITE(V3D_MMUC_CONTROL, V3D_MMUC_CONTROL_ENABLE);
 
-	return v3d_mmu_flush_all(v3d);
+	/* v3d_mmu_set_page_table() is called on probe, reset and resume, so
+	 * bypass RPM altogether. This is specially important in the
+	 * v3d_runtime_resume() codepath, as the device is still in
+	 * RPM_SUSPENDED state, which will postpone the flush.
+	 */
+	return v3d_mmu_flush_all(v3d, false);
 }
 
 void v3d_mmu_insert_ptes(struct v3d_bo *bo)
@@ -126,7 +137,7 @@ void v3d_mmu_insert_ptes(struct v3d_bo *bo)
 	WARN_ON_ONCE(page - bo->node.start !=
 		     shmem_obj->base.size >> V3D_MMU_PAGE_SHIFT);
 
-	if (v3d_mmu_flush_all(v3d))
+	if (v3d_mmu_flush_all(v3d, true))
 		dev_err(v3d->drm.dev, "MMU flush timeout\n");
 }
 
@@ -139,6 +150,6 @@ void v3d_mmu_remove_ptes(struct v3d_bo *bo)
 	for (page = bo->node.start; page < bo->node.start + npages; page++)
 		v3d->pt[page] = 0;
 
-	if (v3d_mmu_flush_all(v3d))
+	if (v3d_mmu_flush_all(v3d, true))
 		dev_err(v3d->drm.dev, "MMU flush timeout\n");
 }
