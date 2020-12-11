@@ -26,6 +26,17 @@
 		ethernet0 = &genet;
 		pcie0 = &pcie0;
 		eeprom = &eeprom;
+		fw_config = &fw_config;
+	};
+
+	fw_config: fw-config {
+		compatible = "nvmem-rmem";
+		memory-region = <&eeprom>;
+		/*
+		 * Will be enabled by the bootloader if the reserved memory
+		 * region is valid.
+		 */
+		status = "disabled";
 	};
 
 	leds {
