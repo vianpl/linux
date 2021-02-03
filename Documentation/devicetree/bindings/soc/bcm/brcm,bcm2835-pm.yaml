@@ -21,13 +21,14 @@ properties:
     items:
       - enum:
           - brcm,bcm2835-pm
+          - brcm,bcm2711-pm
       - const: brcm,bcm2835-pm-wdt
 
   reg:
     minItems: 1
-    maxItems: 2
-    description: Specifies base physical address and size of the two register
-                 ranges, "PM" and "ASYNC_BRIDGE" in that order.
+    maxItems: 3
+    description: Specifies base physical address and size of the register
+                 ranges, "PM", "ASYNC_BRIDGE" and "ARGON_BRIDGE" in that order.
 
   "#power-domain-cells":
     const: 1
