@@ -12,6 +12,12 @@
 #include <linux/types.h>
 #include <asm/page.h>
 /*
+ * Shortcut for guests to target themselves
+ */
+#define HV_PARTITION_ID_SELF	((u64)-1)
+#define HV_VP_INDEX_SELF	((u32)-2)
+
+/*
  * The below CPUID leaves are present if VersionAndFeatures.HypervisorPresent
  * is set by CPUID(HvCpuIdFunctionVersionAndFeatures).
  */
