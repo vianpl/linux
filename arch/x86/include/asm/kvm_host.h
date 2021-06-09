@@ -616,6 +616,23 @@ struct kvm_vcpu_hv_synic {
 	bool dont_zero_synic_pages;
 };
 
+/* Hyper-V per-VTL vcpu context */
+struct kvm_vcpu_hv_vtl {
+	struct hv_init_vp_context ctx;
+	u64 msr_kernel_gsbase;
+	u64 msr_gsbase;
+	u64 msr_fsbase;
+	u64 msr_tsc_aux;
+	u64 msr_sysenter_cs;
+	u64 msr_sysenter_esp;
+	u64 msr_sysenter_eip;
+	u64 msr_star;
+	u64 msr_lstar;
+	u64 msr_cstar;
+	u64 msr_sfmask;
+	unsigned long dr7;
+};
+
 /* The maximum number of entries on the TLB flush fifo. */
 #define KVM_HV_TLB_FLUSH_FIFO_SIZE (16)
 /*
@@ -673,6 +690,8 @@ struct kvm_vcpu_hv {
 		u64 vm_id;
 		u32 vp_id;
 	} nested;
+
+	struct kvm_vcpu_hv_vtl vtl[HV_NUM_VTLS];
 };
 
 struct kvm_hypervisor_cpuid {
