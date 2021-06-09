@@ -49,10 +49,11 @@
 /* Support for physical CPU dynamic partitioning events is available*/
 #define HV_X64_CPU_DYNAMIC_PARTITIONING_AVAILABLE	BIT(3)
 /*
- * Support for passing hypercall input parameter block via XMM
+ * Support for passing hypercall input and output parameter block via XMM
  * registers is available
  */
 #define HV_X64_HYPERCALL_XMM_INPUT_AVAILABLE		BIT(4)
+#define HV_X64_HYPERCALL_XMM_OUTPUT_AVAILABLE 		BIT(15)
 /* Support for a virtual guest idle state is available */
 #define HV_X64_GUEST_IDLE_STATE_AVAILABLE		BIT(5)
 /* Frequency MSRs available */
