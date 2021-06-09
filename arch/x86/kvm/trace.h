@@ -1644,6 +1644,35 @@ TRACE_EVENT(kvm_hv_send_ipi_ex,
 		  __entry->valid_bank_mask)
 );
 
+TRACE_EVENT(kvm_hv_get_set_vp_registers,
+	TP_PROTO(u64 partition_id, u32 vp_index, u8 input_vtl, u16 vtl, u16 count, bool is_set),
+	TP_ARGS(partition_id, vp_index, input_vtl, vtl, count, is_set),
+
+	TP_STRUCT__entry(
+		__field(u64, partition_id)
+		__field(u32, vp_index)
+		__field(u8, input_vtl)
+		__field(u8, vtl)
+		__field(u16, count)
+		__field(bool, is_set)
+	),
+
+	TP_fast_assign(
+		__entry->partition_id = partition_id;
+		__entry->vp_index = vp_index;
+		__entry->input_vtl = input_vtl;
+		__entry->vtl = vtl;
+		__entry->count = count;
+		__entry->is_set = is_set;
+	),
+
+	TP_printk("%s VP registers: partition id 0x%llx, VP index %d, target VTL %u, active VTL %u, count %d",
+		  (__entry->is_set ? "set" : "get"),
+		  __entry->partition_id, __entry->vp_index,
+		  __entry->input_vtl, __entry->vtl,
+		  __entry->count)
+);
+
 TRACE_EVENT(kvm_pv_tlb_flush,
 	TP_PROTO(unsigned int vcpu_id, bool need_flush_tlb),
 	TP_ARGS(vcpu_id, need_flush_tlb),

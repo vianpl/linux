@@ -891,6 +891,12 @@ void kvm_hv_process_stimers(struct kvm_vcpu *vcpu)
 		}
 }
 
+static void hv_vcpu_vtl_uninit(struct kvm_vcpu *vcpu, u8 vtl_num)
+{
+	struct kvm_vcpu_hv_vtl *vtl = &to_hv_vcpu(vcpu)->vtl[vtl_num];
+	mutex_destroy(&vtl->lock);
+}
+
 void kvm_hv_vcpu_uninit(struct kvm_vcpu *vcpu)
 {
 	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
@@ -898,6 +904,9 @@ void kvm_hv_vcpu_uninit(struct kvm_vcpu *vcpu)
 
 	if (!hv_vcpu)
 		return;
+
+	for (i = 0; i < HV_NUM_VTLS; ++i)
+		hv_vcpu_vtl_uninit(vcpu, i);
 
 	for (i = 0; i < ARRAY_SIZE(hv_vcpu->stimer); i++)
 		stimer_cleanup(&hv_vcpu->stimer[i]);
@@ -955,6 +964,12 @@ static void stimer_init(struct kvm_vcpu_hv_stimer *stimer, int timer_index)
 	stimer_prepare_msg(stimer);
 }
 
+static void hv_vcpu_vtl_init(struct kvm_vcpu *vcpu, u8 vtl_num)
+{
+	struct kvm_vcpu_hv_vtl *vtl = &to_hv_vcpu(vcpu)->vtl[vtl_num];
+	mutex_init(&vtl->lock);
+}
+
 int kvm_hv_vcpu_init(struct kvm_vcpu *vcpu)
 {
 	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
@@ -972,6 +987,8 @@ int kvm_hv_vcpu_init(struct kvm_vcpu *vcpu)
 	hv_vcpu->vsm_vp_status.active_vtl = 0;
 	hv_vcpu->vsm_vp_status.enabled_vtl_set = (1u << 0); /* VTL0 is always enabled */
 	hv_vcpu->vsm_vp_status.active_mbec_enabled = 0;
+	for (i = 0; i < HV_NUM_VTLS; ++i)
+		hv_vcpu_vtl_init(vcpu, i);
 
 	synic_init(&hv_vcpu->synic);
 
@@ -1741,6 +1758,184 @@ int kvm_hv_get_msr_common(struct kvm_vcpu *vcpu, u32 msr, u64 *pdata, bool host)
 		return kvm_hv_get_msr(vcpu, msr, pdata, host);
 }
 
+static u64 get_vp_register(u32 name,
+			   struct hv_vp_register_val *val,
+			   struct kvm_vcpu *target_vcpu,
+			   u8 vtl_num)
+{
+	struct kvm_hv *hv = &target_vcpu->kvm->arch.hyperv;
+	struct kvm_vcpu_hv_vtl *vtl = &to_hv_vcpu(target_vcpu)->vtl[vtl_num];
+
+	val->low = val->high = 0;
+	switch (name) {
+	case HV_X64_REGISTER_RSP:
+		val->low = vtl->ctx.rsp;
+		break;
+	case HV_X64_REGISTER_RIP:
+		val->low = vtl->ctx.rip;
+		break;
+	case HV_X64_REGISTER_RFLAGS:
+		val->low = vtl->ctx.rflags;
+		break;
+	case HV_X64_REGISTER_CR0:
+		val->low = vtl->ctx.cr0;
+		break;
+	case HV_X64_REGISTER_CR3:
+		val->low = vtl->ctx.cr3;
+		break;
+	case HV_X64_REGISTER_CR4:
+		val->low = vtl->ctx.cr4;
+		break;
+	case HV_X64_REGISTER_DR7:
+		val->low = vtl->dr7;
+		break;
+	case HV_X64_REGISTER_LDTR:
+		BUG_ON(sizeof(vtl->ctx.ldtr) > sizeof(*val));
+		memcpy(val, &vtl->ctx.ldtr, sizeof(vtl->ctx.ldtr));
+		break;
+	case HV_X64_REGISTER_TR:
+		BUG_ON(sizeof(vtl->ctx.tr) > sizeof(*val));
+		memcpy(val, &vtl->ctx.tr, sizeof(vtl->ctx.tr));
+		break;
+	case HV_X64_REGISTER_IDTR:
+		BUG_ON(sizeof(vtl->ctx.idtr) > sizeof(*val));
+		memcpy(val, &vtl->ctx.idtr, sizeof(vtl->ctx.idtr));
+		break;
+	case HV_X64_REGISTER_GDTR:
+		BUG_ON(sizeof(vtl->ctx.gdtr) > sizeof(*val));
+		memcpy(val, &vtl->ctx.gdtr, sizeof(vtl->ctx.gdtr));
+		break;
+	case HV_X64_REGISTER_EFER:
+		val->low = vtl->ctx.efer;
+		break;
+	case HV_X64_REGISTER_SYSENTER_CS:
+		val->low = vtl->msr_sysenter_cs;
+		break;
+	case HV_X64_REGISTER_SYSENTER_EIP:
+		val->low = vtl->msr_sysenter_eip;
+		break;
+	case HV_X64_REGISTER_SYSENTER_ESP:
+		val->low = vtl->msr_sysenter_esp;
+		break;
+	case HV_X64_REGISTER_STAR:
+		val->low = vtl->msr_star;
+		break;
+	case HV_X64_REGISTER_LSTAR:
+		val->low = vtl->msr_lstar;
+		break;
+	case HV_X64_REGISTER_CSTAR:
+		val->low = vtl->msr_cstar;
+		break;
+	case HV_X64_REGISTER_SFMASK:
+		val->low = vtl->msr_sfmask;
+		break;
+	case HV_X64_REGISTER_TSC_AUX:
+		val->low = vtl->msr_tsc_aux;
+		break;
+	case HV_REGISTER_VSM_CAPABILITIES:
+		val->low = hv->vsm_capabilities.as_u64;
+		break;
+	case HV_REGISTER_VSM_PARTITION_STATUS:
+		val->low = hv->vsm_partition_status.as_u64;
+		break;
+	case HV_REGISTER_VSM_VP_STATUS:
+		val->low = to_hv_vcpu(target_vcpu)->vsm_vp_status.as_u64;
+		break;
+	default:
+		pr_err("%s: unknown VP register 0x%x\n", __func__, name);
+		return HV_STATUS_INVALID_PARAMETER;
+	};
+
+	return HV_STATUS_SUCCESS;
+}
+
+static u64 set_vp_register(u32 name,
+			   struct hv_vp_register_val *val,
+			   struct kvm_vcpu *target_vcpu,
+			   u8 vtl_num)
+{
+	struct kvm_vcpu_hv_vtl *vtl = &to_hv_vcpu(target_vcpu)->vtl[vtl_num];
+
+	switch (name) {
+	case HV_X64_REGISTER_RSP:
+		vtl->ctx.rsp = val->low;
+		break;
+	case HV_X64_REGISTER_RIP:
+		vtl->ctx.rip = val->low;
+		break;
+	case HV_X64_REGISTER_RFLAGS:
+		vtl->ctx.rflags = val->low;
+		break;
+	case HV_X64_REGISTER_CR0:
+		vtl->ctx.cr0 = val->low;
+		break;
+	case HV_X64_REGISTER_CR3:
+		vtl->ctx.cr3 = val->low;
+		break;
+	case HV_X64_REGISTER_CR4:
+		vtl->ctx.cr4 = val->low;
+		break;
+	case HV_X64_REGISTER_DR7:
+		vtl->dr7 = val->low;
+		break;
+	case HV_X64_REGISTER_LDTR:
+		BUG_ON(sizeof(vtl->ctx.ldtr) > sizeof(*val));
+		memcpy(&vtl->ctx.ldtr, val, sizeof(vtl->ctx.ldtr));
+		break;
+	case HV_X64_REGISTER_TR:
+		BUG_ON(sizeof(vtl->ctx.tr) > sizeof(*val));
+		memcpy(&vtl->ctx.tr, val, sizeof(vtl->ctx.tr));
+		break;
+	case HV_X64_REGISTER_IDTR:
+		BUG_ON(sizeof(vtl->ctx.idtr) > sizeof(*val));
+		memcpy(&vtl->ctx.idtr, val, sizeof(vtl->ctx.idtr));
+		break;
+	case HV_X64_REGISTER_GDTR:
+		BUG_ON(sizeof(vtl->ctx.gdtr) > sizeof(*val));
+		memcpy(&vtl->ctx.gdtr, val, sizeof(vtl->ctx.gdtr));
+		break;
+	case HV_X64_REGISTER_EFER:
+		vtl->ctx.efer = val->low;
+		break;
+	case HV_X64_REGISTER_SYSENTER_CS:
+		vtl->msr_sysenter_cs = val->low;
+		break;
+	case HV_X64_REGISTER_SYSENTER_EIP:
+		vtl->msr_sysenter_eip = val->low;
+		break;
+	case HV_X64_REGISTER_SYSENTER_ESP:
+		vtl->msr_sysenter_esp = val->low;
+		break;
+	case HV_X64_REGISTER_STAR:
+		vtl->msr_star = val->low;
+		break;
+	case HV_X64_REGISTER_LSTAR:
+		vtl->msr_lstar = val->low;
+		break;
+	case HV_X64_REGISTER_CSTAR:
+		vtl->msr_cstar = val->low;
+		break;
+	case HV_X64_REGISTER_SFMASK:
+		vtl->msr_sfmask = val->low;
+		break;
+	case HV_X64_REGISTER_TSC_AUX:
+		vtl->msr_tsc_aux = val->low;
+		break;
+	case HV_REGISTER_VSM_VINA:
+	case HV_X64_REGISTER_CR_INTERCEPT_CONTROL:
+	case HV_X64_REGISTER_CR_INTERCEPT_CR0_MASK:
+	case HV_X64_REGISTER_CR_INTERCEPT_CR4_MASK:
+	case HV_X64_REGISTER_CR_INTERCEPT_IA32_MISC_ENABLE_MASK:
+		pr_warn("%s: faking register 0x%x\n", __func__, name);
+		break;
+	default:
+		pr_err("%s: unknown VP register 0x%x\n", __func__, name);
+		return HV_STATUS_INVALID_PARAMETER;
+	};
+
+	return HV_STATUS_SUCCESS;
+}
+
 static void sparse_set_to_vcpu_mask(struct kvm *kvm, u64 *sparse_banks,
 				    u64 valid_bank_mask, unsigned long *vcpu_mask)
 {
@@ -2247,6 +2442,157 @@ ret_success:
 	return HV_STATUS_SUCCESS;
 }
 
+/* This is not a spec limit, but rather something we use to limit stack memory usage */
+#define HV_VP_REGISTER_LIST_SIZE 16u
+
+static u64 kvm_hv_get_set_vp_registers(struct kvm_vcpu *active_vcpu,
+				       struct kvm_hv_hcall *hc,
+				       bool do_set)
+{
+	struct kvm_vcpu *target_vcpu = NULL;
+	u8 vtl;
+	int status;
+
+	struct hv_get_set_vp_registers input;
+	struct hv_vp_register_val vals[HV_VP_REGISTER_LIST_SIZE];
+	u32 names[HV_VP_REGISTER_LIST_SIZE];
+	u16 xmm_index = 0;
+	u16 nregs;
+	u16 i;
+
+	/* Limit register count to how much we can handle per-call */
+	BUG_ON(hc->rep && hc->rep_idx >= hc->rep_cnt); /* idx/cnt should've been checked by caller */
+	nregs = hc->rep_cnt - hc->rep_idx;
+	nregs = nregs > HV_VP_REGISTER_LIST_SIZE ? HV_VP_REGISTER_LIST_SIZE : nregs;
+
+	if (hc->fast) {
+		input.partition_id = hc->ingpa;
+		input.vp_index = hc->outgpa & 0xFFFFFFFF;
+		input.input_vtl.as_uint8 = (hc->outgpa >> 32) & 0xFF;
+
+		/* We always return everything for fast calls, so no continuations should be possible */
+		if (hc->rep_idx != 0)
+			return HV_STATUS_INVALID_HYPERCALL_INPUT;
+
+		/* We can never fit more than 4 registers in 6 XMM input regs even if rep_idx is 0 */
+		if (nregs > 4)
+			return HV_STATUS_INVALID_HYPERCALL_INPUT;
+
+		for (i = 0; i < nregs; i += 4, ++xmm_index) {
+			names[i + 0] = sse128_l0(hc->xmm[xmm_index]);
+			names[i + 1] = sse128_l1(hc->xmm[xmm_index]);
+			names[i + 2] = sse128_l2(hc->xmm[xmm_index]);
+			names[i + 3] = sse128_l3(hc->xmm[xmm_index]);
+		}
+
+		if (do_set) {
+			/* Register values follow names */
+			for (i = 0; i < nregs; ++i, ++xmm_index) {
+				vals[i].low = sse128_lo(hc->xmm[xmm_index]);
+				vals[i].high = sse128_hi(hc->xmm[xmm_index]);
+			}
+		}
+	} else {
+		u64 ingpa = hc->ingpa;
+		if (unlikely(kvm_read_guest(active_vcpu->kvm, ingpa, &input, sizeof(input)) != 0))
+			return HV_STATUS_INVALID_HYPERCALL_INPUT;
+
+		ingpa += sizeof(input) + hc->rep_idx * sizeof(*names);
+		if (unlikely(kvm_read_guest(active_vcpu->kvm, ingpa, names, nregs * sizeof(*names)) != 0))
+			return HV_STATUS_INVALID_HYPERCALL_INPUT;
+
+		if (do_set) {
+			/* According to TLFS, values start aligned on 16-byte boundary after names */
+			ingpa = round_up(ingpa + nregs * sizeof(*names), 16) + hc->rep_idx * sizeof(*vals);
+			if (unlikely(kvm_read_guest(active_vcpu->kvm, ingpa, vals, nregs * sizeof(*vals)) != 0))
+				return HV_STATUS_INVALID_HYPERCALL_INPUT;
+		}
+	}
+
+	trace_kvm_hv_get_set_vp_registers(input.partition_id,
+					  input.vp_index,
+					  input.input_vtl.as_uint8,
+					  get_active_vtl(active_vcpu),
+					  nregs,
+					  do_set);
+
+	/* Handle partition ID (the only supported id is self) */
+	if (input.partition_id != HV_PARTITION_ID_SELF) {
+		return HV_STATUS_INVALID_PARTITION_ID;
+	}
+
+	/* Handle VP index argument */
+	if (input.vp_index != HV_VP_INDEX_SELF && input.vp_index != active_vcpu->arch.hyperv->vp_index) {
+		target_vcpu = get_vcpu_by_vpidx(active_vcpu->kvm, input.vp_index);
+		if (!target_vcpu)
+			return HV_STATUS_INVALID_VP_INDEX;
+	} else {
+		target_vcpu = active_vcpu;
+	}
+
+	/* Handle target VTL we should use */
+	if (input.input_vtl.use_target_vtl) {
+		vtl = input.input_vtl.target_vtl;
+
+		if (vtl >= HV_NUM_VTLS) {
+			return HV_STATUS_INVALID_HYPERCALL_INPUT;
+		}
+
+		if (vtl > get_active_vtl(active_vcpu)) {
+			return HV_STATUS_ACCESS_DENIED;
+		}
+	} else {
+		vtl = get_active_vtl(active_vcpu);
+	}
+
+	/* Lock destination VTL here to make sure we follow the atomicity requirement of
+	 * hypercall's side-effects */
+	mutex_lock(&to_hv_vcpu(target_vcpu)->vtl[vtl].lock);
+
+	/* Handle actual registers */
+	for (i = 0; i < nregs; ++i) {
+		status = (do_set ?
+			set_vp_register(names[i], &vals[i], target_vcpu, vtl):
+			get_vp_register(names[i], &vals[i], target_vcpu, vtl));
+		if (status != HV_STATUS_SUCCESS) {
+			break;
+		}
+	}
+
+	mutex_unlock(&to_hv_vcpu(target_vcpu)->vtl[vtl].lock);
+
+	if (status != HV_STATUS_SUCCESS) {
+		return status;
+	}
+
+	/* Return results to guest */
+	if (!do_set) {
+		if (hc->fast) {
+			for (i = 0; i < nregs; ++i, ++xmm_index) {
+				hc->xmm[xmm_index] = sse128(vals[i].low, vals[i].high);
+				hc->xmm_dirty = true;
+			}
+		} else {
+			u64 outgpa = hc->outgpa + hc->rep_idx * sizeof(*vals);
+			if (unlikely(kvm_write_guest(active_vcpu->kvm, outgpa, vals, sizeof(*vals) * nregs) != 0))
+				return HV_STATUS_INVALID_HYPERCALL_INPUT;
+		}
+	}
+
+	return (u64)HV_STATUS_SUCCESS |
+		((u64)nregs << HV_HYPERCALL_REP_COMP_OFFSET);
+}
+
+static u64 kvm_hv_get_vp_registers(struct kvm_vcpu *active_vcpu, struct kvm_hv_hcall *hc)
+{
+	return kvm_hv_get_set_vp_registers(active_vcpu, hc, false);
+}
+
+static u64 kvm_hv_set_vp_registers(struct kvm_vcpu *active_vcpu, struct kvm_hv_hcall *hc)
+{
+	return kvm_hv_get_set_vp_registers(active_vcpu, hc, true);
+}
+
 void kvm_hv_set_cpuid(struct kvm_vcpu *vcpu, bool hyperv_enabled)
 {
 	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
@@ -2403,6 +2749,8 @@ static bool is_xmm_fast_hypercall(struct kvm_hv_hcall *hc)
 	case HVCALL_FLUSH_VIRTUAL_ADDRESS_LIST_EX:
 	case HVCALL_FLUSH_VIRTUAL_ADDRESS_SPACE_EX:
 	case HVCALL_SEND_IPI_EX:
+	case HVCALL_GET_VP_REGISTERS:
+	case HVCALL_SET_VP_REGISTERS:
 		return true;
 	}
 
@@ -2639,6 +2987,12 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 			break;
 		}
 		goto hypercall_userspace_exit;
+	case HVCALL_GET_VP_REGISTERS:
+		ret = kvm_hv_get_vp_registers(vcpu, &hc);
+		break;
+	case HVCALL_SET_VP_REGISTERS:
+		ret = kvm_hv_set_vp_registers(vcpu, &hc);
+		break;
 	default:
 		ret = HV_STATUS_INVALID_HYPERCALL_CODE;
 		break;
@@ -2813,6 +3167,7 @@ int kvm_get_hv_cpuid(struct kvm_vcpu *vcpu, struct kvm_cpuid2 *cpuid,
 			ent->ebx |= HV_POST_MESSAGES;
 			ent->ebx |= HV_SIGNAL_EVENTS;
 			ent->ebx |= HV_ENABLE_EXTENDED_HYPERCALLS;
+			ent->ebx |= HV_ACCESS_VP_REGISTERS;
 
 			ent->edx |= HV_X64_HYPERCALL_XMM_INPUT_AVAILABLE;
 			ent->edx |= HV_X64_HYPERCALL_XMM_OUTPUT_AVAILABLE;

@@ -89,6 +89,7 @@
 #define HV_ACCESS_STATS				BIT(8)
 #define HV_DEBUGGING				BIT(11)
 #define HV_CPU_MANAGEMENT			BIT(12)
+#define HV_ACCESS_VP_REGISTERS			BIT(17)
 #define HV_ENABLE_EXTENDED_HYPERCALLS		BIT(20)
 #define HV_ISOLATION				BIT(22)
 
@@ -220,6 +221,8 @@ enum HV_GENERIC_SET_FORMAT {
 #define HV_STATUS_ACCESS_DENIED			6
 #define HV_STATUS_OPERATION_DENIED		8
 #define HV_STATUS_INSUFFICIENT_MEMORY		11
+#define HV_STATUS_INVALID_PARTITION_ID		13
+#define HV_STATUS_INVALID_VP_INDEX		14
 #define HV_STATUS_INVALID_PORT_ID		17
 #define HV_STATUS_INVALID_CONNECTION_ID		18
 #define HV_STATUS_INSUFFICIENT_BUFFERS		19
@@ -624,55 +627,6 @@ struct hv_retarget_device_interrupt {
 	struct hv_device_interrupt_target int_target;
 } __packed __aligned(8);
 
-
-/* HvGetVpRegisters hypercall input with variable size reg name list*/
-struct hv_get_vp_registers_input {
-	struct {
-		u64 partitionid;
-		u32 vpindex;
-		u8  inputvtl;
-		u8  padding[3];
-	} header;
-	struct input {
-		u32 name0;
-		u32 name1;
-	} element[];
-} __packed;
-
-
-/* HvGetVpRegisters returns an array of these output elements */
-struct hv_get_vp_registers_output {
-	union {
-		struct {
-			u32 a;
-			u32 b;
-			u32 c;
-			u32 d;
-		} as32 __packed;
-		struct {
-			u64 low;
-			u64 high;
-		} as64 __packed;
-	};
-};
-
-/* HvSetVpRegisters hypercall with variable size reg name/value list*/
-struct hv_set_vp_registers_input {
-	struct {
-		u64 partitionid;
-		u32 vpindex;
-		u8  inputvtl;
-		u8  padding[3];
-	} header;
-	struct {
-		u32 name;
-		u32 padding1;
-		u64 padding2;
-		u64 valuelow;
-		u64 valuehigh;
-	} element[];
-} __packed;
-
 enum hv_device_type {
 	HV_DEVICE_TYPE_LOGICAL = 0,
 	HV_DEVICE_TYPE_PCI = 1,
@@ -829,6 +783,7 @@ struct hv_mmio_write_input {
 /* VSM registers */
 #define HV_REGISTER_VSM_VP_STATUS		0x000D0003
 #define HV_REGISTER_VSM_PARTITION_STATUS	0x000D0004
+#define HV_REGISTER_VSM_VINA			0x000D0005
 #define HV_REGISTER_VSM_CAPABILITIES		0x000D0006
 
 /*
@@ -870,5 +825,17 @@ union hv_register_vsm_vp_status {
 		u64 reserved1:32;
 	} __packed;
 };
+
+struct hv_get_set_vp_registers {
+	u64 partition_id;
+	u32 vp_index;
+	union hv_input_vtl input_vtl;
+	u8 padding[3];
+} __packed;
+
+struct hv_vp_register_val {
+	u64 low;
+	u64 high;
+} __packed;
 
 #endif

@@ -618,6 +618,8 @@ struct kvm_vcpu_hv_synic {
 
 /* Hyper-V per-VTL vcpu context */
 struct kvm_vcpu_hv_vtl {
+	struct mutex lock;
+
 	struct hv_init_vp_context ctx;
 	u64 msr_kernel_gsbase;
 	u64 msr_gsbase;
