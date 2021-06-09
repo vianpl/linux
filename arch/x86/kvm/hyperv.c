@@ -2542,6 +2542,10 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 		kvm_hv_hypercall_read_xmm(&hc);
 	}
 
+	/* Rep count value must always be greater than rep index, if rep count is not 0 */
+	if (hc.rep && hc.rep_idx >= hc.rep_cnt)
+		return kvm_hv_hypercall_complete(vcpu, HV_STATUS_INVALID_HYPERCALL_INPUT);
+
 	switch (hc.code) {
 	case HVCALL_NOTIFY_LONG_SPIN_WAIT:
 		if (unlikely(hc.rep || hc.var_cnt)) {
