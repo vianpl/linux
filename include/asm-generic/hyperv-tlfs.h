@@ -89,6 +89,7 @@
 #define HV_ACCESS_STATS				BIT(8)
 #define HV_DEBUGGING				BIT(11)
 #define HV_CPU_MANAGEMENT			BIT(12)
+#define HV_ACCESS_VSM				BIT(16)
 #define HV_ACCESS_VP_REGISTERS			BIT(17)
 #define HV_ENABLE_EXTENDED_HYPERCALLS		BIT(20)
 #define HV_ISOLATION				BIT(22)
@@ -147,9 +148,10 @@ union hv_reference_tsc_msr {
 /* Declare the various hypercall operations. */
 #define HVCALL_FLUSH_VIRTUAL_ADDRESS_SPACE	0x0002
 #define HVCALL_FLUSH_VIRTUAL_ADDRESS_LIST	0x0003
-#define HVCALL_ENABLE_VP_VTL			0x000f
 #define HVCALL_NOTIFY_LONG_SPIN_WAIT		0x0008
 #define HVCALL_SEND_IPI				0x000b
+#define HVCALL_ENABLE_PARTITION_VTL		0x000d
+#define HVCALL_ENABLE_VP_VTL			0x000f
 #define HVCALL_FLUSH_VIRTUAL_ADDRESS_SPACE_EX	0x0013
 #define HVCALL_FLUSH_VIRTUAL_ADDRESS_LIST_EX	0x0014
 #define HVCALL_SEND_IPI_EX			0x0015
@@ -836,6 +838,21 @@ struct hv_get_set_vp_registers {
 struct hv_vp_register_val {
 	u64 low;
 	u64 high;
+} __packed;
+
+union hv_enable_partition_vtl_flags {
+	u8 as_u8;
+	struct {
+		u8 enable_mbec:1;
+		u8 reserved:7;
+	} __packed;
+};
+
+struct hv_enable_partition_vtl {
+	u64 target_partition_id;
+	u8 target_vtl;
+	union hv_enable_partition_vtl_flags flags;
+	u8 reserved[6];
 } __packed;
 
 #endif

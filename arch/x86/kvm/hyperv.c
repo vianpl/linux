@@ -2593,6 +2593,121 @@ static u64 kvm_hv_set_vp_registers(struct kvm_vcpu *active_vcpu, struct kvm_hv_h
 	return kvm_hv_get_set_vp_registers(active_vcpu, hc, true);
 }
 
+static u64 kvm_hv_enable_partition_vtl(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
+{
+	struct hv_enable_partition_vtl input;
+	struct kvm_vcpu_hv* hv_vcpu;
+	struct kvm_hv* hv;
+	u8 highest_enabled_vtl;
+
+	hv = &vcpu->kvm->arch.hyperv;
+	hv_vcpu = vcpu->arch.hyperv;
+
+	/* Continuations don't make sense for this call */
+	if (unlikely(hc->rep))
+		return HV_STATUS_INVALID_HYPERCALL_INPUT;
+
+	if (hc->fast) {
+		u64 *pinput64 = (u64 *)&input;
+		pinput64[0] = hc->ingpa;
+		pinput64[1] = hc->outgpa;
+	} else {
+		if (kvm_read_guest(vcpu->kvm, hc->ingpa, &input, sizeof(input)) != 0)
+			return HV_STATUS_INVALID_HYPERCALL_INPUT;
+	}
+
+	trace_kvm_hv_enable_partition_vtl(input.target_partition_id, input.target_vtl, input.flags.as_u8);
+
+	/* Only self-targeting is supported */
+	if (input.target_partition_id != HV_PARTITION_ID_SELF)
+		return HV_STATUS_INVALID_PARTITION_ID;
+
+	/* We don't declare MBEC support */
+	if (input.flags.enable_mbec != 0)
+		return HV_STATUS_INVALID_PARAMETER;
+
+	/* Check that target VTL is sane */
+	if (input.target_vtl > hv->vsm_partition_status.maximum_vtl)
+		return HV_STATUS_INVALID_PARAMETER;
+
+	/* Is target VTL already enabled? */
+	if (hv->vsm_partition_status.enabled_vtl_set & (1ul << input.target_vtl))
+		return HV_STATUS_INVALID_PARAMETER;
+
+	/* Requestor VP should be running on VTL higher or equal to the new one or
+	 * at the highest VTL enabled for partition overall if the new one is higher than that */
+	highest_enabled_vtl = fls(hv->vsm_partition_status.enabled_vtl_set) - 1;
+	if (get_active_vtl(vcpu) < input.target_vtl && get_active_vtl(vcpu) != highest_enabled_vtl)
+		return HV_STATUS_INVALID_PARAMETER;
+
+	hv->vsm_partition_status.enabled_vtl_set |= (1ul << input.target_vtl);
+	return HV_STATUS_SUCCESS;
+}
+
+static u64 kvm_hv_enable_vp_vtl(struct kvm_vcpu *requestor_vcpu, struct kvm_hv_hcall *hc)
+{
+	struct kvm_hv *hv = &requestor_vcpu->kvm->arch.hyperv;
+	struct kvm_vcpu *target_vcpu = NULL;
+	struct kvm_vcpu_hv *target_vcpu_hv = NULL;
+	struct hv_enable_vp_vtl input;
+	u8 highest_vp_enabled_vtl;
+
+	/* Neither continuations not fast calls are possible for this call */
+	if (hc->rep || hc->fast)
+		return HV_STATUS_INVALID_HYPERCALL_INPUT;
+
+	if (unlikely(kvm_read_guest(requestor_vcpu->kvm, hc->ingpa, &input, sizeof(input)) != 0))
+		return HV_STATUS_INVALID_HYPERCALL_INPUT;
+
+	trace_kvm_hv_enable_vp_vtl(input.partition_id, input.vp_index, input.target_vtl.target_vtl);
+
+	/* Only self-targeting is supported */
+	if (input.partition_id != HV_PARTITION_ID_SELF)
+		return HV_STATUS_INVALID_PARTITION_ID;
+
+	/* Handle VP index argument */
+	if (input.vp_index != HV_VP_INDEX_SELF && input.vp_index != requestor_vcpu->arch.hyperv->vp_index) {
+		target_vcpu = get_vcpu_by_vpidx(requestor_vcpu->kvm, input.vp_index);
+		if (!target_vcpu)
+			return HV_STATUS_INVALID_VP_INDEX;
+	} else {
+		target_vcpu = requestor_vcpu;
+	}
+
+	target_vcpu_hv = to_hv_vcpu(target_vcpu);
+
+	/* Check that target VTL is sane */
+	if (input.target_vtl.target_vtl > hv->vsm_partition_status.maximum_vtl)
+		return HV_STATUS_INVALID_PARAMETER;
+
+	/* Is target VTL already enabled for partition? */
+	if ((hv->vsm_partition_status.enabled_vtl_set & (1ul << input.target_vtl.target_vtl)) == 0)
+		return HV_STATUS_INVALID_PARAMETER;
+
+	/* Is target VTL already enabled for target vcpu? */
+	if (target_vcpu_hv->vsm_vp_status.enabled_vtl_set & (1ul << input.target_vtl.target_vtl))
+		return HV_STATUS_INVALID_PARAMETER;
+
+	/* Requestor VP should be running on vtl higher or equal to the new one or
+	 * it needs to be running on a highest VTL any VP has enabled */
+	highest_vp_enabled_vtl = fls(hv->vtl_enabled_for_vps) - 1;
+	if (get_active_vtl(requestor_vcpu) < input.target_vtl.target_vtl &&
+	    get_active_vtl(requestor_vcpu) != highest_vp_enabled_vtl)
+		return HV_STATUS_INVALID_PARAMETER;
+
+	memcpy(&target_vcpu_hv->vtl[input.target_vtl.target_vtl].ctx, &input.vp_context, sizeof(input.vp_context));
+
+	/* Propagate gs.base and fs.base to initial values for MSR_GS_BASE and MSR_FS_BASE,
+	 * which are isolated per-VTL but don't have their own fields in initial VP context. */
+	target_vcpu_hv->vtl[input.target_vtl.target_vtl].msr_gsbase = input.vp_context.gs.base;
+	target_vcpu_hv->vtl[input.target_vtl.target_vtl].msr_fsbase = input.vp_context.fs.base;
+
+	hv->vtl_enabled_for_vps |= (1u << input.target_vtl.target_vtl);
+	target_vcpu_hv->vsm_vp_status.enabled_vtl_set |= (1ul << input.target_vtl.target_vtl);
+
+	return HV_STATUS_SUCCESS;
+}
+
 void kvm_hv_set_cpuid(struct kvm_vcpu *vcpu, bool hyperv_enabled)
 {
 	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
@@ -2993,6 +3108,12 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 	case HVCALL_SET_VP_REGISTERS:
 		ret = kvm_hv_set_vp_registers(vcpu, &hc);
 		break;
+	case HVCALL_ENABLE_PARTITION_VTL:
+		ret = kvm_hv_enable_partition_vtl(vcpu, &hc);
+		break;
+	case HVCALL_ENABLE_VP_VTL:
+		ret = kvm_hv_enable_vp_vtl(vcpu, &hc);
+		break;
 	default:
 		ret = HV_STATUS_INVALID_HYPERCALL_CODE;
 		break;
@@ -3022,6 +3143,7 @@ static void hv_init_vsm(struct kvm_hv* hv)
 	hv->vsm_partition_status.as_u64 = 0;
 	hv->vsm_partition_status.enabled_vtl_set = (1u << 0); /* VTL0 is enabled */
 	hv->vsm_partition_status.maximum_vtl = HV_NUM_VTLS - 1;
+	hv->vtl_enabled_for_vps = (1u << 0);
 }
 
 void kvm_hv_init_vm(struct kvm *kvm)
@@ -3168,6 +3290,7 @@ int kvm_get_hv_cpuid(struct kvm_vcpu *vcpu, struct kvm_cpuid2 *cpuid,
 			ent->ebx |= HV_SIGNAL_EVENTS;
 			ent->ebx |= HV_ENABLE_EXTENDED_HYPERCALLS;
 			ent->ebx |= HV_ACCESS_VP_REGISTERS;
+			ent->ebx |= HV_ACCESS_VSM;
 
 			ent->edx |= HV_X64_HYPERCALL_XMM_INPUT_AVAILABLE;
 			ent->edx |= HV_X64_HYPERCALL_XMM_OUTPUT_AVAILABLE;

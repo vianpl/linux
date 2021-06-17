@@ -1113,6 +1113,9 @@ struct kvm_hv {
 	union hv_register_vsm_capabilities vsm_capabilities;
 	union hv_register_vsm_partition_status vsm_partition_status;
 
+	/* If bit N is set, then we have VTLN enabled for any number of VPs */
+	u16 vtl_enabled_for_vps;
+
 	/* How many vCPUs have VP index != vCPU index */
 	atomic_t num_mismatched_vp_indexes;
 

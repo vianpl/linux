@@ -1673,6 +1673,47 @@ TRACE_EVENT(kvm_hv_get_set_vp_registers,
 		  __entry->count)
 );
 
+TRACE_EVENT(kvm_hv_enable_partition_vtl,
+	TP_PROTO(u64 target_partition_id, u8 target_vtl, u8 flags),
+	TP_ARGS(target_partition_id, target_vtl, flags),
+
+	TP_STRUCT__entry(
+		__field(u64, target_partition_id)
+		__field(u8, target_vtl)
+		__field(u8, flags)
+	),
+
+	TP_fast_assign(
+		__entry->target_partition_id = target_partition_id;
+		__entry->target_vtl = target_vtl;
+		__entry->flags = flags;
+	),
+
+	TP_printk("target partition id 0x%llx, target VTL %d, flags 0x%hhx",
+		  __entry->target_partition_id, __entry->target_vtl,
+		  __entry->flags)
+);
+
+TRACE_EVENT(kvm_hv_enable_vp_vtl,
+	TP_PROTO(u64 target_partition_id, u32 vp_index, u8 target_vtl),
+	TP_ARGS(target_partition_id, vp_index, target_vtl),
+
+	TP_STRUCT__entry(
+		__field(u64, target_partition_id)
+		__field(u32, vp_index)
+		__field(u8, target_vtl)
+	),
+
+	TP_fast_assign(
+		__entry->target_partition_id = target_partition_id;
+		__entry->vp_index = vp_index;
+		__entry->target_vtl = target_vtl;
+	),
+
+	TP_printk("target partition id 0x%llx, VP index %d, target VTL %d",
+		  __entry->target_partition_id, __entry->vp_index, __entry->target_vtl)
+);
+
 TRACE_EVENT(kvm_pv_tlb_flush,
 	TP_PROTO(unsigned int vcpu_id, bool need_flush_tlb),
 	TP_ARGS(vcpu_id, need_flush_tlb),
