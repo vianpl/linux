@@ -969,6 +969,9 @@ int kvm_hv_vcpu_init(struct kvm_vcpu *vcpu)
 
 	vcpu->arch.hyperv = hv_vcpu;
 	hv_vcpu->vcpu = vcpu;
+	hv_vcpu->vsm_vp_status.active_vtl = 0;
+	hv_vcpu->vsm_vp_status.enabled_vtl_set = (1u << 0); /* VTL0 is always enabled */
+	hv_vcpu->vsm_vp_status.active_mbec_enabled = 0;
 
 	synic_init(&hv_vcpu->synic);
 
@@ -2657,12 +2660,23 @@ hypercall_userspace_exit:
 	return 0;
 }
 
+static void hv_init_vsm(struct kvm_hv* hv)
+{
+	hv->vsm_capabilities.as_u64 = 0;
+	hv->vsm_capabilities.dr6_shared = 1;
+
+	hv->vsm_partition_status.as_u64 = 0;
+	hv->vsm_partition_status.enabled_vtl_set = (1u << 0); /* VTL0 is enabled */
+	hv->vsm_partition_status.maximum_vtl = HV_NUM_VTLS - 1;
+}
+
 void kvm_hv_init_vm(struct kvm *kvm)
 {
 	struct kvm_hv *hv = to_kvm_hv(kvm);
 
 	mutex_init(&hv->hv_lock);
 	idr_init(&hv->conn_to_evt);
+	hv_init_vsm(&kvm->arch.hyperv);
 }
 
 void kvm_hv_destroy_vm(struct kvm *kvm)

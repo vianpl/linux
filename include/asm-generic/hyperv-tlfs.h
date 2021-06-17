@@ -826,4 +826,49 @@ struct hv_mmio_write_input {
 #define HV_INVALID_VTL	((u8) -1)
 #define HV_ALL_VTLS		((u8) 0xF)
 
+/* VSM registers */
+#define HV_REGISTER_VSM_VP_STATUS		0x000D0003
+#define HV_REGISTER_VSM_PARTITION_STATUS	0x000D0004
+#define HV_REGISTER_VSM_CAPABILITIES		0x000D0006
+
+/*
+ * Advertised partition VSM capabilities
+ */
+union hv_register_vsm_capabilities {
+	u64 as_u64;
+	struct {
+		u64 reserved:46;
+		u64 deny_lower_vtl_startup:1;
+		u64 mbec_vtl_mask:16;
+		u64 dr6_shared:1;
+	} __packed;
+};
+
+/*
+ * Partition VSM status
+ */
+union hv_register_vsm_partition_status {
+	u64 as_u64;
+	struct {
+		u64 enabled_vtl_set:16;
+		u64 maximum_vtl:4;
+		u64 mbec_enabled_vtl_set:16;
+		u64 reserved:28;
+	} __packed;
+};
+
+/*
+ * VP VSM status
+ */
+union hv_register_vsm_vp_status {
+	u64 as_u64;
+	struct {
+		u64 active_vtl:4;
+		u64 active_mbec_enabled:1;
+		u64 reserved0:11;
+		u64 enabled_vtl_set:16;
+		u64 reserved1:32;
+	} __packed;
+};
+
 #endif

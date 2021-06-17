@@ -692,6 +692,7 @@ struct kvm_vcpu_hv {
 	} nested;
 
 	struct kvm_vcpu_hv_vtl vtl[HV_NUM_VTLS];
+	union hv_register_vsm_vp_status vsm_vp_status;
 };
 
 struct kvm_hypervisor_cpuid {
@@ -1106,6 +1107,9 @@ struct kvm_hv {
 	u64 hv_tsc_emulation_control;
 	u64 hv_tsc_emulation_status;
 	u64 hv_invtsc_control;
+
+	union hv_register_vsm_capabilities vsm_capabilities;
+	union hv_register_vsm_partition_status vsm_partition_status;
 
 	/* How many vCPUs have VP index != vCPU index */
 	atomic_t num_mismatched_vp_indexes;
