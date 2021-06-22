@@ -787,6 +787,25 @@ struct hv_mmio_write_input {
 #define HV_REGISTER_VSM_PARTITION_STATUS	0x000D0004
 #define HV_REGISTER_VSM_VINA			0x000D0005
 #define HV_REGISTER_VSM_CAPABILITIES		0x000D0006
+#define HV_REGISTER_VSM_VP_STATUS		0x000D0003
+#define HV_REGISTER_VSM_PARTITION_STATUS	0x000D0004
+#define HV_REGISTER_VSM_CAPABILITIES		0x000D0006
+#define HV_REGISTER_VSM_PARTITION_CONFIG	0x000D0007
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL0	0x000D0010
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL1	0x000D0011
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL2	0x000D0012
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL3	0x000D0013
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL4	0x000D0014
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL5	0x000D0015
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL6	0x000D0016
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL7	0x000D0017
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL8	0x000D0018
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL9	0x000D0019
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL10	0x000D001A
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL11	0x000D001B
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL12	0x000D001C
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL13	0x000D001D
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL14	0x000D001E
 
 /*
  * Advertised partition VSM capabilities
@@ -825,6 +844,34 @@ union hv_register_vsm_vp_status {
 		u64 reserved0:11;
 		u64 enabled_vtl_set:16;
 		u64 reserved1:32;
+	} __packed;
+};
+
+/*
+ * Partition VSM config
+ */
+union hv_register_vsm_partition_config {
+	u64 as_u64;
+	struct {
+		u64 enable_vtl_protection:1;
+		u64 default_vtl_protection_mask:4;
+		u64 zero_memory_on_reset:1;
+		u64 deny_lower_vtl_startup:1;
+		u64 reserved0:2;
+		u64 intercept_vp_startup:1;
+		u64 reserved1:54;
+	} __packed;
+};
+
+/*
+ * Partition per-VTL VSM configs to configure lower VTLs
+ */
+union hv_register_vsm_vp_secure_vtl_config {
+	u64 as_u64;
+	struct {
+		u64 mbec_enabled:1;
+		u64 tlb_locked:1;
+		u64 reserved0:62;
 	} __packed;
 };
 

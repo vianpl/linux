@@ -633,6 +633,10 @@ struct kvm_vcpu_hv_vtl {
 	u64 msr_cstar;
 	u64 msr_sfmask;
 	unsigned long dr7;
+
+	/* Per-VP, per-VTL config register set by upper VTL for lower VTL (us).
+	 * Does not exist for highest VTL possible */
+	union hv_register_vsm_vp_secure_vtl_config secure_vtl_config;
 };
 
 /* The maximum number of entries on the TLB flush fifo. */
@@ -1089,6 +1093,12 @@ enum hv_tsc_page_status {
 	HV_TSC_PAGE_BROKEN,
 };
 
+/* Hyper-V per-VTL partition-wide state */
+struct kvm_hv_vtl {
+	/* Per-VTL partition-wide config */
+	union hv_register_vsm_partition_config vsm_partition_config;
+};
+
 /* Hyper-V emulation context */
 struct kvm_hv {
 	struct mutex hv_lock;
@@ -1115,6 +1125,9 @@ struct kvm_hv {
 
 	/* If bit N is set, then we have VTLN enabled for any number of VPs */
 	u16 vtl_enabled_for_vps;
+
+	/* Partition-wide per-VTL state */
+	struct kvm_hv_vtl vtl[HV_NUM_VTLS];
 
 	/* How many vCPUs have VP index != vCPU index */
 	atomic_t num_mismatched_vp_indexes;

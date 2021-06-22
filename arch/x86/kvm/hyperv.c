@@ -1341,6 +1341,58 @@ static bool hv_check_msr_access(struct kvm_vcpu_hv *hv_vcpu, u32 msr)
 	return false;
 }
 
+/* VTL lock is expected to be taken */
+static bool get_vsm_vp_secure_vtl_config(struct kvm_vcpu *vcpu, int target_vtl, u32 reg, u64 *pdata)
+{
+	int reg_vtl = reg - HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL0;
+
+	/* Register VTL level should be 1 below the VTL we are requesting it for (and VTL0 is never correct) */
+	if (target_vtl == 0 || (reg_vtl >= target_vtl))
+		return false;
+
+	*pdata = to_hv_vcpu(vcpu)->vtl[reg_vtl].secure_vtl_config.as_u64;
+	return true;
+}
+
+static bool set_vsm_vp_secure_vtl_config(struct kvm_vcpu *vcpu, int target_vtl, u32 reg, u64 data)
+{
+	struct kvm_hv* hv = &vcpu->kvm->arch.hyperv;
+	union hv_register_vsm_vp_secure_vtl_config new_val = { .as_u64 = data };
+	int reg_vtl = reg - HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL0;
+
+	/* Register VTL level should be 1 below the VTL we are requesting it for (and VTL0 is never correct) */
+	if (target_vtl == 0 || (reg_vtl >= target_vtl))
+		return false;
+
+	/* Can't enable MBEC for VTL which does not support it */
+	if (new_val.mbec_enabled && !(hv->vsm_capabilities.mbec_vtl_mask & 1))
+		pr_warn("Hyper-V: MBEC capability not implemented, ignoring\n");
+
+	to_hv_vcpu(vcpu)->vtl[reg_vtl].secure_vtl_config = new_val;
+	return true;
+}
+
+static void set_vsm_partition_config(struct kvm *kvm, u8 target_vtl, u64 data)
+{
+	struct kvm_hv_vtl *hv_vtl = &kvm->arch.hyperv.vtl[target_vtl];
+	union hv_register_vsm_partition_config new_val = { .as_u64 = data };
+
+	trace_kvm_hv_set_vsm_partition_config(data, target_vtl);
+
+	/* enable_vtl_protection bit and default protection mask are write-once after first enabled */
+	if (hv_vtl->vsm_partition_config.enable_vtl_protection) {
+		new_val.enable_vtl_protection = hv_vtl->vsm_partition_config.enable_vtl_protection;
+		new_val.default_vtl_protection_mask = hv_vtl->vsm_partition_config.default_vtl_protection_mask;
+	}
+
+	/* We are not advertising StartVirtualProcessor partition priviledge,
+	 * so requesting those intercepts is ignored (but warned about) */
+	if (new_val.intercept_vp_startup || new_val.deny_lower_vtl_startup)
+		pr_warn("VSM: guest trying to intercept VP startup when it is not advertised");
+
+	hv_vtl->vsm_partition_config = new_val;
+}
+
 static int kvm_hv_set_msr_pw(struct kvm_vcpu *vcpu, u32 msr, u64 data,
 			     bool host)
 {
@@ -1841,6 +1893,29 @@ static u64 get_vp_register(u32 name,
 	case HV_REGISTER_VSM_VP_STATUS:
 		val->low = to_hv_vcpu(target_vcpu)->vsm_vp_status.as_u64;
 		break;
+	case HV_REGISTER_VSM_PARTITION_CONFIG:
+		/* This is the only partition wide per-VTL register. Relies on atomicity
+		 * of 64 bits on x86 to avoid taking a partition-wide VTL lock. */
+		val->low = hv->vtl[vtl_num].vsm_partition_config.as_u64;
+		break;
+	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL0:
+	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL1:
+	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL2:
+	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL3:
+	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL4:
+	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL5:
+	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL6:
+	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL7:
+	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL8:
+	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL9:
+	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL10:
+	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL11:
+	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL12:
+	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL13:
+	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL14:
+		if (!get_vsm_vp_secure_vtl_config(target_vcpu, vtl_num, name, &val->low))
+			return HV_STATUS_INVALID_PARAMETER;
+		break;
 	default:
 		pr_err("%s: unknown VP register 0x%x\n", __func__, name);
 		return HV_STATUS_INVALID_PARAMETER;
@@ -1920,6 +1995,29 @@ static u64 set_vp_register(u32 name,
 		break;
 	case HV_X64_REGISTER_TSC_AUX:
 		vtl->msr_tsc_aux = val->low;
+		break;
+	case HV_REGISTER_VSM_PARTITION_CONFIG:
+		/* This is the only partition wide per-VTL register. Relies on atomicity
+		 * of 64 bits on x86 to avoid taking a partition-wide VTL lock. */
+		set_vsm_partition_config(target_vcpu->kvm, vtl_num, val->low);
+		break;
+	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL0:
+	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL1:
+	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL2:
+	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL3:
+	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL4:
+	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL5:
+	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL6:
+	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL7:
+	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL8:
+	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL9:
+	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL10:
+	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL11:
+	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL12:
+	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL13:
+	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL14:
+		if (!set_vsm_vp_secure_vtl_config(target_vcpu, vtl_num, name, val->low))
+			return HV_STATUS_INVALID_PARAMETER;
 		break;
 	case HV_REGISTER_VSM_VINA:
 	case HV_X64_REGISTER_CR_INTERCEPT_CONTROL:

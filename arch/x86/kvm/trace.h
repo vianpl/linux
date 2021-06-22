@@ -1714,6 +1714,42 @@ TRACE_EVENT(kvm_hv_enable_vp_vtl,
 		  __entry->target_partition_id, __entry->vp_index, __entry->target_vtl)
 );
 
+TRACE_EVENT(kvm_hv_set_vsm_partition_config,
+	TP_PROTO(u64 val, u8 target_vtl),
+	TP_ARGS(val, target_vtl),
+
+	TP_STRUCT__entry(
+		__field(u64, val)
+		__field(u8, target_vtl)
+	),
+
+	TP_fast_assign(
+		__entry->val = val;
+		__entry->target_vtl = target_vtl;
+	),
+
+	TP_printk("val 0x%llx, target vtl %d",
+		  __entry->val, __entry->target_vtl)
+);
+
+TRACE_EVENT(kvm_hv_set_vsm_vp_secure_vtl_config,
+	TP_PROTO(u64 val, u32 reg),
+	TP_ARGS(val, reg),
+
+	TP_STRUCT__entry(
+		__field(u64, val)
+		__field(u32, reg)
+	),
+
+	TP_fast_assign(
+		__entry->val = val;
+		__entry->reg = reg;
+	),
+
+	TP_printk("val 0x%llx, reg 0x%x",
+		  __entry->val, __entry->reg)
+);
+
 TRACE_EVENT(kvm_pv_tlb_flush,
 	TP_PROTO(unsigned int vcpu_id, bool need_flush_tlb),
 	TP_ARGS(vcpu_id, need_flush_tlb),
