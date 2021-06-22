@@ -338,7 +338,8 @@ union kvm_mmu_page_role {
 		unsigned ad_disabled:1;
 		unsigned guest_mode:1;
 		unsigned passthrough:1;
-		unsigned :5;
+		unsigned vtl:4;
+		unsigned :1;
 
 		/*
 		 * This is left at the top of the word so that
