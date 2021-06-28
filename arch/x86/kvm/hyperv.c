@@ -964,6 +964,12 @@ static void stimer_init(struct kvm_vcpu_hv_stimer *stimer, int timer_index)
 	stimer_prepare_msg(stimer);
 }
 
+static bool is_partition_vtl_enabled(struct kvm *kvm, u8 vtl)
+{
+	BUG_ON(vtl >= HV_NUM_VTLS);
+	return kvm->arch.hyperv.vsm_partition_status.enabled_vtl_set & (1u << vtl);
+}
+
 static void hv_vcpu_vtl_init(struct kvm_vcpu *vcpu, u8 vtl_num)
 {
 	struct kvm_vcpu_hv_vtl *vtl = &to_hv_vcpu(vcpu)->vtl[vtl_num];
@@ -1339,6 +1345,38 @@ static bool hv_check_msr_access(struct kvm_vcpu_hv *hv_vcpu, u32 msr)
 	}
 
 	return false;
+}
+
+bool is_any_vcpu_tlb_locked(struct kvm_hv_vtl *hv_vtl, unsigned long *vcpu_mask)
+{
+	unsigned vcpu_num;
+
+	/* If VCPU mask is empty then we should consider all vcpus */
+	if (!vcpu_mask)
+	       return bitmap_weight(hv_vtl->tlb_locked_vcpus, KVM_MAX_VCPUS) != 0;
+
+	for_each_set_bit(vcpu_num, vcpu_mask, KVM_MAX_VCPUS) {
+		if (test_bit(vcpu_num, hv_vtl->tlb_locked_vcpus)) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+void set_vcpu_tlb_lock(struct kvm_vcpu *vcpu, u8 vtl_num, bool is_locked)
+{
+	struct kvm_hv *hv = &vcpu->kvm->arch.hyperv;
+	BUG_ON(vtl_num >= HV_NUM_VTLS);
+
+	/* Operations below are RMW atomic to avoid data races between several vcpus trying to
+	 * lock/unlocks tlbs at the same time. */
+	if (is_locked) {
+		set_bit(vcpu->vcpu_id, hv->vtl[vtl_num].tlb_locked_vcpus);
+	} else {
+		clear_bit(vcpu->vcpu_id, hv->vtl[vtl_num].tlb_locked_vcpus);
+		wake_up(&hv->vtl[vtl_num].tlb_lock_waiters);
+	}
 }
 
 /* VTL lock is expected to be taken */
@@ -2247,6 +2285,7 @@ out_flush_all:
 static u64 kvm_hv_flush_tlb(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 {
 	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
+	struct kvm_hv *hv = &vcpu->kvm->arch.hyperv;
 	u64 *sparse_banks = hv_vcpu->sparse_banks;
 	struct kvm *kvm = vcpu->kvm;
 	struct hv_tlb_flush_ex flush_ex;
@@ -2265,6 +2304,7 @@ static u64 kvm_hv_flush_tlb(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 	struct kvm_vcpu *v;
 	unsigned long i;
 	bool all_cpus;
+	u8 vtl_num;
 
 	/*
 	 * The Hyper-V TLFS doesn't allow more than HV_MAX_SPARSE_VCPU_BANKS
@@ -2371,6 +2411,16 @@ static u64 kvm_hv_flush_tlb(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 		if (kvm_hv_get_tlb_flush_entries(kvm, hc, __tlb_flush_entries))
 			return HV_STATUS_INVALID_HYPERCALL_INPUT;
 		tlb_flush_entries = __tlb_flush_entries;
+	}
+
+	/*
+	 * Block tlb flush until all vcpus in mask have their tlb locks lifted for active VTL.
+	 */
+	vtl_num = get_active_vtl(vcpu);
+	if (is_partition_vtl_enabled(kvm, vtl_num)) {
+		struct kvm_hv_vtl *hv_vtl = &hv->vtl[vtl_num];
+		wait_event(hv_vtl->tlb_lock_waiters,
+				!is_any_vcpu_tlb_locked(hv_vtl, vcpu_mask));
 	}
 
 	/*
@@ -3235,6 +3285,8 @@ hypercall_userspace_exit:
 
 static void hv_init_vsm(struct kvm_hv* hv)
 {
+	u8 vtl_num;
+
 	hv->vsm_capabilities.as_u64 = 0;
 	hv->vsm_capabilities.dr6_shared = 1;
 
@@ -3242,6 +3294,11 @@ static void hv_init_vsm(struct kvm_hv* hv)
 	hv->vsm_partition_status.enabled_vtl_set = (1u << 0); /* VTL0 is enabled */
 	hv->vsm_partition_status.maximum_vtl = HV_NUM_VTLS - 1;
 	hv->vtl_enabled_for_vps = (1u << 0);
+
+	for (vtl_num = 0; vtl_num < HV_NUM_VTLS; ++vtl_num) {
+		struct kvm_hv_vtl *hv_vtl = &hv->vtl[vtl_num];
+		init_waitqueue_head(&hv_vtl->tlb_lock_waiters);
+	}
 }
 
 void kvm_hv_init_vm(struct kvm *kvm)

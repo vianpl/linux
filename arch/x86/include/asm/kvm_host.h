@@ -1097,6 +1097,16 @@ enum hv_tsc_page_status {
 struct kvm_hv_vtl {
 	/* Per-VTL partition-wide config */
 	union hv_register_vsm_partition_config vsm_partition_config;
+
+	/*
+	 * Higher VTLs can lock tlb flush hypercalls for lower VTLs.
+	 * To support that, we keep track of every vcpu that has its TLB locked for this VTL.
+	 * According to TLFS, if address space flush hypercall comes in for any of those vcpus
+	 * we should block them in the hypervisor until higher VTL lifts the lock.
+	 * So, we will put those vcpus in a waitqueue.
+	 */
+	DECLARE_BITMAP(tlb_locked_vcpus, KVM_MAX_VCPUS);
+	wait_queue_head_t tlb_lock_waiters;
 };
 
 /* Hyper-V emulation context */
