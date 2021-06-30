@@ -1097,6 +1097,8 @@ enum hv_tsc_page_status {
 struct kvm_hv_vtl {
 	/* Per-VTL partition-wide config */
 	union hv_register_vsm_partition_config vsm_partition_config;
+	u64 hv_guest_os_id;
+	u64 hv_hypercall;
 
 	/*
 	 * Higher VTLs can lock tlb flush hypercalls for lower VTLs.
@@ -1112,8 +1114,6 @@ struct kvm_hv_vtl {
 /* Hyper-V emulation context */
 struct kvm_hv {
 	struct mutex hv_lock;
-	u64 hv_guest_os_id;
-	u64 hv_hypercall;
 	u64 hv_tsc_page;
 	enum hv_tsc_page_status hv_tsc_page_status;
 

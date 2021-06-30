@@ -1442,10 +1442,10 @@ static int kvm_hv_set_msr_pw(struct kvm_vcpu *vcpu, u32 msr, u64 data,
 
 	switch (msr) {
 	case HV_X64_MSR_GUEST_OS_ID:
-		hv->hv_guest_os_id = data;
+		hv->vtl[get_active_vtl(vcpu)].hv_guest_os_id = data;
 		/* setting guest os id to zero disables hypercall page */
-		if (!hv->hv_guest_os_id)
-			hv->hv_hypercall &= ~HV_X64_MSR_HYPERCALL_ENABLE;
+		if (!data)
+			hv->vtl[get_active_vtl(vcpu)].hv_hypercall &= ~HV_X64_MSR_HYPERCALL_ENABLE;
 		break;
 	case HV_X64_MSR_HYPERCALL: {
 		u8 instructions[9];
@@ -1453,10 +1453,10 @@ static int kvm_hv_set_msr_pw(struct kvm_vcpu *vcpu, u32 msr, u64 data,
 		u64 addr;
 
 		/* if guest os id is not set hypercall should remain disabled */
-		if (!hv->hv_guest_os_id)
+		if (!hv->vtl[get_active_vtl(vcpu)].hv_guest_os_id)
 			break;
 		if (!(data & HV_X64_MSR_HYPERCALL_ENABLE)) {
-			hv->hv_hypercall = data;
+			hv->vtl[get_active_vtl(vcpu)].hv_hypercall = data;
 			break;
 		}
 
@@ -1485,7 +1485,7 @@ static int kvm_hv_set_msr_pw(struct kvm_vcpu *vcpu, u32 msr, u64 data,
 		addr = data & HV_X64_MSR_HYPERCALL_PAGE_ADDRESS_MASK;
 		if (kvm_vcpu_write_guest(vcpu, addr, instructions, i))
 			return 1;
-		hv->hv_hypercall = data;
+		hv->vtl[get_active_vtl(vcpu)].hv_hypercall = data;
 		break;
 	}
 	case HV_X64_MSR_REFERENCE_TSC:
@@ -1698,10 +1698,10 @@ static int kvm_hv_get_msr_pw(struct kvm_vcpu *vcpu, u32 msr, u64 *pdata,
 
 	switch (msr) {
 	case HV_X64_MSR_GUEST_OS_ID:
-		data = hv->hv_guest_os_id;
+		data = hv->vtl[get_active_vtl(vcpu)].hv_guest_os_id;
 		break;
 	case HV_X64_MSR_HYPERCALL:
-		data = hv->hv_hypercall;
+		data = hv->vtl[get_active_vtl(vcpu)].hv_hypercall;
 		break;
 	case HV_X64_MSR_TIME_REF_COUNT:
 		data = get_time_ref_counter(kvm);

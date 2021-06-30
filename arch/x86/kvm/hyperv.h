@@ -105,7 +105,7 @@ int kvm_hv_get_msr_common(struct kvm_vcpu *vcpu, u32 msr, u64 *pdata, bool host)
 
 static inline bool kvm_hv_hypercall_enabled(struct kvm_vcpu *vcpu)
 {
-	return vcpu->arch.hyperv_enabled && to_kvm_hv(vcpu->kvm)->hv_guest_os_id;
+	return vcpu->arch.hyperv_enabled && to_kvm_hv(vcpu->kvm)->vtl[get_active_vtl(vcpu)].hv_guest_os_id;
 }
 
 int kvm_hv_hypercall(struct kvm_vcpu *vcpu);
