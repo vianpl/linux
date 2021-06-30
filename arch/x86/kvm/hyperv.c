@@ -571,14 +571,14 @@ static u64 get_time_ref_counter(struct kvm *kvm)
 	struct kvm_vcpu *vcpu;
 	u64 tsc;
 
+	vcpu = kvm_get_vcpu(kvm, 0);
 	/*
 	 * Fall back to get_kvmclock_ns() when TSC page hasn't been set up,
 	 * is broken, disabled or being updated.
 	 */
-	if (hv->hv_tsc_page_status != HV_TSC_PAGE_SET)
+	if (hv->vtl[get_active_vtl(vcpu)].hv_tsc_page_status != HV_TSC_PAGE_SET)
 		return div_u64(get_kvmclock_ns(kvm), 100);
 
-	vcpu = kvm_get_vcpu(kvm, 0);
 	tsc = kvm_read_l1_tsc(vcpu, rdtsc());
 	return mul_u64_u64_shr(tsc, hv->tsc_ref.tsc_scale, 64)
 		+ hv->tsc_ref.tsc_offset;
@@ -1215,9 +1215,9 @@ static bool compute_tsc_page_parameters(struct pvclock_vcpu_time_info *hv_clock,
  * frequency and guest visible TSC value across migration (and prevent it when
  * TSC scaling is unsupported).
  */
-static inline bool tsc_page_update_unsafe(struct kvm_hv *hv)
+static inline bool tsc_page_update_unsafe(struct kvm_hv *hv, u8 vtl)
 {
-	return (hv->hv_tsc_page_status != HV_TSC_PAGE_GUEST_CHANGED) &&
+	return (hv->vtl[vtl].hv_tsc_page_status != HV_TSC_PAGE_GUEST_CHANGED) &&
 		hv->hv_tsc_emulation_control;
 }
 
@@ -1227,34 +1227,37 @@ void kvm_hv_setup_tsc_page(struct kvm *kvm,
 	struct kvm_hv *hv = to_kvm_hv(kvm);
 	u32 tsc_seq;
 	u64 gfn;
+	u8 vtl, ffs_vtl;
 
+	BUILD_BUG_ON(sizeof(hv->ref_tsc_vtls) * 8 < HV_NUM_VTLS);
 	BUILD_BUG_ON(sizeof(tsc_seq) != sizeof(hv->tsc_ref.tsc_sequence));
 	BUILD_BUG_ON(offsetof(struct ms_hyperv_tsc_page, tsc_sequence) != 0);
 
 	mutex_lock(&hv->hv_lock);
-
-	if (hv->hv_tsc_page_status == HV_TSC_PAGE_BROKEN ||
-	    hv->hv_tsc_page_status == HV_TSC_PAGE_SET ||
-	    hv->hv_tsc_page_status == HV_TSC_PAGE_UNSET)
+	if (!hv->ref_tsc_vtls)
 		goto out_unlock;
 
-	if (!(hv->hv_tsc_page & HV_X64_MSR_TSC_REFERENCE_ENABLE))
-		goto out_unlock;
-
-	gfn = hv->hv_tsc_page >> HV_X64_MSR_TSC_REFERENCE_ADDRESS_SHIFT;
 	/*
 	 * Because the TSC parameters only vary when there is a
 	 * change in the master clock, do not bother with caching.
+	 * Also, sequences should be identical for each VTLs, so use any VTL page.
 	 */
+	ffs_vtl = ffs(hv->ref_tsc_vtls) - 1;
+	if (hv->vtl[ffs_vtl].hv_tsc_page_status == HV_TSC_PAGE_BROKEN ||
+	    hv->vtl[ffs_vtl].hv_tsc_page_status == HV_TSC_PAGE_SET ||
+	    hv->vtl[ffs_vtl].hv_tsc_page_status == HV_TSC_PAGE_UNSET)
+		goto out_unlock;
+
+	gfn = hv->vtl[ffs_vtl].hv_tsc_page >> HV_X64_MSR_TSC_REFERENCE_ADDRESS_SHIFT;
 	if (unlikely(kvm_read_guest(kvm, gfn_to_gpa(gfn),
 				    &tsc_seq, sizeof(tsc_seq))))
 		goto out_err;
 
-	if (tsc_seq && tsc_page_update_unsafe(hv)) {
+	if (tsc_seq && tsc_page_update_unsafe(hv, ffs_vtl)) {
 		if (kvm_read_guest(kvm, gfn_to_gpa(gfn), &hv->tsc_ref, sizeof(hv->tsc_ref)))
 			goto out_err;
 
-		hv->hv_tsc_page_status = HV_TSC_PAGE_SET;
+		hv->vtl[ffs_vtl].hv_tsc_page_status = HV_TSC_PAGE_SET;
 		goto out_unlock;
 	}
 
@@ -1263,17 +1266,23 @@ void kvm_hv_setup_tsc_page(struct kvm *kvm,
 	 * guest to use the time reference count MSR.
 	 */
 	hv->tsc_ref.tsc_sequence = 0;
-	if (kvm_write_guest(kvm, gfn_to_gpa(gfn),
-			    &hv->tsc_ref, sizeof(hv->tsc_ref.tsc_sequence)))
-		goto out_err;
+	for_each_set_bit(vtl, &hv->ref_tsc_vtls, HV_NUM_VTLS) {
+		gfn = hv->vtl[vtl].hv_tsc_page >> HV_X64_MSR_TSC_REFERENCE_ADDRESS_SHIFT;
+		if (kvm_write_guest(kvm, gfn_to_gpa(gfn),
+				    &hv->tsc_ref, sizeof(hv->tsc_ref.tsc_sequence)))
+			goto out_err;
+	}
 
 	if (!compute_tsc_page_parameters(hv_clock, &hv->tsc_ref))
 		goto out_err;
 
 	/* Ensure sequence is zero before writing the rest of the struct.  */
 	smp_wmb();
-	if (kvm_write_guest(kvm, gfn_to_gpa(gfn), &hv->tsc_ref, sizeof(hv->tsc_ref)))
-		goto out_err;
+	for_each_set_bit(vtl, &hv->ref_tsc_vtls, HV_NUM_VTLS) {
+		gfn = hv->vtl[vtl].hv_tsc_page >> HV_X64_MSR_TSC_REFERENCE_ADDRESS_SHIFT;
+		if (kvm_write_guest(kvm, gfn_to_gpa(gfn), &hv->tsc_ref, sizeof(hv->tsc_ref)))
+			goto out_err;
+	}
 
 	/*
 	 * Now switch to the TSC page mechanism by writing the sequence.
@@ -1286,28 +1295,34 @@ void kvm_hv_setup_tsc_page(struct kvm *kvm,
 	smp_wmb();
 
 	hv->tsc_ref.tsc_sequence = tsc_seq;
-	if (kvm_write_guest(kvm, gfn_to_gpa(gfn),
-			    &hv->tsc_ref, sizeof(hv->tsc_ref.tsc_sequence)))
-		goto out_err;
+	for_each_set_bit(vtl, &hv->ref_tsc_vtls, HV_NUM_VTLS) {
+		gfn = hv->vtl[vtl].hv_tsc_page >> HV_X64_MSR_TSC_REFERENCE_ADDRESS_SHIFT;
+		if (kvm_write_guest(kvm, gfn_to_gpa(gfn),
+				&hv->tsc_ref, sizeof(hv->tsc_ref.tsc_sequence)))
+			goto out_err;
 
-	hv->hv_tsc_page_status = HV_TSC_PAGE_SET;
+		hv->vtl[vtl].hv_tsc_page_status = HV_TSC_PAGE_SET;
+	}
+
 	goto out_unlock;
 
 out_err:
-	hv->hv_tsc_page_status = HV_TSC_PAGE_BROKEN;
+	for_each_set_bit(vtl, &hv->ref_tsc_vtls, HV_NUM_VTLS)
+		hv->vtl[vtl].hv_tsc_page_status = HV_TSC_PAGE_BROKEN;
+
 out_unlock:
 	mutex_unlock(&hv->hv_lock);
 }
 
-void kvm_hv_request_tsc_page_update(struct kvm *kvm)
+void kvm_hv_request_tsc_page_update(struct kvm_vcpu *vcpu)
 {
-	struct kvm_hv *hv = to_kvm_hv(kvm);
+	struct kvm_hv *hv = to_kvm_hv(vcpu->kvm);
 
 	mutex_lock(&hv->hv_lock);
 
-	if (hv->hv_tsc_page_status == HV_TSC_PAGE_SET &&
-	    !tsc_page_update_unsafe(hv))
-		hv->hv_tsc_page_status = HV_TSC_PAGE_HOST_CHANGED;
+	if (hv->vtl[get_active_vtl(vcpu)].hv_tsc_page_status == HV_TSC_PAGE_SET &&
+	    !tsc_page_update_unsafe(hv, get_active_vtl(vcpu)))
+		hv->vtl[get_active_vtl(vcpu)].hv_tsc_page_status = HV_TSC_PAGE_HOST_CHANGED;
 
 	mutex_unlock(&hv->hv_lock);
 }
@@ -1531,15 +1546,18 @@ static int kvm_hv_set_msr_pw(struct kvm_vcpu *vcpu, u32 msr, u64 data,
 		break;
 	}
 	case HV_X64_MSR_REFERENCE_TSC:
-		hv->hv_tsc_page = data;
-		if (hv->hv_tsc_page & HV_X64_MSR_TSC_REFERENCE_ENABLE) {
+		hv->vtl[get_active_vtl(vcpu)].hv_tsc_page = data;
+		if (data & HV_X64_MSR_TSC_REFERENCE_ENABLE) {
+			set_bit(get_active_vtl(vcpu), &hv->ref_tsc_vtls);
 			if (!host)
-				hv->hv_tsc_page_status = HV_TSC_PAGE_GUEST_CHANGED;
+				hv->vtl[get_active_vtl(vcpu)].hv_tsc_page_status = HV_TSC_PAGE_GUEST_CHANGED;
 			else
-				hv->hv_tsc_page_status = HV_TSC_PAGE_HOST_CHANGED;
+				hv->vtl[get_active_vtl(vcpu)].hv_tsc_page_status = HV_TSC_PAGE_HOST_CHANGED;
+
 			kvm_make_request(KVM_REQ_MASTERCLOCK_UPDATE, vcpu);
 		} else {
-			hv->hv_tsc_page_status = HV_TSC_PAGE_UNSET;
+			hv->vtl[get_active_vtl(vcpu)].hv_tsc_page_status = HV_TSC_PAGE_UNSET;
+			clear_bit(get_active_vtl(vcpu), &hv->ref_tsc_vtls);
 		}
 		break;
 	case HV_X64_MSR_CRASH_P0 ... HV_X64_MSR_CRASH_P4:
@@ -1721,7 +1739,7 @@ static int kvm_hv_get_msr_pw(struct kvm_vcpu *vcpu, u32 msr, u64 *pdata,
 		data = get_time_ref_counter(kvm);
 		break;
 	case HV_X64_MSR_REFERENCE_TSC:
-		data = hv->hv_tsc_page;
+		data = hv->vtl[get_active_vtl(vcpu)].hv_tsc_page;
 		break;
 	case HV_X64_MSR_CRASH_P0 ... HV_X64_MSR_CRASH_P4:
 		return kvm_hv_msr_get_crash_data(kvm,

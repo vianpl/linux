@@ -1099,6 +1099,8 @@ struct kvm_hv_vtl {
 	union hv_register_vsm_partition_config vsm_partition_config;
 	u64 hv_guest_os_id;
 	u64 hv_hypercall;
+	u64 hv_tsc_page;
+	enum hv_tsc_page_status hv_tsc_page_status;
 
 	/*
 	 * Higher VTLs can lock tlb flush hypercalls for lower VTLs.
@@ -1114,8 +1116,6 @@ struct kvm_hv_vtl {
 /* Hyper-V emulation context */
 struct kvm_hv {
 	struct mutex hv_lock;
-	u64 hv_tsc_page;
-	enum hv_tsc_page_status hv_tsc_page_status;
 
 	/* Hyper-v based guest crash (NT kernel bugcheck) parameters */
 	u64 hv_crash_param[HV_X64_MSR_CRASH_PARAMS];
@@ -1138,6 +1138,9 @@ struct kvm_hv {
 
 	/* Partition-wide per-VTL state */
 	struct kvm_hv_vtl vtl[HV_NUM_VTLS];
+
+	/* Bitmap of VTLs that have tsc reference page enabled */
+	unsigned long ref_tsc_vtls;
 
 	/* How many vCPUs have VP index != vCPU index */
 	atomic_t num_mismatched_vp_indexes;
