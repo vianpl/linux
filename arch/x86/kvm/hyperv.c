@@ -1535,26 +1535,26 @@ void set_vcpu_tlb_lock(struct kvm_vcpu *vcpu, u8 vtl_num, bool is_locked)
 }
 
 /* VTL lock is expected to be taken */
-static bool get_vsm_vp_secure_vtl_config(struct kvm_vcpu *vcpu, int target_vtl, u32 reg, u64 *pdata)
+static bool get_vsm_vp_secure_vtl_config(struct kvm_vcpu *vcpu, int target_vtl, u32 reg, u64 *pdata, bool host)
 {
 	int reg_vtl = reg - HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL0;
 
 	/* Register VTL level should be 1 below the VTL we are requesting it for (and VTL0 is never correct) */
-	if (target_vtl == 0 || (reg_vtl >= target_vtl))
+	if (!host && (target_vtl == 0 || (reg_vtl >= target_vtl)))
 		return false;
 
 	*pdata = to_hv_vcpu(vcpu)->vtl[reg_vtl].secure_vtl_config.as_u64;
 	return true;
 }
 
-static bool set_vsm_vp_secure_vtl_config(struct kvm_vcpu *vcpu, int target_vtl, u32 reg, u64 data)
+static bool set_vsm_vp_secure_vtl_config(struct kvm_vcpu *vcpu, int target_vtl, u32 reg, u64 data, bool host)
 {
 	struct kvm_hv* hv = &vcpu->kvm->arch.hyperv;
 	union hv_register_vsm_vp_secure_vtl_config new_val = { .as_u64 = data };
 	int reg_vtl = reg - HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL0;
 
 	/* Register VTL level should be 1 below the VTL we are requesting it for (and VTL0 is never correct) */
-	if (target_vtl == 0 || (reg_vtl >= target_vtl))
+	if (!host && (target_vtl == 0 || (reg_vtl >= target_vtl)))
 		return false;
 
 	/* Can't enable MBEC for VTL which does not support it */
@@ -2164,7 +2164,7 @@ static u64 get_vp_register(u32 name,
 	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL12:
 	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL13:
 	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL14:
-		if (!get_vsm_vp_secure_vtl_config(target_vcpu, vtl_num, name, &val->low))
+		if (!get_vsm_vp_secure_vtl_config(target_vcpu, vtl_num, name, &val->low, false))
 			return HV_STATUS_INVALID_PARAMETER;
 		break;
 	case HV_REGISTER_VP_ASSIST_PAGE:
@@ -2273,7 +2273,7 @@ static u64 set_vp_register(u32 name,
 	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL12:
 	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL13:
 	case HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL14:
-		if (!set_vsm_vp_secure_vtl_config(target_vcpu, vtl_num, name, val->low))
+		if (!set_vsm_vp_secure_vtl_config(target_vcpu, vtl_num, name, val->low, false))
 			return HV_STATUS_INVALID_PARAMETER;
 		break;
 	case HV_X64_REGISTER_PENDING_EVENT0:
@@ -3018,12 +3018,50 @@ static u64 kvm_hv_enable_partition_vtl(struct kvm_vcpu *vcpu, struct kvm_hv_hcal
 	return HV_STATUS_SUCCESS;
 }
 
+static u64 enable_vp_vtl(struct kvm_vcpu *vcpu, u8 vtl, struct hv_init_vp_context *ctx)
+{
+	struct kvm_hv *hv = &vcpu->kvm->arch.hyperv;
+	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
+	struct kvm_vcpu_hv_vtl *target_vtl = &hv_vcpu->vtl[vtl];
+
+	/* Create a new apic context. Since we are always creating secondary lapics,
+	 * make sure this vcpu is using one to begin with. */
+	if (lapic_in_kernel(vcpu) && target_vtl->apic == NULL) {
+		target_vtl->apic = kvm_create_lapic(vcpu, lapic_timer_advance_ns);
+		if (!target_vtl->apic)
+			return HV_STATUS_INSUFFICIENT_MEMORY;
+
+		kvm_lapic_reset(target_vtl->apic, false);
+		kvm_lapic_set_vtl(target_vtl->apic, vtl);
+
+		/* Windows Server 2019 guest expects VTL1+ apics to be sw-enabled by the fact
+		 * that they never try to write anything to SPIV before attempting to send IPIs.
+		 * So enable a new apic for them. If they ever change their mind, they will set
+		 * their own SPIV value */
+		kvm_lapic_reg_write(target_vtl->apic, APIC_SPIV, 0x1ff);
+	} else {
+		target_vtl->tpr = 0;
+		target_vtl->apic_base = APIC_DEFAULT_PHYS_BASE | MSR_IA32_APICBASE_ENABLE;
+	}
+
+	memcpy(&target_vtl->ctx, ctx, sizeof(*ctx));
+
+	/* Propagate gs.base and fs.base to initial values for MSR_GS_BASE and MSR_FS_BASE,
+	 * which are isolated per-VTL but don't have their own fields in initial VP context. */
+	target_vtl->msr_gsbase = ctx->gs.base;
+	target_vtl->msr_fsbase = ctx->fs.base;
+
+	hv->vtl_enabled_for_vps |= (1u << vtl);
+	hv_vcpu->vsm_vp_status.enabled_vtl_set |= (1ul << vtl);
+
+	return HV_STATUS_SUCCESS;
+}
+
 static u64 kvm_hv_enable_vp_vtl(struct kvm_vcpu *requestor_vcpu, struct kvm_hv_hcall *hc)
 {
 	struct kvm_hv *hv = &requestor_vcpu->kvm->arch.hyperv;
 	struct kvm_vcpu *target_vcpu = NULL;
 	struct kvm_vcpu_hv *target_vcpu_hv = NULL;
-	struct kvm_vcpu_hv_vtl *target_vtl = NULL;
 	struct hv_enable_vp_vtl input;
 	u8 highest_vp_enabled_vtl;
 
@@ -3070,39 +3108,7 @@ static u64 kvm_hv_enable_vp_vtl(struct kvm_vcpu *requestor_vcpu, struct kvm_hv_h
 	    get_active_vtl(requestor_vcpu) != highest_vp_enabled_vtl)
 		return HV_STATUS_INVALID_PARAMETER;
 
-	target_vtl = &target_vcpu_hv->vtl[input.target_vtl.target_vtl];
-
-	/* Create a new apic context. Since we are always creating secondary lapics,
-	 * make sure this vcpu is using one to begin with. */
-	if (lapic_in_kernel(target_vcpu)) {
-		target_vtl->apic = kvm_create_lapic(target_vcpu, lapic_timer_advance_ns);
-		if (!target_vtl->apic)
-			return HV_STATUS_INSUFFICIENT_MEMORY;
-
-		kvm_lapic_reset(target_vtl->apic, false);
-		kvm_lapic_set_vtl(target_vtl->apic, input.target_vtl.target_vtl);
-
-		/* Windows Server 2019 guest expects VTL1+ apics to be sw-enabled by the fact
-		 * that they never try to write anything to SPIV before attempting to send IPIs.
-		 * So enable a new apic for them. If they ever change their mind, they will set
-		 * their own SPIV value */
-		kvm_lapic_reg_write(target_vtl->apic, APIC_SPIV, 0x1ff);
-	} else {
-		target_vtl->tpr = 0;
-		target_vtl->apic_base = APIC_DEFAULT_PHYS_BASE | MSR_IA32_APICBASE_ENABLE;
-	}
-
-	memcpy(&target_vtl->ctx, &input.vp_context, sizeof(input.vp_context));
-
-	/* Propagate gs.base and fs.base to initial values for MSR_GS_BASE and MSR_FS_BASE,
-	 * which are isolated per-VTL but don't have their own fields in initial VP context. */
-	target_vtl->msr_gsbase = input.vp_context.gs.base;
-	target_vtl->msr_fsbase = input.vp_context.fs.base;
-
-	hv->vtl_enabled_for_vps |= (1u << input.target_vtl.target_vtl);
-	target_vcpu_hv->vsm_vp_status.enabled_vtl_set |= (1ul << input.target_vtl.target_vtl);
-
-	return HV_STATUS_SUCCESS;
+	return enable_vp_vtl(target_vcpu, input.target_vtl.target_vtl, &input.vp_context);
 }
 
 static void load_kvm_segment(const struct hv_x64_segment_register *reg, struct kvm_segment *kvmseg)
@@ -4196,6 +4202,179 @@ int kvm_get_hv_cpuid(struct kvm_vcpu *vcpu, struct kvm_cpuid2 *cpuid,
 	if (copy_to_user(entries, cpuid_entries,
 			 nent * sizeof(struct kvm_cpuid_entry2)))
 		return -EFAULT;
+
+	return 0;
+}
+
+static void get_per_vtl_state(struct kvm_vcpu *vcpu, int vtl_num,
+			      struct kvm_hv_vcpu_per_vtl_state *state)
+{
+	struct kvm_vcpu_hv_vtl *vtl = &to_hv_vcpu(vcpu)->vtl[vtl_num];
+
+	state->msr_kernel_gsbase = vtl->msr_kernel_gsbase;
+	state->msr_tsc_aux = vtl->msr_tsc_aux;
+	state->msr_sysenter_cs = vtl->msr_sysenter_cs;
+	state->msr_sysenter_esp = vtl->msr_sysenter_esp;
+	state->msr_sysenter_eip = vtl->msr_sysenter_eip;
+	state->msr_star = vtl->msr_star;
+	state->msr_lstar = vtl->msr_lstar;
+	state->msr_cstar = vtl->msr_cstar;
+	state->msr_sfmask = vtl->msr_sfmask;
+
+	state->rip = vtl->ctx.rip;
+	state->rsp = vtl->ctx.rsp;
+	state->rflags = vtl->ctx.rflags;
+	state->efer = vtl->ctx.efer;
+	state->cr0 = vtl->ctx.cr0;
+	state->cr3 = vtl->ctx.cr3;
+	state->cr4 = vtl->ctx.cr4;
+	state->msr_cr_pat = vtl->ctx.msr_cr_pat;
+
+	BUILD_BUG_ON(sizeof(struct hv_x64_segment_register) != sizeof(struct kvm_hv_reg_128));
+
+	memcpy(&state->cs, &vtl->ctx.cs, sizeof(state->cs));
+	memcpy(&state->ds, &vtl->ctx.ds, sizeof(state->ds));
+	memcpy(&state->es, &vtl->ctx.es, sizeof(state->es));
+	memcpy(&state->fs, &vtl->ctx.fs, sizeof(state->fs));
+	memcpy(&state->gs, &vtl->ctx.gs, sizeof(state->gs));
+	memcpy(&state->ss, &vtl->ctx.ss, sizeof(state->ss));
+	memcpy(&state->tr, &vtl->ctx.tr, sizeof(state->tr));
+	memcpy(&state->ldtr, &vtl->ctx.ldtr, sizeof(state->ldtr));
+	memcpy(&state->idtr, &vtl->ctx.idtr, sizeof(state->idtr));
+	memcpy(&state->gdtr, &vtl->ctx.gdtr, sizeof(state->gdtr));
+
+	get_vsm_vp_secure_vtl_config(vcpu,
+				     vtl_num,
+				     HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL0 + vtl_num,
+				     &state->secure_vtl_config.lo,
+				     true);
+}
+
+static void set_per_vtl_state(struct kvm_vcpu *vcpu, int vtl_num,
+			      struct kvm_hv_vcpu_per_vtl_state *state)
+{
+	struct kvm_vcpu_hv_vtl *vtl = &to_hv_vcpu(vcpu)->vtl[vtl_num];
+	struct hv_init_vp_context ctx;
+
+	vtl->msr_kernel_gsbase = state->msr_kernel_gsbase;
+	vtl->msr_tsc_aux = state->msr_tsc_aux;
+	vtl->msr_sysenter_cs = state->msr_sysenter_cs;
+	vtl->msr_sysenter_esp = state->msr_sysenter_esp;
+	vtl->msr_sysenter_eip = state->msr_sysenter_eip;
+	vtl->msr_star = state->msr_star;
+	vtl->msr_lstar = state->msr_lstar;
+	vtl->msr_cstar = state->msr_cstar;
+	vtl->msr_sfmask = state->msr_sfmask;
+
+	memset(&ctx, 0, sizeof(struct hv_init_vp_context));
+
+	ctx.rip = state->rip;
+	ctx.rsp = state->rsp;
+	ctx.rflags = state->rflags;
+	ctx.efer = state->efer;
+	ctx.cr0 = state->cr0;
+	ctx.cr3 = state->cr3;
+	ctx.cr4 = state->cr4;
+	ctx.msr_cr_pat = state->msr_cr_pat;
+
+	BUILD_BUG_ON(sizeof(struct hv_x64_segment_register) != sizeof(struct kvm_hv_reg_128));
+
+	memcpy(&ctx.cs, &state->cs, sizeof(state->cs));
+	memcpy(&ctx.ds, &state->ds, sizeof(state->ds));
+	memcpy(&ctx.es, &state->es, sizeof(state->es));
+	memcpy(&ctx.fs, &state->fs, sizeof(state->fs));
+	memcpy(&ctx.gs, &state->gs, sizeof(state->gs));
+	memcpy(&ctx.ss, &state->ss, sizeof(state->ss));
+	memcpy(&ctx.tr, &state->tr, sizeof(state->tr));
+	memcpy(&ctx.ldtr, &state->ldtr, sizeof(state->ldtr));
+	memcpy(&ctx.idtr, &state->idtr, sizeof(state->idtr));
+	memcpy(&ctx.gdtr, &state->gdtr, sizeof(state->gdtr));
+
+	enable_vp_vtl(vcpu, vtl_num, &ctx);
+
+	set_vsm_vp_secure_vtl_config(vcpu,
+				     vtl_num,
+				     HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL0 + vtl_num,
+				     state->secure_vtl_config.lo,
+				     true);
+}
+
+int kvm_vcpu_ioctl_get_hv_vsm_state(struct kvm_vcpu *vcpu,
+				    struct kvm_hv_vcpu_vsm_state *state)
+{
+	int i;
+	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
+
+	state->vsm_vp_status = hv_vcpu->vsm_vp_status.as_u64;
+	state->vp_index = hv_vcpu->vp_index;
+	for (i = 0; i < KVM_HV_NUM_VTLS; i++) {
+		if (!(hv_vcpu->vsm_vp_status.enabled_vtl_set & (1u << i)))
+			continue;
+		get_per_vtl_state(vcpu, i, &state->vtl[i]);
+	}
+
+	return 0;
+}
+
+int kvm_vcpu_ioctl_set_hv_vsm_state(struct kvm_vcpu *vcpu,
+				    struct kvm_hv_vcpu_vsm_state *state)
+{
+	int i;
+	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
+
+	hv_vcpu->vsm_vp_status.as_u64 = state->vsm_vp_status;
+	hv_vcpu->vp_index = state->vp_index;
+	for (i = 0; i < KVM_HV_NUM_VTLS; i++) {
+		if (!(hv_vcpu->vsm_vp_status.enabled_vtl_set & (1u << i)))
+			continue;
+		set_per_vtl_state(vcpu, i, &state->vtl[i]);
+	}
+
+	return 0;
+}
+
+int kvm_vm_ioctl_get_hv_vsm_state(struct kvm *kvm, struct kvm_hv_vsm_state *state)
+{
+	struct kvm_hv* hv = &kvm->arch.hyperv;
+	struct kvm_hv_vtl *hv_vtl;
+	int i;
+
+	state->vsm_code_page_offsets64 = hv->vsm_code_page_offsets64.as_u64;
+	state->vsm_code_page_offsets32 = hv->vsm_code_page_offsets32.as_u64;
+	state->vsm_capabilities = hv->vsm_capabilities.as_u64;
+	state->vsm_partition_status = hv->vsm_partition_status.as_u64;
+
+	/* Per-VTL partition-wide state */
+	for (i = 0; i < KVM_HV_NUM_VTLS; i++) {
+		hv_vtl = &hv->vtl[i];
+
+		state->vtl[i].vsm_partition_config = hv_vtl->vsm_partition_config.as_u64;
+	}
+	state->flags = 0;
+
+	return 0;
+}
+
+int kvm_vm_ioctl_set_hv_vsm_state(struct kvm *kvm, struct kvm_hv_vsm_state *state)
+{
+	struct kvm_hv* hv = &kvm->arch.hyperv;
+	struct kvm_hv_vtl *hv_vtl;
+	int i;
+
+	hv->vsm_code_page_offsets64.as_u64 = state->vsm_code_page_offsets64;
+	hv->vsm_code_page_offsets32.as_u64 = state->vsm_code_page_offsets32;
+	hv->vsm_capabilities.as_u64 = state->vsm_capabilities;
+	hv->vsm_partition_status.as_u64 = state->vsm_partition_status;
+
+	if (state->flags)
+		return -EINVAL;
+
+	/* Per-VTL partition-wide state */
+	for (i = 0; i < KVM_HV_NUM_VTLS; i++) {
+		hv_vtl = &hv->vtl[i];
+
+		set_vsm_partition_config(kvm, i, state->vtl[i].vsm_partition_config);
+	}
 
 	return 0;
 }

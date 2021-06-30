@@ -263,4 +263,11 @@ int kvm_hv_vcpu_flush_tlb(struct kvm_vcpu *vcpu);
 void kvm_hv_vtl_interrupt(struct kvm_vcpu *vcpu, u8 vtl);
 void kvm_hv_deliver_intercept(struct kvm_vcpu *vcpu);
 
+int kvm_vcpu_ioctl_get_hv_vsm_state(struct kvm_vcpu *vcpu,
+				    struct kvm_hv_vcpu_vsm_state *state);
+int kvm_vcpu_ioctl_set_hv_vsm_state(struct kvm_vcpu *vcpu,
+				    struct kvm_hv_vcpu_vsm_state *state);
+int kvm_vm_ioctl_get_hv_vsm_state(struct kvm *kvm, struct kvm_hv_vsm_state *state);
+int kvm_vm_ioctl_set_hv_vsm_state(struct kvm *kvm, struct kvm_hv_vsm_state *state);
+
 #endif

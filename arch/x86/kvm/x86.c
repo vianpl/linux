@@ -6049,6 +6049,48 @@ long kvm_arch_vcpu_ioctl(struct file *filp,
 	case KVM_SET_DEVICE_ATTR:
 		r = kvm_vcpu_ioctl_device_attr(vcpu, ioctl, argp);
 		break;
+	case KVM_HV_VCPU_GET_VSM_STATE: {
+		struct kvm_hv_vcpu_vsm_state *vsm_state;
+
+		r = -EINVAL;
+		if (!vcpu->kvm->arch.hyperv.hv_enable_vsm)
+			goto out;
+
+		r = -ENOMEM;
+		vsm_state = kzalloc(sizeof(*vsm_state), GFP_USER | __GFP_NOWARN);
+		if (!vsm_state)
+			goto out;
+
+		r = kvm_vcpu_ioctl_get_hv_vsm_state(vcpu, vsm_state);
+		if (r)
+			goto out_get_vsm_state;
+
+		r = -EFAULT;
+		if (copy_to_user(argp, vsm_state, sizeof(*vsm_state)))
+			goto out_get_vsm_state;
+
+		r = 0;
+out_get_vsm_state:
+		kfree(vsm_state);
+		break;
+	}
+	case KVM_HV_VCPU_SET_VSM_STATE: {
+		struct kvm_hv_vcpu_vsm_state *vsm_state;
+
+		r = -EFAULT;
+		if (!vcpu->kvm->arch.hyperv.hv_enable_vsm)
+			goto out;
+
+		vsm_state = memdup_user(argp, sizeof(*vsm_state));
+		if (IS_ERR(vsm_state)) {
+			r = PTR_ERR(vsm_state);
+			goto out;
+		}
+
+		r = kvm_vcpu_ioctl_set_hv_vsm_state(vcpu, vsm_state);
+		kfree(vsm_state);
+		break;
+	}
 	default:
 		r = -EINVAL;
 	}
@@ -7078,6 +7120,47 @@ set_pit2_out:
 			return -EFAULT;
 
 		r = kvm_vm_ioctl_set_msr_filter(kvm, &filter);
+		break;
+	}
+	case KVM_HV_GET_VSM_STATE: {
+		struct kvm_hv_vsm_state *vsm_state;
+
+		r = -EINVAL;
+		if (!kvm->arch.hyperv.hv_enable_vsm)
+			goto out;
+
+		r = -ENOMEM;
+		vsm_state = kzalloc(sizeof(*vsm_state), GFP_USER | __GFP_NOWARN);
+		if (!vsm_state)
+			goto out;
+
+		r = kvm_vm_ioctl_get_hv_vsm_state(kvm, vsm_state);
+		if (r)
+			goto out_get_vsm_state;
+
+		r = -EFAULT;
+		if (copy_to_user(argp, vsm_state, sizeof(*vsm_state)))
+			goto out_get_vsm_state;
+
+		r = 0;
+out_get_vsm_state:
+		kfree(vsm_state);
+		break;
+	}
+	case KVM_HV_SET_VSM_STATE: {
+		struct kvm_hv_vsm_state *vsm_state;
+
+		r = -EINVAL;
+		if (!kvm->arch.hyperv.hv_enable_vsm)
+			goto out;
+
+		vsm_state = memdup_user(argp, sizeof(*vsm_state));
+		if (IS_ERR(vsm_state)) {
+			r = PTR_ERR(vsm_state);
+			goto out;
+		}
+		r = kvm_vm_ioctl_set_hv_vsm_state(kvm, vsm_state);
+		kfree(vsm_state);
 		break;
 	}
 	default:
