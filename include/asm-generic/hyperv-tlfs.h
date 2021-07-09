@@ -783,6 +783,7 @@ struct hv_mmio_write_input {
 #define HV_ALL_VTLS		((u8) 0xF)
 
 /* VSM registers */
+#define HV_REGISTER_VP_ASSIST_PAGE		0x00090013
 #define HV_REGISTER_VSM_VP_STATUS		0x000D0003
 #define HV_REGISTER_VSM_PARTITION_STATUS	0x000D0004
 #define HV_REGISTER_VSM_VINA			0x000D0005

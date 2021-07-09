@@ -637,6 +637,7 @@ struct kvm_vcpu_hv_vtl {
 	/* Per-VP, per-VTL config register set by upper VTL for lower VTL (us).
 	 * Does not exist for highest VTL possible */
 	union hv_register_vsm_vp_secure_vtl_config secure_vtl_config;
+	u64 vp_assist_page;
 };
 
 /* The maximum number of entries on the TLB flush fifo. */
@@ -666,7 +667,6 @@ struct kvm_vcpu_hv_tlb_flush_fifo {
 struct kvm_vcpu_hv {
 	struct kvm_vcpu *vcpu;
 	u32 vp_index;
-	u64 hv_vapic;
 	s64 runtime_offset;
 	struct kvm_vcpu_hv_synic synic;
 	struct kvm_hyperv_exit exit;

@@ -915,6 +915,48 @@ void kvm_hv_vcpu_uninit(struct kvm_vcpu *vcpu)
 	vcpu->arch.hyperv = NULL;
 }
 
+/* Write to VP assist page register */
+static int set_vp_assist_page(struct kvm_vcpu *vcpu, u64 data, u8 target_vtl)
+{
+	u64 gfn;
+	unsigned long addr;
+	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
+
+	if (!(data & HV_X64_MSR_VP_ASSIST_PAGE_ENABLE)) {
+		hv_vcpu->vtl[target_vtl].vp_assist_page = data;
+		if (kvm_lapic_set_pv_eoi(vcpu, 0, 0))
+			return 1;
+	} else {
+		gfn = data >> HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_SHIFT;
+		addr = kvm_vcpu_gfn_to_hva(vcpu, gfn);
+		if (kvm_is_error_hva(addr))
+			return 1;
+
+		/*
+		 * Clear apic_assist portion of f(struct hv_vp_assist_page
+		 * only, there can be valuable data in the rest which needs
+		 * to be preserved e.g. on migration.
+		 */
+		if (__put_user(0, (u32 __user *)addr))
+			return 1;
+		hv_vcpu->vtl[target_vtl].vp_assist_page = data;
+		kvm_vcpu_mark_page_dirty(vcpu, gfn);
+		if (kvm_lapic_set_pv_eoi(vcpu,
+					    gfn_to_gpa(gfn) | KVM_MSR_ENABLED,
+					    sizeof(struct hv_vp_assist_page)))
+			return 1;
+	}
+
+	return 0;
+}
+
+/* Read VP assist page register */
+static u64 get_vp_assist_page(struct kvm_vcpu *vcpu, u8 target_vtl)
+{
+	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
+	return hv_vcpu->vtl[target_vtl].vp_assist_page;
+}
+
 bool kvm_hv_assist_page_enabled(struct kvm_vcpu *vcpu)
 {
 	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
@@ -922,7 +964,7 @@ bool kvm_hv_assist_page_enabled(struct kvm_vcpu *vcpu)
 	if (!hv_vcpu)
 		return false;
 
-	if (!(hv_vcpu->hv_vapic & HV_X64_MSR_VP_ASSIST_PAGE_ENABLE))
+	if (!(get_vp_assist_page(vcpu, get_active_vtl(vcpu)) & HV_X64_MSR_VP_ASSIST_PAGE_ENABLE))
 		return false;
 	return vcpu->arch.pv_eoi.msr_val & KVM_MSR_ENABLED;
 }
@@ -1606,36 +1648,8 @@ static int kvm_hv_set_msr(struct kvm_vcpu *vcpu, u32 msr, u64 data, bool host)
 		hv_vcpu->vp_index = new_vp_index;
 		break;
 	}
-	case HV_X64_MSR_VP_ASSIST_PAGE: {
-		u64 gfn;
-		unsigned long addr;
-
-		if (!(data & HV_X64_MSR_VP_ASSIST_PAGE_ENABLE)) {
-			hv_vcpu->hv_vapic = data;
-			if (kvm_lapic_set_pv_eoi(vcpu, 0, 0))
-				return 1;
-			break;
-		}
-		gfn = data >> HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_SHIFT;
-		addr = kvm_vcpu_gfn_to_hva(vcpu, gfn);
-		if (kvm_is_error_hva(addr))
-			return 1;
-
-		/*
-		 * Clear apic_assist portion of struct hv_vp_assist_page
-		 * only, there can be valuable data in the rest which needs
-		 * to be preserved e.g. on migration.
-		 */
-		if (__put_user(0, (u32 __user *)addr))
-			return 1;
-		hv_vcpu->hv_vapic = data;
-		kvm_vcpu_mark_page_dirty(vcpu, gfn);
-		if (kvm_lapic_set_pv_eoi(vcpu,
-					    gfn_to_gpa(gfn) | KVM_MSR_ENABLED,
-					    sizeof(struct hv_vp_assist_page)))
-			return 1;
-		break;
-	}
+	case HV_X64_MSR_VP_ASSIST_PAGE:
+		return set_vp_assist_page(vcpu, data, get_active_vtl(vcpu));
 	case HV_X64_MSR_EOI:
 		return kvm_hv_vapic_msr_write(vcpu, APIC_EOI, data);
 	case HV_X64_MSR_ICR:
@@ -1762,7 +1776,7 @@ static int kvm_hv_get_msr(struct kvm_vcpu *vcpu, u32 msr, u64 *pdata,
 	case HV_X64_MSR_TPR:
 		return kvm_hv_vapic_msr_read(vcpu, APIC_TASKPRI, pdata);
 	case HV_X64_MSR_VP_ASSIST_PAGE:
-		data = hv_vcpu->hv_vapic;
+		data = get_vp_assist_page(vcpu, get_active_vtl(vcpu));
 		break;
 	case HV_X64_MSR_VP_RUNTIME:
 		data = current_task_runtime_100ns() + hv_vcpu->runtime_offset;
@@ -1954,6 +1968,9 @@ static u64 get_vp_register(u32 name,
 		if (!get_vsm_vp_secure_vtl_config(target_vcpu, vtl_num, name, &val->low))
 			return HV_STATUS_INVALID_PARAMETER;
 		break;
+	case HV_REGISTER_VP_ASSIST_PAGE:
+		val->low = get_vp_assist_page(target_vcpu, vtl_num);
+		break;
 	default:
 		pr_err("%s: unknown VP register 0x%x\n", __func__, name);
 		return HV_STATUS_INVALID_PARAMETER;
@@ -2057,6 +2074,8 @@ static u64 set_vp_register(u32 name,
 		if (!set_vsm_vp_secure_vtl_config(target_vcpu, vtl_num, name, val->low))
 			return HV_STATUS_INVALID_PARAMETER;
 		break;
+	case HV_REGISTER_VP_ASSIST_PAGE:
+		return set_vp_assist_page(target_vcpu, val->low, vtl_num);
 	case HV_REGISTER_VSM_VINA:
 	case HV_X64_REGISTER_CR_INTERCEPT_CONTROL:
 	case HV_X64_REGISTER_CR_INTERCEPT_CR0_MASK:
