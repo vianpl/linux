@@ -74,6 +74,11 @@ static inline u8 get_active_vtl(struct kvm_vcpu *vcpu)
 	return to_hv_vcpu(vcpu)->vsm_vp_status.active_vtl;
 }
 
+static inline void set_active_vtl(struct kvm_vcpu *vcpu, u8 vtl)
+{
+	to_hv_vcpu(vcpu)->vsm_vp_status.active_vtl = vtl;
+}
+
 static inline struct kvm_vcpu_hv_synic *to_hv_synic(struct kvm_vcpu *vcpu)
 {
 	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);

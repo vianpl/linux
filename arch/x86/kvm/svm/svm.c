@@ -2777,6 +2777,12 @@ static int svm_get_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 	case MSR_SYSCALL_MASK:
 		msr_info->data = svm->vmcb01.ptr->save.sfmask;
 		break;
+	case MSR_GS_BASE:
+		msr_info->data = svm->vmcb->save.gs.base;
+		break;
+	case MSR_FS_BASE:
+		msr_info->data = svm->vmcb->save.fs.base;
+		break;
 #endif
 	case MSR_IA32_SYSENTER_CS:
 		msr_info->data = svm->vmcb01.ptr->save.sysenter_cs;
@@ -2988,6 +2994,12 @@ static int svm_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr)
 		break;
 	case MSR_SYSCALL_MASK:
 		svm->vmcb01.ptr->save.sfmask = data;
+		break;
+	case MSR_GS_BASE:
+		svm->vmcb->save.gs.base = data;
+		break;
+	case MSR_FS_BASE:
+		svm->vmcb->save.fs.base = data;
 		break;
 #endif
 	case MSR_IA32_SYSENTER_CS:

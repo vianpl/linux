@@ -1750,6 +1750,44 @@ TRACE_EVENT(kvm_hv_set_vsm_vp_secure_vtl_config,
 		  __entry->val, __entry->reg)
 );
 
+TRACE_EVENT(kvm_hv_vtl_call,
+	TP_PROTO(u8 active_vtl, u8 next_vtl),
+	TP_ARGS(active_vtl, next_vtl),
+
+	TP_STRUCT__entry(
+		__field(u8, active_vtl)
+		__field(u8, next_vtl)
+	),
+
+	TP_fast_assign(
+		__entry->active_vtl = active_vtl;
+		__entry->next_vtl = next_vtl;
+	),
+
+	TP_printk("active vtl %u, next vtl %u",
+		  __entry->active_vtl, __entry->next_vtl)
+);
+
+TRACE_EVENT(kvm_hv_vtl_return,
+	TP_PROTO(u8 active_vtl, u8 prev_vtl, u64 ctl),
+	TP_ARGS(active_vtl, prev_vtl, ctl),
+
+	TP_STRUCT__entry(
+		__field(u8, active_vtl)
+		__field(u8, prev_vtl)
+		__field(u64, ctl)
+	),
+
+	TP_fast_assign(
+		__entry->active_vtl = active_vtl;
+		__entry->prev_vtl = prev_vtl;
+		__entry->ctl = ctl;
+	),
+
+	TP_printk("active vtl %u, next vtl %u, ctl 0x%llx",
+		  __entry->active_vtl, __entry->prev_vtl, __entry->ctl)
+);
+
 TRACE_EVENT(kvm_pv_tlb_flush,
 	TP_PROTO(unsigned int vcpu_id, bool need_flush_tlb),
 	TP_ARGS(vcpu_id, need_flush_tlb),

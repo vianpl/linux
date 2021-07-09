@@ -982,6 +982,20 @@ int kvm_hv_get_assist_page(struct kvm_vcpu *vcpu)
 }
 EXPORT_SYMBOL_GPL(kvm_hv_get_assist_page);
 
+static bool hv_read_vtl_control(struct kvm_vcpu *vcpu, struct hv_vp_vtl_control *vtl_control)
+{
+	/* VTL control is a part of VP assist page, which is accessed through pv_eoi */
+	return !kvm_read_guest_offset_cached(vcpu->kvm, &vcpu->arch.pv_eoi.data, vtl_control,
+			offsetof(struct hv_vp_assist_page, vtl_control), sizeof(*vtl_control));
+}
+
+static bool hv_write_vtl_control(struct kvm_vcpu *vcpu, struct hv_vp_vtl_control *vtl_control)
+{
+	/* VTL control is a part of VP assist page, which is accessed through pv_eoi */
+	return !kvm_write_guest_offset_cached(vcpu->kvm, &vcpu->arch.pv_eoi.data, vtl_control,
+			offsetof(struct hv_vp_assist_page, vtl_control), sizeof(*vtl_control));
+}
+
 static void stimer_prepare_msg(struct kvm_vcpu_hv_stimer *stimer)
 {
 	struct hv_message *msg = &stimer->msg;
@@ -1402,6 +1416,38 @@ static bool hv_check_msr_access(struct kvm_vcpu_hv *hv_vcpu, u32 msr)
 	}
 
 	return false;
+}
+
+/* Tell the next bit that is set after specified one in a set (bit numbers start at 1) */
+static u8 next_bit_set(u16 set, u8 bit)
+{
+	u16 mask;
+	BUG_ON(bit == 0);
+
+	mask = ~((1u << bit) - 1); /* Select all msbs after this one */
+	return ffs(set & mask);
+}
+
+/* Tell the previous bit that is set before specified one in a set (bit numbers start at 1) */
+static u8 prev_bit_set(u16 set, u8 bit)
+{
+	u16 mask;
+	BUG_ON(bit == 0);
+
+	mask = (1u << (bit - 1)) - 1; /* Select all lsbs before this one */
+	return fls(set & mask);
+}
+
+static inline u8 next_enabled_vtl(u16 set, u8 vtl)
+{
+	u8 next_vtl = next_bit_set(set, vtl + 1);
+	return next_vtl ? next_vtl - 1 : HV_INVALID_VTL;
+}
+
+static inline u8 prev_enabled_vtl(u16 set, u8 vtl)
+{
+	u8 prev_vtl = prev_bit_set(set, vtl + 1);
+	return prev_vtl ? prev_vtl - 1 : HV_INVALID_VTL;
 }
 
 bool is_any_vcpu_tlb_locked(struct kvm_hv_vtl *hv_vtl, unsigned long *vcpu_mask)
@@ -2893,6 +2939,248 @@ static u64 kvm_hv_enable_vp_vtl(struct kvm_vcpu *requestor_vcpu, struct kvm_hv_h
 	return HV_STATUS_SUCCESS;
 }
 
+static void load_kvm_segment(const struct hv_x64_segment_register *reg, struct kvm_segment *kvmseg)
+{
+	kvmseg->base = reg->base;
+	kvmseg->limit = reg->limit;
+	kvmseg->selector = reg->selector;
+	kvmseg->type = reg->segment_type;
+	kvmseg->present = reg->present;
+	kvmseg->dpl = reg->descriptor_privilege_level;
+	kvmseg->db = reg->_default;
+	kvmseg->s = reg->non_system_segment;
+	kvmseg->l = reg->_long;
+	kvmseg->g = reg->granularity;
+	kvmseg->avl = reg->available;
+	kvmseg->unusable = 0;
+}
+
+static void store_kvm_segment(const struct kvm_segment *kvmseg, struct hv_x64_segment_register *reg)
+{
+	reg->base = kvmseg->base;
+	reg->limit = kvmseg->limit;
+	reg->selector = kvmseg->selector;
+	reg->segment_type = kvmseg->type;
+	reg->present = kvmseg->present;
+	reg->descriptor_privilege_level = kvmseg->dpl;
+	reg->_default = kvmseg->db;
+	reg->non_system_segment = kvmseg->s;
+	reg->_long = kvmseg->l;
+	reg->granularity = kvmseg->g;
+	reg->available = kvmseg->avl;
+}
+
+/* Store VCPU context into VTL VP context */
+static bool store_vtl(struct kvm_vcpu *vcpu, struct kvm_vcpu_hv_vtl* vtl)
+{
+	int ret = 0;
+	struct kvm_sregs sregs = {0};
+
+	mutex_lock(&vtl->lock);
+
+	kvm_get_sregs(vcpu, &sregs);
+	store_kvm_segment(&sregs.cs, &vtl->ctx.cs);
+	store_kvm_segment(&sregs.ds, &vtl->ctx.ds);
+	store_kvm_segment(&sregs.es, &vtl->ctx.es);
+	store_kvm_segment(&sregs.fs, &vtl->ctx.fs);
+	store_kvm_segment(&sregs.gs, &vtl->ctx.gs);
+	store_kvm_segment(&sregs.ss, &vtl->ctx.ss);
+	store_kvm_segment(&sregs.tr, &vtl->ctx.tr);
+	store_kvm_segment(&sregs.ldt, &vtl->ctx.ldtr);
+
+	vtl->ctx.gdtr.base = sregs.gdt.base;
+	vtl->ctx.gdtr.limit = sregs.gdt.limit;
+	vtl->ctx.idtr.base = sregs.idt.base;
+	vtl->ctx.idtr.limit = sregs.idt.limit;
+
+	vtl->ctx.cr0 = sregs.cr0;
+	vtl->ctx.cr3 = sregs.cr3;
+	vtl->ctx.cr4 = sregs.cr4;
+	vtl->ctx.efer = sregs.efer;
+
+	kvm_get_dr(vcpu, 7, &vtl->dr7);
+
+	ret |= kvm_get_msr(vcpu, MSR_KERNEL_GS_BASE, &vtl->msr_kernel_gsbase);
+	ret |= kvm_get_msr(vcpu, MSR_GS_BASE, &vtl->msr_gsbase);
+	ret |= kvm_get_msr(vcpu, MSR_FS_BASE, &vtl->msr_fsbase);
+	ret |= kvm_get_msr(vcpu, MSR_TSC_AUX, &vtl->msr_tsc_aux);
+	ret |= kvm_get_msr(vcpu, MSR_IA32_SYSENTER_CS, &vtl->msr_sysenter_cs);
+	ret |= kvm_get_msr(vcpu, MSR_IA32_SYSENTER_ESP, &vtl->msr_sysenter_esp);
+	ret |= kvm_get_msr(vcpu, MSR_IA32_SYSENTER_EIP, &vtl->msr_sysenter_eip);
+	ret |= kvm_get_msr(vcpu, MSR_STAR, &vtl->msr_star);
+	ret |= kvm_get_msr(vcpu, MSR_LSTAR, &vtl->msr_lstar);
+	ret |= kvm_get_msr(vcpu, MSR_CSTAR, &vtl->msr_cstar);
+	ret |= kvm_get_msr(vcpu, MSR_SYSCALL_MASK, &vtl->msr_sfmask);
+	ret |= kvm_get_msr(vcpu, MSR_IA32_CR_PAT, &vtl->ctx.msr_cr_pat);
+
+	vtl->ctx.rip = kvm_rip_read(vcpu);
+	vtl->ctx.rsp = kvm_rsp_read(vcpu);
+	vtl->ctx.rflags = kvm_get_rflags(vcpu);
+
+	mutex_unlock(&vtl->lock);
+	return ret == 0;
+}
+
+/* Load VTL VP content into VCPU.
+ * If failed, vcpu can be left in an undefined state, which should end in #UD */
+static bool load_vtl(struct kvm_vcpu *vcpu, struct kvm_vcpu_hv_vtl *vtl)
+{
+	int ret = 0;
+	struct kvm_sregs sregs = {0};
+
+	mutex_lock(&vtl->lock);
+
+	load_kvm_segment(&vtl->ctx.cs, &sregs.cs);
+	load_kvm_segment(&vtl->ctx.ds, &sregs.ds);
+	load_kvm_segment(&vtl->ctx.es, &sregs.es);
+	load_kvm_segment(&vtl->ctx.fs, &sregs.fs);
+	load_kvm_segment(&vtl->ctx.gs, &sregs.gs);
+	load_kvm_segment(&vtl->ctx.ss, &sregs.ss);
+	load_kvm_segment(&vtl->ctx.tr, &sregs.tr);
+	load_kvm_segment(&vtl->ctx.ldtr, &sregs.ldt);
+
+	sregs.gdt.base = vtl->ctx.gdtr.base;
+	sregs.gdt.limit = vtl->ctx.gdtr.limit;
+	sregs.idt.base = vtl->ctx.idtr.base;
+	sregs.idt.limit = vtl->ctx.idtr.limit;
+
+	sregs.cr0 = vtl->ctx.cr0;
+	sregs.cr3 = vtl->ctx.cr3;
+	sregs.cr4 = vtl->ctx.cr4;
+	sregs.efer = vtl->ctx.efer;
+
+	/* CR2 is not isolated per-VTL */
+	sregs.cr2 = vcpu->arch.cr2;
+
+	/* We don't have apic isolation yet, so TPR and APIC_BASE stay the same for now */
+	sregs.cr8 = kvm_get_cr8(vcpu);
+	sregs.apic_base = kvm_get_apic_base(vcpu);
+
+	ret |= kvm_set_sregs(vcpu, &sregs);
+
+	ret |= kvm_set_dr(vcpu, 7, vtl->dr7);
+
+	ret |= kvm_set_msr(vcpu, MSR_KERNEL_GS_BASE, vtl->msr_kernel_gsbase);
+	ret |= kvm_set_msr(vcpu, MSR_GS_BASE, vtl->msr_gsbase);
+	ret |= kvm_set_msr(vcpu, MSR_FS_BASE, vtl->msr_fsbase);
+	ret |= kvm_set_msr(vcpu, MSR_TSC_AUX, vtl->msr_tsc_aux);
+	ret |= kvm_set_msr(vcpu, MSR_IA32_SYSENTER_CS, vtl->msr_sysenter_cs);
+	ret |= kvm_set_msr(vcpu, MSR_IA32_SYSENTER_ESP, vtl->msr_sysenter_esp);
+	ret |= kvm_set_msr(vcpu, MSR_IA32_SYSENTER_EIP, vtl->msr_sysenter_eip);
+	ret |= kvm_set_msr(vcpu, MSR_STAR, vtl->msr_star);
+	ret |= kvm_set_msr(vcpu, MSR_LSTAR, vtl->msr_lstar);
+	ret |= kvm_set_msr(vcpu, MSR_CSTAR, vtl->msr_cstar);
+	ret |= kvm_set_msr(vcpu, MSR_SYSCALL_MASK, vtl->msr_sfmask);
+	ret |= kvm_set_msr(vcpu, MSR_IA32_CR_PAT, vtl->ctx.msr_cr_pat);
+
+	kvm_rip_write(vcpu, vtl->ctx.rip);
+	kvm_rsp_write(vcpu, vtl->ctx.rsp);
+	kvm_set_rflags(vcpu, vtl->ctx.rflags | X86_EFLAGS_FIXED);
+
+	mutex_unlock(&vtl->lock);
+	return ret == 0;
+}
+
+/* Perform a VCPU VTL context switch from current one to the specified one */
+static bool do_vtl_switch(struct kvm_vcpu *vcpu, int vtl)
+{
+	struct kvm_vcpu_hv* vp = to_hv_vcpu(vcpu);
+	struct kvm_vcpu_hv_vtl* vtl_from = &vp->vtl[get_active_vtl(vcpu)];
+	struct kvm_vcpu_hv_vtl* vtl_to = &vp->vtl[vtl];
+
+	/* Store current VTL VP context */
+	if (!store_vtl(vcpu, vtl_from) || !load_vtl(vcpu, vtl_to))
+		return false;
+
+	/* Set new effective VTL */
+	set_active_vtl(vcpu, vtl);
+	return true;
+}
+
+static bool kvm_hv_vtl_call(struct kvm_vcpu *vcpu)
+{
+	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
+	u8 curr_vtl;
+	u8 next_vtl;
+
+	/* Look what is the next enabled VTL after active one */
+	curr_vtl = get_active_vtl(vcpu);
+	next_vtl = next_enabled_vtl(hv_vcpu->vsm_vp_status.enabled_vtl_set, curr_vtl);
+	if (next_vtl == HV_INVALID_VTL)
+		return false;
+
+	trace_kvm_hv_vtl_call(curr_vtl, next_vtl);
+
+	/* Before we switch VTLs increment our current RIP to point past the vmcall instruction
+	 * that led us to a VTL call so that when we return back we resume from the next instruction. */
+	if (!kvm_skip_emulated_instruction(vcpu))
+		return false;
+
+	if (!do_vtl_switch(vcpu, next_vtl))
+		return false;
+
+	/* After setting a new active VTL, communicate an entry reason through the VTL control
+	 * in VP assist page (keeping in mind that it might not be enabled). */
+	if (kvm_hv_assist_page_enabled(vcpu)) {
+		struct hv_vp_vtl_control vtl_control = {0};
+		vtl_control.vtl_entry_reason = HV_VTL_ENTRY_VTL_CALL;
+		if (!hv_write_vtl_control(vcpu, &vtl_control)) {
+			/* Revert the vtl switch. Although guest will get a #UD after we return an error,
+			 * it is likely better to get a #UD on current VTL's vmcall rather than VTL1 entry */
+			do_vtl_switch(vcpu, curr_vtl);
+			return false;
+		}
+	}
+
+	return true;
+}
+
+static bool kvm_hv_vtl_return(struct kvm_vcpu *vcpu)
+{
+	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
+	u8 prev_vtl;
+	u64 ctl;
+	bool fast_exit;
+
+	/* Look what is the previous enabled VTL before the active one. */
+	prev_vtl = prev_enabled_vtl(hv_vcpu->vsm_vp_status.enabled_vtl_set, get_active_vtl(vcpu));
+	if (prev_vtl == HV_INVALID_VTL)
+		return false;
+
+	/* Spec says that VTL exit control is in RCX, but we shift it to RAX in hypercall thunk */
+	ctl = kvm_rax_read(vcpu);
+	fast_exit = ctl & 1;
+
+	trace_kvm_hv_vtl_return(get_active_vtl(vcpu), prev_vtl, ctl);
+
+	/* Before we switch VTLs increment our current RIP to point past the vmcall instruction
+	 * that led us to a VTL return so that when we call back we resume from the next instruction. */
+	if (!kvm_skip_emulated_instruction(vcpu))
+		return false;
+
+	/* If this is a non-fast exit, restore some registers from VTL control */
+	if (!fast_exit) {
+		struct hv_vp_vtl_control vtl_control;
+
+		/* VP assist should be there if guest wants us to access it */
+		if (!kvm_hv_assist_page_enabled(vcpu) || !hv_read_vtl_control(vcpu, &vtl_control)) {
+			return false;
+		}
+
+		/* Ok to set these before VTL context switch because they are not a part of it */
+		if (is_64_bit_mode(vcpu)) {
+			kvm_rax_write(vcpu, vtl_control.vtl_ret_x64rax);
+			kvm_rcx_write(vcpu, vtl_control.vtl_ret_x64rcx);
+		} else {
+			kvm_rax_write(vcpu, vtl_control.vtl_return_x86_eax);
+			kvm_rcx_write(vcpu, vtl_control.vtl_return_x86_ecx);
+			kvm_rdx_write(vcpu, vtl_control.vtl_return_x86_edx);
+		}
+	}
+
+	return do_vtl_switch(vcpu, prev_vtl);
+}
+
 void kvm_hv_set_cpuid(struct kvm_vcpu *vcpu, bool hyperv_enabled)
 {
 	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
@@ -3141,10 +3429,8 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 	 * hypercall generates UD from non zero cpl and real mode
 	 * per HYPER-V spec
 	 */
-	if (static_call(kvm_x86_get_cpl)(vcpu) != 0 || !is_protmode(vcpu)) {
-		kvm_queue_exception(vcpu, UD_VECTOR);
-		return 1;
-	}
+	if (static_call(kvm_x86_get_cpl)(vcpu) != 0 || !is_protmode(vcpu))
+		goto inject_ud;
 
 #ifdef CONFIG_X86_64
 	if (is_64_bit_hypercall(vcpu)) {
@@ -3299,6 +3585,21 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 	case HVCALL_ENABLE_VP_VTL:
 		ret = kvm_hv_enable_vp_vtl(vcpu, &hc);
 		break;
+
+	/*
+	 * VTL call/return hypercalls have a special calling convention:
+	 * - they don't use typical thunking data and input regs
+	 * - no return value to report to the guest, instead #UD is injected on error
+	 */
+	case HVCALL_VTL_CALL:
+		if (!kvm_hv_vtl_call(vcpu))
+			goto inject_ud;
+		return 1;
+	case HVCALL_VTL_RETURN:
+		if (!kvm_hv_vtl_return(vcpu))
+			goto inject_ud;
+		return 1;
+
 	default:
 		ret = HV_STATUS_INVALID_HYPERCALL_CODE;
 		break;
@@ -3318,6 +3619,10 @@ hypercall_userspace_exit:
 	vcpu->run->hyperv.u.hcall.params[1] = hc.outgpa;
 	vcpu->arch.complete_userspace_io = kvm_hv_hypercall_complete_userspace;
 	return 0;
+
+inject_ud:
+	kvm_queue_exception(vcpu, UD_VECTOR);
+	return 1;
 }
 
 static void hv_init_vsm(struct kvm_hv* hv)

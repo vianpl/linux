@@ -152,6 +152,8 @@ union hv_reference_tsc_msr {
 #define HVCALL_SEND_IPI				0x000b
 #define HVCALL_ENABLE_PARTITION_VTL		0x000d
 #define HVCALL_ENABLE_VP_VTL			0x000f
+#define HVCALL_VTL_CALL				0x0011
+#define HVCALL_VTL_RETURN			0x0012
 #define HVCALL_FLUSH_VIRTUAL_ADDRESS_SPACE_EX	0x0013
 #define HVCALL_FLUSH_VIRTUAL_ADDRESS_LIST_EX	0x0014
 #define HVCALL_SEND_IPI_EX			0x0015
@@ -902,5 +904,11 @@ struct hv_enable_partition_vtl {
 	union hv_enable_partition_vtl_flags flags;
 	u8 reserved[6];
 } __packed;
+
+enum hv_vtl_entry_reason {
+	HV_VTL_ENTRY_RESERVED = 0,
+	HV_VTL_ENTRY_VTL_CALL = 1,
+	HV_VTL_ENTRY_INTERRUPT = 2,
+};
 
 #endif

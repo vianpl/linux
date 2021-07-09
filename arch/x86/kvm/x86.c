@@ -11315,6 +11315,11 @@ static void __get_sregs(struct kvm_vcpu *vcpu, struct kvm_sregs *sregs)
 			(unsigned long *)sregs->interrupt_bitmap);
 }
 
+void kvm_get_sregs(struct kvm_vcpu *vcpu, struct kvm_sregs *sregs)
+{
+	__get_sregs(vcpu, sregs);
+}
+
 static void __get_sregs2(struct kvm_vcpu *vcpu, struct kvm_sregs2 *sregs2)
 {
 	int i;
@@ -11590,6 +11595,11 @@ static int __set_sregs2(struct kvm_vcpu *vcpu, struct kvm_sregs2 *sregs2)
 	if (mmu_reset_needed)
 		kvm_mmu_reset_context(vcpu);
 	return 0;
+}
+
+int kvm_set_sregs(struct kvm_vcpu *vcpu, struct kvm_sregs *sregs)
+{
+	return __set_sregs(vcpu, sregs);
 }
 
 int kvm_arch_vcpu_ioctl_set_sregs(struct kvm_vcpu *vcpu,
