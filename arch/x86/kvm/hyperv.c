@@ -1534,6 +1534,14 @@ static void set_vsm_partition_config(struct kvm *kvm, u8 target_vtl, u64 data)
 	hv_vtl->vsm_partition_config = new_val;
 }
 
+static u64 get_vsm_code_page_offsets(struct kvm_vcpu *vcpu)
+{
+	struct kvm_hv* hv = &vcpu->kvm->arch.hyperv;
+	return (is_64_bit_mode(vcpu) ?
+			hv->vsm_code_page_offsets64.as_u64 :
+			hv->vsm_code_page_offsets32.as_u64);
+}
+
 static int kvm_hv_set_msr_pw(struct kvm_vcpu *vcpu, u32 msr, u64 data,
 			     bool host)
 {
@@ -1551,7 +1559,7 @@ static int kvm_hv_set_msr_pw(struct kvm_vcpu *vcpu, u32 msr, u64 data,
 			hv->vtl[get_active_vtl(vcpu)].hv_hypercall &= ~HV_X64_MSR_HYPERCALL_ENABLE;
 		break;
 	case HV_X64_MSR_HYPERCALL: {
-		u8 instructions[9];
+		u8 instructions[0x30];
 		int i = 0;
 		u64 addr;
 
@@ -1584,6 +1592,78 @@ static int kvm_hv_set_msr_pw(struct kvm_vcpu *vcpu, u32 msr, u64 data,
 
 		/* ret */
 		((unsigned char *)instructions)[i++] = 0xc3;
+
+		/* VTL call/return entries */
+
+		/*
+		 * VTL call 32-bit entry prologue:
+		 * 	mov %eax, %ecx
+		 * 	mov $0x11, %eax
+		 * 	jmp 0:
+		 */
+		hv->vsm_code_page_offsets32.vtl_call_offset = i;
+		instructions[i++] = 0x89;
+		instructions[i++] = 0xc1;
+		instructions[i++] = 0xb8;
+		instructions[i++] = 0x11;
+		instructions[i++] = 0x00;
+		instructions[i++] = 0x00;
+		instructions[i++] = 0x00;
+		instructions[i++] = 0xeb;
+		instructions[i++] = 0xf3;
+		/*
+		 * VTL return 32-bit entry prologue:
+		 * 	mov %eax, %ecx
+		 * 	mov $0x12, %eax
+		 * 	jmp 0:
+		 */
+		hv->vsm_code_page_offsets32.vtl_return_offset = i;
+		instructions[i++] = 0x89;
+		instructions[i++] = 0xc1;
+		instructions[i++] = 0xb8;
+		instructions[i++] = 0x12;
+		instructions[i++] = 0x00;
+		instructions[i++] = 0x00;
+		instructions[i++] = 0x00;
+		instructions[i++] = 0xeb;
+		instructions[i++] = 0xea;
+
+#ifdef CONFIG_X86_64
+		/*
+		 * VTL call 64-bit entry prologue:
+		 * 	mov %rcx, %rax
+		 * 	mov $0x11, %ecx
+		 * 	jmp 0:
+		 */
+		hv->vsm_code_page_offsets64.vtl_call_offset = i;
+		instructions[i++] = 0x48;
+		instructions[i++] = 0x89;
+		instructions[i++] = 0xc8;
+		instructions[i++] = 0xb9;
+		instructions[i++] = 0x11;
+		instructions[i++] = 0x00;
+		instructions[i++] = 0x00;
+		instructions[i++] = 0x00;
+		instructions[i++] = 0xeb;
+		instructions[i++] = 0xe0;
+		/*
+		 * VTL return 64-bit entry prologue:
+		 * 	mov %rcx, %rax
+		 * 	mov $0x12, %ecx
+		 * 	jmp 0:
+		 */
+		hv->vsm_code_page_offsets64.vtl_return_offset = i;
+		instructions[i++] = 0x48;
+		instructions[i++] = 0x89;
+		instructions[i++] = 0xc8;
+		instructions[i++] = 0xb9;
+		instructions[i++] = 0x12;
+		instructions[i++] = 0x00;
+		instructions[i++] = 0x00;
+		instructions[i++] = 0x00;
+		instructions[i++] = 0xeb;
+		instructions[i++] = 0xd6;
+#endif
 
 		addr = data & HV_X64_MSR_HYPERCALL_PAGE_ADDRESS_MASK;
 		if (kvm_vcpu_write_guest(vcpu, addr, instructions, i))
@@ -2034,6 +2114,9 @@ static u64 get_vp_register(u32 name,
 		break;
 	case HV_REGISTER_VP_ASSIST_PAGE:
 		val->low = get_vp_assist_page(target_vcpu, vtl_num);
+		break;
+	case HV_REGISTER_VSM_CODE_PAGE_OFFSETS:
+		val->low = get_vsm_code_page_offsets(target_vcpu);
 		break;
 	default:
 		pr_err("%s: unknown VP register 0x%x\n", __func__, name);

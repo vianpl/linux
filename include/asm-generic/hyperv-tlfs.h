@@ -786,6 +786,7 @@ struct hv_mmio_write_input {
 
 /* VSM registers */
 #define HV_REGISTER_VP_ASSIST_PAGE		0x00090013
+#define HV_REGISTER_VSM_CODE_PAGE_OFFSETS	0x000D0002
 #define HV_REGISTER_VSM_VP_STATUS		0x000D0003
 #define HV_REGISTER_VSM_PARTITION_STATUS	0x000D0004
 #define HV_REGISTER_VSM_VINA			0x000D0005
@@ -875,6 +876,18 @@ union hv_register_vsm_vp_secure_vtl_config {
 		u64 mbec_enabled:1;
 		u64 tlb_locked:1;
 		u64 reserved0:62;
+	} __packed;
+};
+
+/*
+ * VTL call/return hypercall page offsets register
+ */
+union hv_register_vsm_code_page_offsets {
+	u64 as_u64;
+	struct {
+		u64 vtl_call_offset:12;
+		u64 vtl_return_offset:12;
+		u64 reserved:40;
 	} __packed;
 };
 

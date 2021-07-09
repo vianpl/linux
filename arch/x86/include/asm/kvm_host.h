@@ -1132,6 +1132,8 @@ struct kvm_hv {
 
 	union hv_register_vsm_capabilities vsm_capabilities;
 	union hv_register_vsm_partition_status vsm_partition_status;
+	union hv_register_vsm_code_page_offsets vsm_code_page_offsets32;
+	union hv_register_vsm_code_page_offsets vsm_code_page_offsets64;
 
 	/* If bit N is set, then we have VTLN enabled for any number of VPs */
 	u16 vtl_enabled_for_vps;
