@@ -1604,6 +1604,7 @@ struct msr_data {
 	bool host_initiated;
 	u32 index;
 	u64 data;
+	u8 vtl;
 };
 
 struct kvm_lapic_irq {
@@ -2029,7 +2030,7 @@ void kvm_prepare_emulation_failure_exit(struct kvm_vcpu *vcpu);
 
 void kvm_enable_efer_bits(u64);
 bool kvm_valid_efer(struct kvm_vcpu *vcpu, u64 efer);
-int __kvm_get_msr(struct kvm_vcpu *vcpu, u32 index, u64 *data, bool host_initiated);
+int __kvm_get_msr(struct kvm_vcpu *vcpu, u8 vtl, u32 index, u64 *data, bool host_initiated);
 int kvm_get_msr(struct kvm_vcpu *vcpu, u32 index, u64 *data);
 int kvm_set_msr(struct kvm_vcpu *vcpu, u32 index, u64 data);
 int kvm_emulate_rdmsr(struct kvm_vcpu *vcpu);

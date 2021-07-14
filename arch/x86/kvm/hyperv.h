@@ -79,11 +79,11 @@ static inline void set_active_vtl(struct kvm_vcpu *vcpu, u8 vtl)
 	to_hv_vcpu(vcpu)->vsm_vp_status.active_vtl = vtl;
 }
 
-static inline struct kvm_vcpu_hv_synic *to_hv_synic(struct kvm_vcpu *vcpu)
+static inline struct kvm_vcpu_hv_synic *to_hv_synic(struct kvm_vcpu *vcpu, u8 vtl)
 {
 	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
 
-	return &hv_vcpu->vtl[get_active_vtl(vcpu)].synic;
+	return &hv_vcpu->vtl[vtl].synic;
 }
 
 static inline struct kvm_vcpu *hv_synic_to_vcpu(struct kvm_vcpu_hv_synic *synic)
@@ -103,8 +103,8 @@ static inline u32 kvm_hv_get_vpindex(struct kvm_vcpu *vcpu)
 	return hv_vcpu ? hv_vcpu->vp_index : vcpu->vcpu_idx;
 }
 
-int kvm_hv_set_msr_common(struct kvm_vcpu *vcpu, u32 msr, u64 data, bool host);
-int kvm_hv_get_msr_common(struct kvm_vcpu *vcpu, u32 msr, u64 *pdata, bool host);
+int kvm_hv_set_msr_common(struct kvm_vcpu *vcpu, u8 vtl, u32 msr, u64 data, bool host);
+int kvm_hv_get_msr_common(struct kvm_vcpu *vcpu, u8 vtl, u32 msr, u64 *pdata, bool host);
 
 static inline bool kvm_hv_hypercall_enabled(struct kvm_vcpu *vcpu)
 {
@@ -124,9 +124,9 @@ bool kvm_hv_assist_page_enabled(struct kvm_vcpu *vcpu);
 int kvm_hv_get_assist_page(struct kvm_vcpu *vcpu);
 
 static inline struct kvm_vcpu_hv_stimer *to_hv_stimer(struct kvm_vcpu *vcpu,
-						      int timer_index)
+						      int timer_index, u8 vtl)
 {
-	return &to_hv_synic(vcpu)->stimer[timer_index];
+	return &to_hv_synic(vcpu, vtl)->stimer[timer_index];
 }
 
 static inline struct kvm_vcpu_hv_synic *stimer_to_synic(struct kvm_vcpu_hv_stimer *stimer)
@@ -146,7 +146,7 @@ static inline bool kvm_hv_has_stimer_pending(struct kvm_vcpu *vcpu)
 	if (!hv_vcpu)
 		return false;
 
-	return !bitmap_empty(to_hv_synic(vcpu)->stimer_pending_bitmap,
+	return !bitmap_empty(to_hv_synic(vcpu, get_active_vtl(vcpu))->stimer_pending_bitmap,
 			     HV_SYNIC_STIMER_COUNT);
 }
 

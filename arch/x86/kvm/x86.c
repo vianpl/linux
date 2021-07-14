@@ -1685,7 +1685,7 @@ static int kvm_get_msr_feature(struct kvm_msr_entry *msr)
 	return 0;
 }
 
-static int do_get_msr_feature(struct kvm_vcpu *vcpu, unsigned index, u64 *data)
+static int do_get_msr_feature(struct kvm_vcpu *vcpu, u8 vtl, unsigned index, u64 *data)
 {
 	struct kvm_msr_entry msr;
 	int r;
@@ -1826,7 +1826,7 @@ EXPORT_SYMBOL_GPL(kvm_msr_allowed);
  * Returns 0 on success, non-0 otherwise.
  * Assumes vcpu_load() was already called.
  */
-static int __kvm_set_msr(struct kvm_vcpu *vcpu, u32 index, u64 data,
+static int __kvm_set_msr(struct kvm_vcpu *vcpu, u8 vtl, u32 index, u64 data,
 			 bool host_initiated)
 {
 	struct msr_data msr;
@@ -1881,6 +1881,7 @@ static int __kvm_set_msr(struct kvm_vcpu *vcpu, u32 index, u64 data,
 		break;
 	}
 
+	msr.vtl = vtl;
 	msr.data = data;
 	msr.index = index;
 	msr.host_initiated = host_initiated;
@@ -1888,10 +1889,10 @@ static int __kvm_set_msr(struct kvm_vcpu *vcpu, u32 index, u64 data,
 	return static_call(kvm_x86_set_msr)(vcpu, &msr);
 }
 
-static int kvm_set_msr_ignored_check(struct kvm_vcpu *vcpu,
+static int kvm_set_msr_ignored_check(struct kvm_vcpu *vcpu, u8 vtl,
 				     u32 index, u64 data, bool host_initiated)
 {
-	int ret = __kvm_set_msr(vcpu, index, data, host_initiated);
+	int ret = __kvm_set_msr(vcpu, vtl, index, data, host_initiated);
 
 	if (ret == KVM_MSR_RET_INVALID)
 		if (kvm_msr_ignored_check(index, data, true))
@@ -1906,7 +1907,7 @@ static int kvm_set_msr_ignored_check(struct kvm_vcpu *vcpu,
  * Returns 0 on success, non-0 otherwise.
  * Assumes vcpu_load() was already called.
  */
-int __kvm_get_msr(struct kvm_vcpu *vcpu, u32 index, u64 *data,
+int __kvm_get_msr(struct kvm_vcpu *vcpu, u8 vtl, u32 index, u64 *data,
 		  bool host_initiated)
 {
 	struct msr_data msr;
@@ -1924,6 +1925,7 @@ int __kvm_get_msr(struct kvm_vcpu *vcpu, u32 index, u64 *data,
 		break;
 	}
 
+	msr.vtl = vtl;
 	msr.index = index;
 	msr.host_initiated = host_initiated;
 
@@ -1933,10 +1935,10 @@ int __kvm_get_msr(struct kvm_vcpu *vcpu, u32 index, u64 *data,
 	return ret;
 }
 
-static int kvm_get_msr_ignored_check(struct kvm_vcpu *vcpu,
+static int kvm_get_msr_ignored_check(struct kvm_vcpu *vcpu, u8 vtl,
 				     u32 index, u64 *data, bool host_initiated)
 {
-	int ret = __kvm_get_msr(vcpu, index, data, host_initiated);
+	int ret = __kvm_get_msr(vcpu, vtl, index, data, host_initiated);
 
 	if (ret == KVM_MSR_RET_INVALID) {
 		/* Unconditionally clear *data for simplicity */
@@ -1950,27 +1952,35 @@ static int kvm_get_msr_ignored_check(struct kvm_vcpu *vcpu,
 
 static int kvm_get_msr_with_filter(struct kvm_vcpu *vcpu, u32 index, u64 *data)
 {
+	u8 vtl = vcpu->kvm->arch.hyperv.hv_enable_vsm ? get_active_vtl(vcpu) : 0;
+
 	if (!kvm_msr_allowed(vcpu, index, KVM_MSR_FILTER_READ))
 		return KVM_MSR_RET_FILTERED;
-	return kvm_get_msr_ignored_check(vcpu, index, data, false);
+	return kvm_get_msr_ignored_check(vcpu, vtl, index, data, false);
 }
 
 static int kvm_set_msr_with_filter(struct kvm_vcpu *vcpu, u32 index, u64 data)
 {
+	u8 vtl = vcpu->kvm->arch.hyperv.hv_enable_vsm ? get_active_vtl(vcpu) : 0;
+
 	if (!kvm_msr_allowed(vcpu, index, KVM_MSR_FILTER_WRITE))
 		return KVM_MSR_RET_FILTERED;
-	return kvm_set_msr_ignored_check(vcpu, index, data, false);
+	return kvm_set_msr_ignored_check(vcpu, vtl, index, data, false);
 }
 
 int kvm_get_msr(struct kvm_vcpu *vcpu, u32 index, u64 *data)
 {
-	return kvm_get_msr_ignored_check(vcpu, index, data, false);
+	u8 vtl = vcpu->kvm->arch.hyperv.hv_enable_vsm ? get_active_vtl(vcpu) : 0;
+
+	return kvm_get_msr_ignored_check(vcpu, vtl, index, data, false);
 }
 EXPORT_SYMBOL_GPL(kvm_get_msr);
 
 int kvm_set_msr(struct kvm_vcpu *vcpu, u32 index, u64 data)
 {
-	return kvm_set_msr_ignored_check(vcpu, index, data, false);
+	u8 vtl = vcpu->kvm->arch.hyperv.hv_enable_vsm ? get_active_vtl(vcpu) : 0;
+
+	return kvm_set_msr_ignored_check(vcpu, vtl, index, data, false);
 }
 EXPORT_SYMBOL_GPL(kvm_set_msr);
 
@@ -2206,12 +2216,12 @@ EXPORT_SYMBOL_GPL(handle_fastpath_set_msr_irqoff);
 /*
  * Adapt set_msr() to msr_io()'s calling convention
  */
-static int do_get_msr(struct kvm_vcpu *vcpu, unsigned index, u64 *data)
+static int do_get_msr(struct kvm_vcpu *vcpu, u8 vtl, unsigned index, u64 *data)
 {
-	return kvm_get_msr_ignored_check(vcpu, index, data, true);
+	return kvm_get_msr_ignored_check(vcpu, vtl, index, data, true);
 }
 
-static int do_set_msr(struct kvm_vcpu *vcpu, unsigned index, u64 *data)
+static int do_set_msr(struct kvm_vcpu *vcpu, u8 vtl, unsigned index, u64 *data)
 {
 	u64 val;
 
@@ -2223,13 +2233,13 @@ static int do_set_msr(struct kvm_vcpu *vcpu, unsigned index, u64 *data)
 	 * all MSRs when emulating RESET.
 	 */
 	if (kvm_vcpu_has_run(vcpu) && kvm_is_immutable_feature_msr(index)) {
-		if (do_get_msr(vcpu, index, &val) || *data != val)
+		if (do_get_msr(vcpu, vtl, index, &val) || *data != val)
 			return -EINVAL;
 
 		return 0;
 	}
 
-	return kvm_set_msr_ignored_check(vcpu, index, *data, true);
+	return kvm_set_msr_ignored_check(vcpu, vtl, index, *data, true);
 }
 
 #ifdef CONFIG_X86_64
@@ -3915,7 +3925,7 @@ int kvm_set_msr_common(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 	case HV_X64_MSR_TSC_EMULATION_CONTROL:
 	case HV_X64_MSR_TSC_EMULATION_STATUS:
 	case HV_X64_MSR_TSC_INVARIANT_CONTROL:
-		return kvm_hv_set_msr_common(vcpu, msr, data,
+		return kvm_hv_set_msr_common(vcpu, msr_info->vtl, msr, data,
 					     msr_info->host_initiated);
 	case MSR_IA32_BBL_CR_CTL3:
 		/* Drop writes to this legacy MSR -- see rdmsr
@@ -4271,7 +4281,7 @@ int kvm_get_msr_common(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 	case HV_X64_MSR_TSC_EMULATION_CONTROL:
 	case HV_X64_MSR_TSC_EMULATION_STATUS:
 	case HV_X64_MSR_TSC_INVARIANT_CONTROL:
-		return kvm_hv_get_msr_common(vcpu,
+		return kvm_hv_get_msr_common(vcpu, msr_info->vtl,
 					     msr_info->index, &msr_info->data,
 					     msr_info->host_initiated);
 	case MSR_IA32_BBL_CR_CTL3:
@@ -4352,13 +4362,20 @@ EXPORT_SYMBOL_GPL(kvm_get_msr_common);
  */
 static int __msr_io(struct kvm_vcpu *vcpu, struct kvm_msrs *msrs,
 		    struct kvm_msr_entry *entries,
-		    int (*do_msr)(struct kvm_vcpu *vcpu,
+		    int (*do_msr)(struct kvm_vcpu *vcpu, u8 vtl,
 				  unsigned index, u64 *data))
 {
 	int i;
+	u8 vtl = 0;
+
+	if (vcpu && vcpu->kvm->arch.hyperv.hv_enable_vsm) {
+		if (msrs->vtl >= KVM_HV_NUM_VTLS)
+			return 0;
+		vtl = msrs->vtl;
+	}
 
 	for (i = 0; i < msrs->nmsrs; ++i)
-		if (do_msr(vcpu, entries[i].index, &entries[i].data))
+		if (do_msr(vcpu, vtl, entries[i].index, &entries[i].data))
 			break;
 
 	return i;
@@ -4370,7 +4387,7 @@ static int __msr_io(struct kvm_vcpu *vcpu, struct kvm_msrs *msrs,
  * @return number of msrs set successfully.
  */
 static int msr_io(struct kvm_vcpu *vcpu, struct kvm_msrs __user *user_msrs,
-		  int (*do_msr)(struct kvm_vcpu *vcpu,
+		  int (*do_msr)(struct kvm_vcpu *vcpu, u8 vtl,
 				unsigned index, u64 *data),
 		  int writeback)
 {
@@ -10534,7 +10551,7 @@ static void vcpu_load_eoi_exitmap(struct kvm_vcpu *vcpu)
 	if (to_hv_vcpu(vcpu)) {
 		bitmap_or((ulong *)eoi_exit_bitmap,
 			  vcpu->arch.ioapic_handled_vectors,
-			  to_hv_synic(vcpu)->vec_bitmap, 256);
+			  to_hv_synic(vcpu, get_active_vtl(vcpu))->vec_bitmap, 256);
 		static_call_cond(kvm_x86_load_eoi_exitmap)(vcpu, eoi_exit_bitmap);
 		return;
 	}
@@ -12102,6 +12119,7 @@ void kvm_vcpu_reset(struct kvm_vcpu *vcpu, bool init_event)
 	struct kvm_cpuid_entry2 *cpuid_0x1;
 	unsigned long old_cr0 = kvm_read_cr0(vcpu);
 	unsigned long new_cr0;
+	u8 vtl = vcpu->kvm->arch.hyperv.hv_enable_vsm ? get_active_vtl(vcpu) : 0;
 
 	/*
 	 * Several of the "set" flows, e.g. ->set_cr0(), read other registers
@@ -12180,7 +12198,7 @@ void kvm_vcpu_reset(struct kvm_vcpu *vcpu, bool init_event)
 						  MSR_IA32_MISC_ENABLE_BTS_UNAVAIL;
 
 		__kvm_set_xcr(vcpu, 0, XFEATURE_MASK_FP);
-		__kvm_set_msr(vcpu, MSR_IA32_XSS, 0, true);
+		__kvm_set_msr(vcpu, vtl, MSR_IA32_XSS, 0, true);
 	}
 
 	/* All GPRs except RDX (handled below) are zeroed on RESET/INIT. */

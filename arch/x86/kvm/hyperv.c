@@ -220,7 +220,7 @@ static struct kvm_vcpu_hv_synic *synic_get(struct kvm *kvm, u32 vpidx)
 	vcpu = get_vcpu_by_vpidx(kvm, vpidx);
 	if (!vcpu || !to_hv_vcpu(vcpu))
 		return NULL;
-	synic = to_hv_synic(vcpu);
+	synic = to_hv_synic(vcpu, get_active_vtl(vcpu));
 	return (synic->active) ? synic : NULL;
 }
 
@@ -521,7 +521,7 @@ int kvm_hv_synic_set_irq(struct kvm *kvm, u32 vpidx, u32 sint)
 
 void kvm_hv_synic_send_eoi(struct kvm_vcpu *vcpu, int vector)
 {
-	struct kvm_vcpu_hv_synic *synic = to_hv_synic(vcpu);
+	struct kvm_vcpu_hv_synic *synic = to_hv_synic(vcpu, get_active_vtl(vcpu));
 	int i;
 
 	trace_kvm_hv_synic_send_eoi(vcpu->vcpu_id, vector);
@@ -711,7 +711,7 @@ static int stimer_set_config(struct kvm_vcpu_hv_stimer *stimer, u64 config,
 		old_config = {.as_uint64 = stimer->config.as_uint64};
 	struct kvm_vcpu *vcpu = hv_stimer_to_vcpu(stimer);
 	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
-	struct kvm_vcpu_hv_synic *synic = to_hv_synic(vcpu);
+	struct kvm_vcpu_hv_synic *synic = stimer_to_synic(stimer);
 
 	if (!synic->active && (!host || config))
 		return 1;
@@ -739,8 +739,7 @@ static int stimer_set_config(struct kvm_vcpu_hv_stimer *stimer, u64 config,
 static int stimer_set_count(struct kvm_vcpu_hv_stimer *stimer, u64 count,
 			    bool host)
 {
-	struct kvm_vcpu *vcpu = hv_stimer_to_vcpu(stimer);
-	struct kvm_vcpu_hv_synic *synic = to_hv_synic(vcpu);
+	struct kvm_vcpu_hv_synic *synic = stimer_to_synic(stimer);
 
 	if (!synic->active && (!host || count))
 		return 1;
@@ -1594,7 +1593,7 @@ static u64 get_vsm_code_page_offsets(struct kvm_vcpu *vcpu)
 			hv->vsm_code_page_offsets32.as_u64);
 }
 
-static int kvm_hv_set_msr_pw(struct kvm_vcpu *vcpu, u32 msr, u64 data,
+static int kvm_hv_set_msr_pw(struct kvm_vcpu *vcpu, u8 vtl, u32 msr, u64 data,
 			     bool host)
 {
 	struct kvm *kvm = vcpu->kvm;
@@ -1605,10 +1604,10 @@ static int kvm_hv_set_msr_pw(struct kvm_vcpu *vcpu, u32 msr, u64 data,
 
 	switch (msr) {
 	case HV_X64_MSR_GUEST_OS_ID:
-		hv->vtl[get_active_vtl(vcpu)].hv_guest_os_id = data;
+		hv->vtl[vtl].hv_guest_os_id = data;
 		/* setting guest os id to zero disables hypercall page */
 		if (!data)
-			hv->vtl[get_active_vtl(vcpu)].hv_hypercall &= ~HV_X64_MSR_HYPERCALL_ENABLE;
+			hv->vtl[vtl].hv_hypercall &= ~HV_X64_MSR_HYPERCALL_ENABLE;
 		break;
 	case HV_X64_MSR_HYPERCALL: {
 		u8 instructions[0x30];
@@ -1616,10 +1615,10 @@ static int kvm_hv_set_msr_pw(struct kvm_vcpu *vcpu, u32 msr, u64 data,
 		u64 addr;
 
 		/* if guest os id is not set hypercall should remain disabled */
-		if (!hv->vtl[get_active_vtl(vcpu)].hv_guest_os_id)
+		if (!hv->vtl[vtl].hv_guest_os_id)
 			break;
 		if (!(data & HV_X64_MSR_HYPERCALL_ENABLE)) {
-			hv->vtl[get_active_vtl(vcpu)].hv_hypercall = data;
+			hv->vtl[vtl].hv_hypercall = data;
 			break;
 		}
 
@@ -1720,22 +1719,22 @@ static int kvm_hv_set_msr_pw(struct kvm_vcpu *vcpu, u32 msr, u64 data,
 		addr = data & HV_X64_MSR_HYPERCALL_PAGE_ADDRESS_MASK;
 		if (kvm_vcpu_write_guest(vcpu, addr, instructions, i))
 			return 1;
-		hv->vtl[get_active_vtl(vcpu)].hv_hypercall = data;
+		hv->vtl[vtl].hv_hypercall = data;
 		break;
 	}
 	case HV_X64_MSR_REFERENCE_TSC:
-		hv->vtl[get_active_vtl(vcpu)].hv_tsc_page = data;
+		hv->vtl[vtl].hv_tsc_page = data;
 		if (data & HV_X64_MSR_TSC_REFERENCE_ENABLE) {
-			set_bit(get_active_vtl(vcpu), &hv->ref_tsc_vtls);
+			set_bit(vtl, &hv->ref_tsc_vtls);
 			if (!host)
-				hv->vtl[get_active_vtl(vcpu)].hv_tsc_page_status = HV_TSC_PAGE_GUEST_CHANGED;
+				hv->vtl[vtl].hv_tsc_page_status = HV_TSC_PAGE_GUEST_CHANGED;
 			else
-				hv->vtl[get_active_vtl(vcpu)].hv_tsc_page_status = HV_TSC_PAGE_HOST_CHANGED;
+				hv->vtl[vtl].hv_tsc_page_status = HV_TSC_PAGE_HOST_CHANGED;
 
 			kvm_make_request(KVM_REQ_MASTERCLOCK_UPDATE, vcpu);
 		} else {
-			hv->vtl[get_active_vtl(vcpu)].hv_tsc_page_status = HV_TSC_PAGE_UNSET;
-			clear_bit(get_active_vtl(vcpu), &hv->ref_tsc_vtls);
+			hv->vtl[vtl].hv_tsc_page_status = HV_TSC_PAGE_UNSET;
+			clear_bit(vtl, &hv->ref_tsc_vtls);
 		}
 		break;
 	case HV_X64_MSR_CRASH_P0 ... HV_X64_MSR_CRASH_P4:
@@ -1812,7 +1811,7 @@ static u64 current_task_runtime_100ns(void)
 	return div_u64(utime + stime, 100);
 }
 
-static int kvm_hv_set_msr(struct kvm_vcpu *vcpu, u32 msr, u64 data, bool host)
+static int kvm_hv_set_msr(struct kvm_vcpu *vcpu, u8 vtl, u32 msr, u64 data, bool host)
 {
 	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
 
@@ -1845,7 +1844,7 @@ static int kvm_hv_set_msr(struct kvm_vcpu *vcpu, u32 msr, u64 data, bool host)
 		break;
 	}
 	case HV_X64_MSR_VP_ASSIST_PAGE:
-		return set_vp_assist_page(vcpu, data, get_active_vtl(vcpu));
+		return set_vp_assist_page(vcpu, data, vtl);
 	case HV_X64_MSR_EOI:
 		return kvm_hv_vapic_msr_write(vcpu, APIC_EOI, data);
 	case HV_X64_MSR_ICR:
@@ -1863,14 +1862,14 @@ static int kvm_hv_set_msr(struct kvm_vcpu *vcpu, u32 msr, u64 data, bool host)
 	case HV_X64_MSR_SIMP:
 	case HV_X64_MSR_EOM:
 	case HV_X64_MSR_SINT0 ... HV_X64_MSR_SINT15:
-		return synic_set_msr(to_hv_synic(vcpu), msr, data, host);
+		return synic_set_msr(to_hv_synic(vcpu, vtl), msr, data, host);
 	case HV_X64_MSR_STIMER0_CONFIG:
 	case HV_X64_MSR_STIMER1_CONFIG:
 	case HV_X64_MSR_STIMER2_CONFIG:
 	case HV_X64_MSR_STIMER3_CONFIG: {
 		int timer_index = (msr - HV_X64_MSR_STIMER0_CONFIG)/2;
 
-		return stimer_set_config(to_hv_stimer(vcpu, timer_index),
+		return stimer_set_config(to_hv_stimer(vcpu, timer_index, vtl),
 					 data, host);
 	}
 	case HV_X64_MSR_STIMER0_COUNT:
@@ -1879,7 +1878,7 @@ static int kvm_hv_set_msr(struct kvm_vcpu *vcpu, u32 msr, u64 data, bool host)
 	case HV_X64_MSR_STIMER3_COUNT: {
 		int timer_index = (msr - HV_X64_MSR_STIMER0_COUNT)/2;
 
-		return stimer_set_count(to_hv_stimer(vcpu, timer_index),
+		return stimer_set_count(to_hv_stimer(vcpu, timer_index, vtl),
 					data, host);
 	}
 	case HV_X64_MSR_TSC_FREQUENCY:
@@ -1896,7 +1895,7 @@ static int kvm_hv_set_msr(struct kvm_vcpu *vcpu, u32 msr, u64 data, bool host)
 	return 0;
 }
 
-static int kvm_hv_get_msr_pw(struct kvm_vcpu *vcpu, u32 msr, u64 *pdata,
+static int kvm_hv_get_msr_pw(struct kvm_vcpu *vcpu, u8 vtl, u32 msr, u64 *pdata,
 			     bool host)
 {
 	u64 data = 0;
@@ -1908,16 +1907,16 @@ static int kvm_hv_get_msr_pw(struct kvm_vcpu *vcpu, u32 msr, u64 *pdata,
 
 	switch (msr) {
 	case HV_X64_MSR_GUEST_OS_ID:
-		data = hv->vtl[get_active_vtl(vcpu)].hv_guest_os_id;
+		data = hv->vtl[vtl].hv_guest_os_id;
 		break;
 	case HV_X64_MSR_HYPERCALL:
-		data = hv->vtl[get_active_vtl(vcpu)].hv_hypercall;
+		data = hv->vtl[vtl].hv_hypercall;
 		break;
 	case HV_X64_MSR_TIME_REF_COUNT:
 		data = get_time_ref_counter(kvm);
 		break;
 	case HV_X64_MSR_REFERENCE_TSC:
-		data = hv->vtl[get_active_vtl(vcpu)].hv_tsc_page;
+		data = hv->vtl[vtl].hv_tsc_page;
 		break;
 	case HV_X64_MSR_CRASH_P0 ... HV_X64_MSR_CRASH_P4:
 		return kvm_hv_msr_get_crash_data(kvm,
@@ -1952,7 +1951,7 @@ static int kvm_hv_get_msr_pw(struct kvm_vcpu *vcpu, u32 msr, u64 *pdata,
 	return 0;
 }
 
-static int kvm_hv_get_msr(struct kvm_vcpu *vcpu, u32 msr, u64 *pdata,
+static int kvm_hv_get_msr(struct kvm_vcpu *vcpu, u8 vtl, u32 msr, u64 *pdata,
 			  bool host)
 {
 	u64 data = 0;
@@ -1972,7 +1971,7 @@ static int kvm_hv_get_msr(struct kvm_vcpu *vcpu, u32 msr, u64 *pdata,
 	case HV_X64_MSR_TPR:
 		return kvm_hv_vapic_msr_read(vcpu, APIC_TASKPRI, pdata);
 	case HV_X64_MSR_VP_ASSIST_PAGE:
-		data = get_vp_assist_page(vcpu, get_active_vtl(vcpu));
+		data = get_vp_assist_page(vcpu, vtl);
 		break;
 	case HV_X64_MSR_VP_RUNTIME:
 		data = current_task_runtime_100ns() + hv_vcpu->runtime_offset;
@@ -1983,14 +1982,14 @@ static int kvm_hv_get_msr(struct kvm_vcpu *vcpu, u32 msr, u64 *pdata,
 	case HV_X64_MSR_SIMP:
 	case HV_X64_MSR_EOM:
 	case HV_X64_MSR_SINT0 ... HV_X64_MSR_SINT15:
-		return synic_get_msr(to_hv_synic(vcpu), msr, pdata, host);
+		return synic_get_msr(to_hv_synic(vcpu, vtl), msr, pdata, host);
 	case HV_X64_MSR_STIMER0_CONFIG:
 	case HV_X64_MSR_STIMER1_CONFIG:
 	case HV_X64_MSR_STIMER2_CONFIG:
 	case HV_X64_MSR_STIMER3_CONFIG: {
 		int timer_index = (msr - HV_X64_MSR_STIMER0_CONFIG)/2;
 
-		return stimer_get_config(to_hv_stimer(vcpu, timer_index),
+		return stimer_get_config(to_hv_stimer(vcpu, timer_index, vtl),
 					 pdata);
 	}
 	case HV_X64_MSR_STIMER0_COUNT:
@@ -1999,7 +1998,7 @@ static int kvm_hv_get_msr(struct kvm_vcpu *vcpu, u32 msr, u64 *pdata,
 	case HV_X64_MSR_STIMER3_COUNT: {
 		int timer_index = (msr - HV_X64_MSR_STIMER0_COUNT)/2;
 
-		return stimer_get_count(to_hv_stimer(vcpu, timer_index),
+		return stimer_get_count(to_hv_stimer(vcpu, timer_index, vtl),
 					pdata);
 	}
 	case HV_X64_MSR_TSC_FREQUENCY:
@@ -2016,7 +2015,7 @@ static int kvm_hv_get_msr(struct kvm_vcpu *vcpu, u32 msr, u64 *pdata,
 	return 0;
 }
 
-int kvm_hv_set_msr_common(struct kvm_vcpu *vcpu, u32 msr, u64 data, bool host)
+int kvm_hv_set_msr_common(struct kvm_vcpu *vcpu, u8 vtl, u32 msr, u64 data, bool host)
 {
 	struct kvm_hv *hv = to_kvm_hv(vcpu->kvm);
 
@@ -2030,14 +2029,14 @@ int kvm_hv_set_msr_common(struct kvm_vcpu *vcpu, u32 msr, u64 data, bool host)
 		int r;
 
 		mutex_lock(&hv->hv_lock);
-		r = kvm_hv_set_msr_pw(vcpu, msr, data, host);
+		r = kvm_hv_set_msr_pw(vcpu, vtl, msr, data, host);
 		mutex_unlock(&hv->hv_lock);
 		return r;
 	} else
-		return kvm_hv_set_msr(vcpu, msr, data, host);
+		return kvm_hv_set_msr(vcpu, vtl, msr, data, host);
 }
 
-int kvm_hv_get_msr_common(struct kvm_vcpu *vcpu, u32 msr, u64 *pdata, bool host)
+int kvm_hv_get_msr_common(struct kvm_vcpu *vcpu, u8 vtl, u32 msr, u64 *pdata, bool host)
 {
 	struct kvm_hv *hv = to_kvm_hv(vcpu->kvm);
 
@@ -2051,11 +2050,11 @@ int kvm_hv_get_msr_common(struct kvm_vcpu *vcpu, u32 msr, u64 *pdata, bool host)
 		int r;
 
 		mutex_lock(&hv->hv_lock);
-		r = kvm_hv_get_msr_pw(vcpu, msr, pdata, host);
+		r = kvm_hv_get_msr_pw(vcpu, vtl, msr, pdata, host);
 		mutex_unlock(&hv->hv_lock);
 		return r;
 	} else
-		return kvm_hv_get_msr(vcpu, msr, pdata, host);
+		return kvm_hv_get_msr(vcpu, vtl, msr, pdata, host);
 }
 
 static u64 get_vp_register(u32 name,
@@ -3744,7 +3743,7 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 		fallthrough;	/* maybe userspace knows this conn_id */
 	case HVCALL_POST_MESSAGE:
 		/* don't bother userspace if it has no way to handle it */
-		if (unlikely(hc.rep || hc.var_cnt || !to_hv_synic(vcpu)->active)) {
+		if (unlikely(hc.rep || hc.var_cnt || !to_hv_synic(vcpu, get_active_vtl(vcpu))->active)) {
 			ret = HV_STATUS_INVALID_HYPERCALL_INPUT;
 			break;
 		}
