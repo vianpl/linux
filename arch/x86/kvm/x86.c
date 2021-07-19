@@ -2021,14 +2021,19 @@ static int kvm_msr_user_space(struct kvm_vcpu *vcpu, u32 index,
 			      int (*completion)(struct kvm_vcpu *vcpu),
 			      int r)
 {
+	u8 vtl = 0;
 	u64 msr_reason = kvm_msr_reason(r);
 
 	/* Check if the user wanted to know about this MSR fault */
 	if (!(vcpu->kvm->arch.user_space_msr_mask & msr_reason))
 		return 0;
 
+	if (vcpu->kvm->arch.hyperv.hv_enable_vsm)
+		vtl = get_active_vtl(vcpu);
+
 	vcpu->run->exit_reason = exit_reason;
 	vcpu->run->msr.error = 0;
+	vcpu->run->msr.vtl = vtl;
 	memset(vcpu->run->msr.pad, 0, sizeof(vcpu->run->msr.pad));
 	vcpu->run->msr.reason = msr_reason;
 	vcpu->run->msr.index = index;

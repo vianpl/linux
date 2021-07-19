@@ -478,7 +478,8 @@ struct kvm_run {
 		/* KVM_EXIT_X86_RDMSR / KVM_EXIT_X86_WRMSR */
 		struct {
 			__u8 error; /* user -> kernel */
-			__u8 pad[7];
+			__u8 vtl; /* kernel -> user */
+			__u8 pad[6];
 #define KVM_MSR_EXIT_REASON_INVAL	(1 << 0)
 #define KVM_MSR_EXIT_REASON_UNKNOWN	(1 << 1)
 #define KVM_MSR_EXIT_REASON_FILTER	(1 << 2)
