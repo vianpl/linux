@@ -3187,6 +3187,19 @@ static bool do_vtl_switch(struct kvm_vcpu *vcpu, int vtl)
 	return true;
 }
 
+static bool set_vtl_entry_reason(struct kvm_vcpu *vcpu, enum hv_vtl_entry_reason reason)
+{
+	if (kvm_hv_assist_page_enabled(vcpu)) {
+		struct hv_vp_vtl_control vtl_control = {0};
+		vtl_control.vtl_entry_reason = reason;
+		if (unlikely(!hv_write_vtl_control(vcpu, &vtl_control))) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
 static bool kvm_hv_vtl_call(struct kvm_vcpu *vcpu)
 {
 	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
@@ -3209,20 +3222,40 @@ static bool kvm_hv_vtl_call(struct kvm_vcpu *vcpu)
 	if (!do_vtl_switch(vcpu, next_vtl))
 		return false;
 
-	/* After setting a new active VTL, communicate an entry reason through the VTL control
-	 * in VP assist page (keeping in mind that it might not be enabled). */
-	if (kvm_hv_assist_page_enabled(vcpu)) {
-		struct hv_vp_vtl_control vtl_control = {0};
-		vtl_control.vtl_entry_reason = HV_VTL_ENTRY_VTL_CALL;
-		if (!hv_write_vtl_control(vcpu, &vtl_control)) {
-			/* Revert the vtl switch. Although guest will get a #UD after we return an error,
-			 * it is likely better to get a #UD on current VTL's vmcall rather than VTL1 entry */
-			do_vtl_switch(vcpu, curr_vtl);
-			return false;
-		}
+	if (!set_vtl_entry_reason(vcpu, HV_VTL_ENTRY_VTL_CALL)) {
+		/* revert the vtl switch. although guest will get a #ud after we return an error,
+		 * it is likely better to get a #ud on current vtl's vmcall rather than vtl1 entry */
+		do_vtl_switch(vcpu, curr_vtl);
+		return false;
 	}
 
 	return true;
+}
+
+/* External VTL call entry for timer events */
+void kvm_hv_vtl_interrupt(struct kvm_vcpu *vcpu, u8 vtl)
+{
+	if (vtl <= get_active_vtl(vcpu)) {
+		pr_warn("Trying to do a VTL interrupt into VTL %u <= current VTL %u\n",
+			   vtl, get_active_vtl(vcpu));
+		return;
+	}
+
+	trace_kvm_hv_vtl_interrupt(to_hv_vcpu(vcpu)->vp_index, get_active_vtl(vcpu), vtl);
+
+	if (!do_vtl_switch(vcpu, vtl))
+		goto inject_ud;
+
+	if (!set_vtl_entry_reason(vcpu, HV_VTL_ENTRY_INTERRUPT)) {
+		/* As opposed to VTL calls, it is better to inject UD at the interrupt entry
+		 * and not revert the switch */
+		goto inject_ud;
+	}
+
+	return;
+
+inject_ud:
+	kvm_queue_exception(vcpu, UD_VECTOR);
 }
 
 static bool kvm_hv_vtl_return(struct kvm_vcpu *vcpu)

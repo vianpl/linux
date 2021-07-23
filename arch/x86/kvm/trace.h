@@ -1768,6 +1768,26 @@ TRACE_EVENT(kvm_hv_vtl_call,
 		  __entry->active_vtl, __entry->next_vtl)
 );
 
+TRACE_EVENT(kvm_hv_vtl_interrupt,
+	TP_PROTO(u32 vp_index, u8 active_vtl, u8 next_vtl),
+	TP_ARGS(vp_index, active_vtl, next_vtl),
+
+	TP_STRUCT__entry(
+		__field(u32, vp_index)
+		__field(u8, active_vtl)
+		__field(u8, next_vtl)
+	),
+
+	TP_fast_assign(
+		__entry->vp_index = vp_index;
+		__entry->active_vtl = active_vtl;
+		__entry->next_vtl = next_vtl;
+	),
+
+	TP_printk("vp index %u, active vtl %u, next vtl %u",
+		  __entry->vp_index, __entry->active_vtl, __entry->next_vtl)
+);
+
 TRACE_EVENT(kvm_hv_vtl_return,
 	TP_PROTO(u8 active_vtl, u8 prev_vtl, u64 ctl),
 	TP_ARGS(active_vtl, prev_vtl, ctl),

@@ -253,4 +253,14 @@ static inline int kvm_hv_verify_vp_assist(struct kvm_vcpu *vcpu)
 
 int kvm_hv_vcpu_flush_tlb(struct kvm_vcpu *vcpu);
 
+/**
+ * Perform a VTL interrupt and switch into a higher VTL.
+ *
+ * Given VTL should be higher than the active vcpu VTL, otherwise it is a noop.
+ * This will lead to vcpu loading per-VTL state and switching local apics.
+ * On failure implementation will inject #UD on this vcpu (as per TLFS).
+ * Must be called from vcpu thread, remote switched are not supported.
+ */
+void kvm_hv_vtl_interrupt(struct kvm_vcpu *vcpu, u8 vtl);
+
 #endif
