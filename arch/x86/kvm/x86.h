@@ -384,6 +384,8 @@ static inline void kvm_pr_unimpl_rdmsr(struct kvm_vcpu *vcpu, u32 msr)
 		vcpu_unimpl(vcpu, "Unhandled RDMSR(0x%x)\n", msr);
 }
 
+extern int lapic_timer_advance_ns;
+
 static inline u64 nsec_to_cycles(struct kvm_vcpu *vcpu, u64 nsec)
 {
 	return pvclock_scale_delta(nsec, vcpu->arch.virtual_tsc_mult,

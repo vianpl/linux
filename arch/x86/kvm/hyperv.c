@@ -894,6 +894,10 @@ void kvm_hv_process_stimers(struct kvm_vcpu *vcpu)
 static void hv_vcpu_vtl_uninit(struct kvm_vcpu *vcpu, u8 vtl_num)
 {
 	struct kvm_vcpu_hv_vtl *vtl = &to_hv_vcpu(vcpu)->vtl[vtl_num];
+
+	/* Active apic is freed by generic KVM code */
+	if (vtl_num != get_active_vtl(vcpu))
+		kvm_free_lapic(vtl->apic);
 	mutex_destroy(&vtl->lock);
 }
 
@@ -1051,6 +1055,12 @@ int kvm_hv_vcpu_init(struct kvm_vcpu *vcpu)
 	hv_vcpu->vsm_vp_status.active_mbec_enabled = 0;
 	for (i = 0; i < HV_NUM_VTLS; ++i)
 		hv_vcpu_vtl_init(vcpu, i);
+
+	/* Set default apic for VTL0 */
+	if (lapic_in_kernel(vcpu)) {
+		BUG_ON(!vcpu->arch.apic);
+		hv_vcpu->vtl[0].apic = vcpu->arch.apic;
+	}
 
 	synic_init(&hv_vcpu->synic);
 
@@ -2080,6 +2090,9 @@ static u64 get_vp_register(u32 name,
 	case HV_X64_REGISTER_TSC_AUX:
 		val->low = vtl->msr_tsc_aux;
 		break;
+	case HV_X64_REGISTER_APIC_BASE:
+		val->low = (vtl->apic ? vtl->apic->apic_base : (u64)-1);
+		break;
 	case HV_REGISTER_VSM_CAPABILITIES:
 		val->low = hv->vsm_capabilities.as_u64;
 		break;
@@ -2964,6 +2977,7 @@ static u64 kvm_hv_enable_vp_vtl(struct kvm_vcpu *requestor_vcpu, struct kvm_hv_h
 	struct kvm_hv *hv = &requestor_vcpu->kvm->arch.hyperv;
 	struct kvm_vcpu *target_vcpu = NULL;
 	struct kvm_vcpu_hv *target_vcpu_hv = NULL;
+	struct kvm_vcpu_hv_vtl *target_vtl = NULL;
 	struct hv_enable_vp_vtl input;
 	u8 highest_vp_enabled_vtl;
 
@@ -3010,12 +3024,34 @@ static u64 kvm_hv_enable_vp_vtl(struct kvm_vcpu *requestor_vcpu, struct kvm_hv_h
 	    get_active_vtl(requestor_vcpu) != highest_vp_enabled_vtl)
 		return HV_STATUS_INVALID_PARAMETER;
 
-	memcpy(&target_vcpu_hv->vtl[input.target_vtl.target_vtl].ctx, &input.vp_context, sizeof(input.vp_context));
+	target_vtl = &target_vcpu_hv->vtl[input.target_vtl.target_vtl];
+
+	/* Create a new apic context. Since we are always creating secondary lapics,
+	 * make sure this vcpu is using one to begin with. */
+	if (lapic_in_kernel(target_vcpu)) {
+		target_vtl->apic = kvm_create_lapic(target_vcpu, lapic_timer_advance_ns);
+		if (!target_vtl->apic)
+			return HV_STATUS_INSUFFICIENT_MEMORY;
+
+		kvm_lapic_reset(target_vtl->apic, false);
+		kvm_lapic_set_vtl(target_vtl->apic, input.target_vtl.target_vtl);
+
+		/* Windows Server 2019 guest expects VTL1+ apics to be sw-enabled by the fact
+		 * that they never try to write anything to SPIV before attempting to send IPIs.
+		 * So enable a new apic for them. If they ever change their mind, they will set
+		 * their own SPIV value */
+		kvm_lapic_reg_write(target_vtl->apic, APIC_SPIV, 0x1ff);
+	} else {
+		target_vtl->tpr = 0;
+		target_vtl->apic_base = APIC_DEFAULT_PHYS_BASE | MSR_IA32_APICBASE_ENABLE;
+	}
+
+	memcpy(&target_vtl->ctx, &input.vp_context, sizeof(input.vp_context));
 
 	/* Propagate gs.base and fs.base to initial values for MSR_GS_BASE and MSR_FS_BASE,
 	 * which are isolated per-VTL but don't have their own fields in initial VP context. */
-	target_vcpu_hv->vtl[input.target_vtl.target_vtl].msr_gsbase = input.vp_context.gs.base;
-	target_vcpu_hv->vtl[input.target_vtl.target_vtl].msr_fsbase = input.vp_context.fs.base;
+	target_vtl->msr_gsbase = input.vp_context.gs.base;
+	target_vtl->msr_fsbase = input.vp_context.fs.base;
 
 	hv->vtl_enabled_for_vps |= (1u << input.target_vtl.target_vtl);
 	target_vcpu_hv->vsm_vp_status.enabled_vtl_set |= (1ul << input.target_vtl.target_vtl);
@@ -3082,6 +3118,9 @@ static bool store_vtl(struct kvm_vcpu *vcpu, struct kvm_vcpu_hv_vtl* vtl)
 	vtl->ctx.cr4 = sregs.cr4;
 	vtl->ctx.efer = sregs.efer;
 
+	vtl->tpr = sregs.cr8;
+	vtl->apic_base = sregs.apic_base;
+
 	kvm_get_dr(vcpu, 7, &vtl->dr7);
 
 	ret |= kvm_get_msr(vcpu, MSR_KERNEL_GS_BASE, &vtl->msr_kernel_gsbase);
@@ -3136,9 +3175,15 @@ static bool load_vtl(struct kvm_vcpu *vcpu, struct kvm_vcpu_hv_vtl *vtl)
 	/* CR2 is not isolated per-VTL */
 	sregs.cr2 = vcpu->arch.cr2;
 
-	/* We don't have apic isolation yet, so TPR and APIC_BASE stay the same for now */
-	sregs.cr8 = kvm_get_cr8(vcpu);
-	sregs.apic_base = kvm_get_apic_base(vcpu);
+	if (lapic_in_kernel(vcpu)) {
+		/* TPR and APIC_BASE will be reset later on when we do an apic switch if we have an in-kernel lapic,
+		 * so use current pre-switch values for set_sregs to do a noop essentially. */
+		sregs.cr8 = kvm_get_cr8(vcpu);
+		sregs.apic_base = kvm_get_apic_base(vcpu);
+	} else {
+		sregs.cr8 = vtl->tpr;
+		sregs.apic_base = vtl->apic_base;
+	}
 
 	ret |= kvm_set_sregs(vcpu, &sregs);
 
@@ -3160,6 +3205,9 @@ static bool load_vtl(struct kvm_vcpu *vcpu, struct kvm_vcpu_hv_vtl *vtl)
 	kvm_rip_write(vcpu, vtl->ctx.rip);
 	kvm_rsp_write(vcpu, vtl->ctx.rsp);
 	kvm_set_rflags(vcpu, vtl->ctx.rflags | X86_EFLAGS_FIXED);
+
+	if (lapic_in_kernel(vcpu))
+		kvm_set_effective_apic(vcpu, vtl->apic);
 
 	mutex_unlock(&vtl->lock);
 	return ret == 0;

@@ -638,6 +638,14 @@ struct kvm_vcpu_hv_vtl {
 	 * Does not exist for highest VTL possible */
 	union hv_register_vsm_vp_secure_vtl_config secure_vtl_config;
 	u64 vp_assist_page;
+
+	/* TPR and APIC_BASE values to switch in case we don't have in-kernel lapic.
+	 * Ignored in case we do have an in-kernel lapic, because lapic device model keeps the values. */
+	u64 tpr;
+	u64 apic_base;
+
+	/* VTL apic context */
+	struct kvm_lapic *apic;
 };
 
 /* The maximum number of entries on the TLB flush fifo. */

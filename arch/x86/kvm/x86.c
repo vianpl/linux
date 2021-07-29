@@ -166,7 +166,7 @@ module_param(tsc_tolerance_ppm, uint, S_IRUGO | S_IWUSR);
  * advancement entirely.  Any other value is used as-is and disables adaptive
  * tuning, i.e. allows privileged userspace to set an exact advancement time.
  */
-static int __read_mostly lapic_timer_advance_ns = -1;
+int __read_mostly lapic_timer_advance_ns = -1;
 module_param(lapic_timer_advance_ns, int, S_IRUGO | S_IWUSR);
 
 static bool __read_mostly vector_hashing = true;
