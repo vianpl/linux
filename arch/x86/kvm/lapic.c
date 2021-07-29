@@ -1881,6 +1881,13 @@ static void apic_timer_expired(struct kvm_lapic *apic, bool from_timer_fn)
 
 	if (kvm_use_posted_timer_interrupt(vcpu)) {
 		/*
+		 * TODO: Hyper-V: APICv/AVIC is disabled when SynIC is enabled, so
+		 *       so we don't have to worry about this check firing for inactive apic.
+		 *       We will need to come back here if we want to make apicv work with SynIC.
+		 */
+		BUG_ON(!is_effective_apic(apic));
+
+		/*
 		 * Ensure the guest's timer has truly expired before posting an
 		 * interrupt.  Open code the relevant checks to avoid querying
 		 * lapic_timer_int_injected(), which will be false since the
