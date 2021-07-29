@@ -101,6 +101,13 @@ static __always_inline void kvm_lapic_set_reg64(struct kvm_lapic *apic,
 	__kvm_lapic_set_reg64(apic->regs, reg, val);
 }
 
+/* Is this apic the one that is currently effective for its vcpu? */
+static inline bool is_effective_apic(struct kvm_lapic *apic)
+{
+	struct kvm_vcpu *vcpu = apic->vcpu;
+	return vcpu->arch.apic == apic;
+}
+
 static inline int apic_test_vector(int vec, void *bitmap)
 {
 	return test_bit(VEC_POS(vec), (bitmap) + REG_POS(vec));
@@ -2667,7 +2674,6 @@ void kvm_lapic_reset(struct kvm_lapic *apic, bool init_event)
 	    kvm_check_has_quirk(vcpu->kvm, KVM_X86_QUIRK_LINT0_REENABLED))
 		kvm_lapic_set_reg(apic, APIC_LVT0,
 			     SET_APIC_DELIVERY_MODE(0, APIC_MODE_EXTINT));
-	apic_manage_nmi_watchdog(apic, kvm_lapic_get_reg(apic, APIC_LVT0));
 
 	kvm_apic_set_dfr(apic, 0xffffffffU);
 	apic_set_spiv(apic, 0xff);
@@ -2694,16 +2700,22 @@ void kvm_lapic_reset(struct kvm_lapic *apic, bool init_event)
 
 	apic->pv_eoi.msr_val = 0;
 	apic_update_ppr(apic);
-	if (apic->apicv_active) {
-		static_call_cond(kvm_x86_apicv_post_state_restore)(vcpu);
-		static_call_cond(kvm_x86_hwapic_irr_update)(vcpu, -1);
-		static_call_cond(kvm_x86_hwapic_isr_update)(-1);
+
+	/* Only commit global changes if apic is the effective one for this vcpu */
+	if (is_effective_apic(apic)) {
+		kvm_lapic_set_base(vcpu, apic->apic_base);
+		apic_manage_nmi_watchdog(apic, kvm_lapic_get_reg(apic, APIC_LVT0));
+		apic_update_ppr(apic);
+		if (apic->apicv_active) {
+			static_call_cond(kvm_x86_apicv_post_state_restore)(vcpu);
+			static_call_cond(kvm_x86_hwapic_irr_update)(vcpu, -1);
+			static_call_cond(kvm_x86_hwapic_isr_update)(-1);
+		}
+
+		vcpu->arch.apic_arb_prio = 0;
+		apic->apic_attention = 0;
+		kvm_recalculate_apic_map(vcpu->kvm);
 	}
-
-	vcpu->arch.apic_arb_prio = 0;
-	apic->apic_attention = 0;
-
-	kvm_recalculate_apic_map(vcpu->kvm);
 }
 
 /*
@@ -2814,6 +2826,49 @@ nomem_free_apic:
 	kfree(apic);
 nomem:
 	return NULL;
+}
+
+/* Hyper-V: switch to a different per-VTL apic on this vcpu */
+void kvm_set_effective_apic(struct kvm_vcpu *vcpu, struct kvm_lapic *apic)
+{
+	struct kvm_lapic *current_apic = vcpu->arch.apic;
+	vcpu->arch.apic = apic;
+
+	/* We expect to switch between 2 apics for the same vcpu */
+	BUG_ON(!current_apic || !apic);
+	BUG_ON(current_apic->vcpu != apic->vcpu);
+
+	/* Switch apic base value on vcpu */
+	current_apic->apic_base = vcpu->arch.apic_base;
+	kvm_lapic_set_base(vcpu, apic->apic_base);
+
+	/* Track vapics_in_nmi_mode */
+	if (current_apic->lvt0_in_nmi_mode ^ apic->lvt0_in_nmi_mode)
+		apic->lvt0_in_nmi_mode ?
+			atomic_inc(&apic->vcpu->kvm->arch.vapics_in_nmi_mode):
+			atomic_dec(&apic->vcpu->kvm->arch.vapics_in_nmi_mode);
+
+	/* Sync VMX/SVM vcpu context */
+	if (apic->apicv_active) {
+		static_call_cond(kvm_x86_apicv_post_state_restore)(vcpu);
+		static_call_cond(kvm_x86_hwapic_irr_update)(vcpu, apic_find_highest_irr(apic));
+		static_call_cond(kvm_x86_hwapic_isr_update)(apic_find_highest_isr(apic));
+	}
+
+	/* Refresh address of virtual apic page, if needed */
+	kvm_x86_ops.set_virtual_apic_mode(vcpu);
+
+	/* We specifically leave apic_arb_prio the same as before.
+	 * This is still the same vcpu, so arbitration logic shouldn't change */
+
+	/* Reinject pending timer, if we had one */
+	if (atomic_read(&apic->lapic_timer.pending) > 0) {
+		kvm_make_request(KVM_REQ_UNBLOCK, vcpu);
+		kvm_vcpu_kick(vcpu);
+	}
+
+	/* Force pending events check before reentering guest mode */
+	kvm_make_request(KVM_REQ_EVENT, vcpu);
 }
 
 int kvm_apic_has_interrupt(struct kvm_vcpu *vcpu)

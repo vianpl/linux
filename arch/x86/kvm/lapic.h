@@ -114,6 +114,7 @@ static inline void kvm_vcpu_free_apic(struct kvm_vcpu *vcpu)
 	vcpu->arch.apic = NULL;
 }
 
+void kvm_set_effective_apic(struct kvm_vcpu *vcpu, struct kvm_lapic *apic);
 int kvm_apic_has_interrupt(struct kvm_vcpu *vcpu);
 int kvm_apic_accept_pic_intr(struct kvm_vcpu *vcpu);
 int kvm_get_apic_interrupt(struct kvm_vcpu *vcpu);

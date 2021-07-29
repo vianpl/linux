@@ -6706,6 +6706,9 @@ void vmx_set_virtual_apic_mode(struct kvm_vcpu *vcpu)
 	}
 	secondary_exec_controls_set(vmx, sec_exec_control);
 
+	if (cpu_need_tpr_shadow(vcpu))
+		vmcs_write64(VIRTUAL_APIC_PAGE_ADDR, __pa(vcpu->arch.apic->regs));
+
 	vmx_update_msr_bitmap_x2apic(vcpu);
 }
 
