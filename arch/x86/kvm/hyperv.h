@@ -261,5 +261,6 @@ int kvm_hv_vcpu_flush_tlb(struct kvm_vcpu *vcpu);
  * Must be called from vcpu thread, remote switched are not supported.
  */
 void kvm_hv_vtl_interrupt(struct kvm_vcpu *vcpu, u8 vtl);
+void kvm_hv_deliver_intercept(struct kvm_vcpu *vcpu);
 
 #endif

@@ -37,6 +37,7 @@
 #include <asm/apicdef.h>
 #include <asm/mshyperv.h>
 #include <trace/events/kvm.h>
+#include <asm/processor-flags.h>
 
 #include "trace.h"
 #include "irq.h"
@@ -773,7 +774,7 @@ static int stimer_get_count(struct kvm_vcpu_hv_stimer *stimer, u64 *pcount)
 }
 
 static int synic_deliver_msg(struct kvm_vcpu_hv_synic *synic, u32 sint,
-			     struct hv_message *src_msg, bool no_retry)
+			     struct hv_message *src_msg, bool no_retry, bool overwrite)
 {
 	struct kvm_vcpu *vcpu = hv_synic_to_vcpu(synic);
 	int msg_off = offsetof(struct hv_message_page, sint_message[sint]);
@@ -799,7 +800,7 @@ static int synic_deliver_msg(struct kvm_vcpu_hv_synic *synic, u32 sint,
 	if (r < 0)
 		return r;
 
-	if (hv_hdr.message_type != HVMSG_NONE) {
+	if (!overwrite && hv_hdr.message_type != HVMSG_NONE) {
 		if (no_retry)
 			return 0;
 
@@ -846,7 +847,7 @@ static int stimer_send_msg(struct kvm_vcpu_hv_stimer *stimer)
 	payload->delivery_time = get_time_ref_counter(hv_synic_to_vcpu(synic)->kvm);
 	return synic_deliver_msg(synic,
 				 stimer->config.sintx, msg,
-				 no_retry);
+				 no_retry, false);
 }
 
 static int stimer_notify_direct(struct kvm_vcpu_hv_stimer *stimer)
@@ -3838,6 +3839,94 @@ inject_ud:
 	kvm_queue_exception(vcpu, UD_VECTOR);
 	return 1;
 }
+
+static void deliver_gpa_intercept(struct kvm_vcpu *vcpu, u8 target_vtl,
+				  u64 gpa, u64 gva, u8 access_type_mask)
+{
+	ulong cr0;
+	struct hv_message msg = { 0 };
+	struct hv_memory_intercept_message *intercept = (struct hv_memory_intercept_message *)msg.u.payload;
+	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
+	struct x86_exception e;
+	struct kvm_segment kvmseg;
+
+	if (target_vtl <= get_active_vtl(vcpu))
+		return;
+
+	pr_info("kvm_hv_deliver_intercept vcpu:%d, target_vtl:%d\n", hv_vcpu->vp_index, target_vtl);
+
+	msg.header.message_type = HVMSG_GPA_INTERCEPT;
+	msg.header.payload_size = sizeof(*intercept);
+
+	intercept->header.vp_index = hv_vcpu->vp_index;
+	intercept->header.instruction_length = vcpu->arch.exit_instruction_len;
+	intercept->header.access_type_mask = access_type_mask;
+	kvm_x86_ops.get_segment(vcpu, &kvmseg, VCPU_SREG_CS);
+	store_kvm_segment(&kvmseg, &intercept->header.cs);
+
+	cr0 = kvm_read_cr0(vcpu);
+	intercept->header.exec_state.cr0_pe = (cr0 & X86_CR0_PE);
+	intercept->header.exec_state.cr0_am = (cr0 & X86_CR0_AM);
+	intercept->header.exec_state.cpl = kvm_x86_ops.get_cpl(vcpu);
+	intercept->header.exec_state.efer_lma = is_long_mode(vcpu);
+	intercept->header.exec_state.debug_active = 0;
+	intercept->header.exec_state.interruption_pending = 0;
+	intercept->header.rip = kvm_rip_read(vcpu);
+	intercept->header.rflags = kvm_get_rflags(vcpu);
+
+	intercept->cache_type = HV_X64_CACHE_TYPE_WRITEBACK;
+	intercept->instruction_byte_count = vcpu->arch.exit_instruction_len;
+	if (intercept->instruction_byte_count > sizeof(intercept->instruction_bytes))
+		intercept->instruction_byte_count = sizeof(intercept->instruction_bytes);
+	intercept->memory_access_info.gva_valid = (gva != 0);
+	intercept->gva = gva;
+	intercept->gpa = gpa;
+	if (kvm_read_guest_virt(vcpu, kvm_rip_read(vcpu), intercept->instruction_bytes,
+				intercept->instruction_byte_count, &e))
+		goto inject_ud;
+	kvm_x86_ops.get_segment(vcpu, &kvmseg, VCPU_SREG_DS);
+	store_kvm_segment(&kvmseg, &intercept->ds);
+	kvm_x86_ops.get_segment(vcpu, &kvmseg, VCPU_SREG_SS);
+	store_kvm_segment(&kvmseg, &intercept->ss);
+	intercept->rax = kvm_rax_read(vcpu);
+	intercept->rcx = kvm_rcx_read(vcpu);
+	intercept->rdx = kvm_rdx_read(vcpu);
+	intercept->rbx = kvm_rbx_read(vcpu);
+	intercept->rsp = kvm_rsp_read(vcpu);
+	intercept->rbp = kvm_rbp_read(vcpu);
+	intercept->rsi = kvm_rsi_read(vcpu);
+	intercept->rdi = kvm_rdi_read(vcpu);
+	intercept->r8 = kvm_r8_read(vcpu);
+	intercept->r9 = kvm_r9_read(vcpu);
+	intercept->r10 = kvm_r10_read(vcpu);
+	intercept->r11 = kvm_r11_read(vcpu);
+	intercept->r12 = kvm_r12_read(vcpu);
+	intercept->r13 = kvm_r13_read(vcpu);
+	intercept->r14 = kvm_r14_read(vcpu);
+	intercept->r15 = kvm_r15_read(vcpu);
+
+	if (synic_deliver_msg(&hv_vcpu->vtl[target_vtl].synic, 0, &msg, true, true))
+		goto inject_ud;
+
+	return;
+
+inject_ud:
+	kvm_queue_exception(vcpu, UD_VECTOR);
+}
+
+void kvm_hv_deliver_intercept(struct kvm_vcpu *vcpu)
+{
+	struct kvm_vcpu_hv_intercept_info *info = &to_hv_vcpu(vcpu)->intercept_info;
+
+	switch (info->type) {
+	case HVMSG_GPA_INTERCEPT:
+		deliver_gpa_intercept(vcpu, info->target_vtl, info->gpa, info->gva, info->access);
+		break;
+	default:
+		pr_warn("Unknown exception\n");
+	}
+}
+EXPORT_SYMBOL_GPL(kvm_hv_deliver_intercept);
 
 static void hv_init_vsm(struct kvm_hv* hv)
 {

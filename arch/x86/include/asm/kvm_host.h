@@ -113,6 +113,7 @@
 	KVM_ARCH_REQ_FLAGS(31, KVM_REQUEST_WAIT | KVM_REQUEST_NO_WAKEUP)
 #define KVM_REQ_HV_TLB_FLUSH \
 	KVM_ARCH_REQ_FLAGS(32, KVM_REQUEST_WAIT | KVM_REQUEST_NO_WAKEUP)
+#define KVM_REQ_HV_INJECT_INTERCEPT	KVM_ARCH_REQ(33)
 
 #define CR0_RESERVED_BITS                                               \
 	(~(unsigned long)(X86_CR0_PE | X86_CR0_MP | X86_CR0_EM | X86_CR0_TS \
@@ -678,6 +679,14 @@ struct kvm_vcpu_hv_tlb_flush_fifo {
 	DECLARE_KFIFO(entries, u64, KVM_HV_TLB_FLUSH_FIFO_SIZE);
 };
 
+struct kvm_vcpu_hv_intercept_info {
+	int type;
+	u64 gpa;
+	u64 gva;
+	u8 target_vtl;
+	u8 access;
+};
+
 /* Hyper-V per vcpu emulation context */
 struct kvm_vcpu_hv {
 	struct kvm_vcpu *vcpu;
@@ -714,6 +723,8 @@ struct kvm_vcpu_hv {
 
 	struct kvm_vcpu_hv_vtl vtl[HV_NUM_VTLS];
 	union hv_register_vsm_vp_status vsm_vp_status;
+
+	struct kvm_vcpu_hv_intercept_info intercept_info;
 
 	/* Bitmap of VTLs which have their apics requesting attention */
 	unsigned long apic_pending_vtls;
@@ -988,6 +999,8 @@ struct kvm_vcpu_arch {
 
 	/* set at EPT violation at this point */
 	unsigned long exit_qualification;
+
+	u32 exit_instruction_len;
 
 	/* pv related host specific info */
 	struct {
