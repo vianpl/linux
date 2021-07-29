@@ -1766,9 +1766,9 @@ static bool lapic_timer_int_injected(struct kvm_vcpu *vcpu)
 	return false;
 }
 
-static inline void __wait_lapic_expire(struct kvm_vcpu *vcpu, u64 guest_cycles)
+static inline void __wait_lapic_expire(struct kvm_lapic *apic, u64 guest_cycles)
 {
-	u64 timer_advance_ns = vcpu->arch.apic->lapic_timer.timer_advance_ns;
+	u64 timer_advance_ns = apic->lapic_timer.timer_advance_ns;
 
 	/*
 	 * If the guest TSC is running at a different ratio than the host, then
@@ -1776,12 +1776,12 @@ static inline void __wait_lapic_expire(struct kvm_vcpu *vcpu, u64 guest_cycles)
 	 * that __delay() uses delay_tsc whenever the hardware has TSC, thus
 	 * always for VMX enabled hardware.
 	 */
-	if (vcpu->arch.tsc_scaling_ratio == kvm_caps.default_tsc_scaling_ratio) {
+	if (apic->vcpu->arch.tsc_scaling_ratio == kvm_caps.default_tsc_scaling_ratio) {
 		__delay(min(guest_cycles,
-			nsec_to_cycles(vcpu, timer_advance_ns)));
+			nsec_to_cycles(apic->vcpu, timer_advance_ns)));
 	} else {
 		u64 delay_ns = guest_cycles * 1000000ULL;
-		do_div(delay_ns, vcpu->arch.virtual_tsc_khz);
+		do_div(delay_ns, apic->vcpu->arch.virtual_tsc_khz);
 		ndelay(min_t(u32, delay_ns, timer_advance_ns));
 	}
 }
@@ -1815,29 +1815,28 @@ static inline void adjust_lapic_timer_advance(struct kvm_vcpu *vcpu,
 	apic->lapic_timer.timer_advance_ns = timer_advance_ns;
 }
 
-static void __kvm_wait_lapic_expire(struct kvm_vcpu *vcpu)
+static void __kvm_wait_lapic_expire(struct kvm_lapic *apic)
 {
-	struct kvm_lapic *apic = vcpu->arch.apic;
 	u64 guest_tsc, tsc_deadline;
 
 	tsc_deadline = apic->lapic_timer.expired_tscdeadline;
 	apic->lapic_timer.expired_tscdeadline = 0;
-	guest_tsc = kvm_read_l1_tsc(vcpu, rdtsc());
-	trace_kvm_wait_lapic_expire(vcpu->vcpu_id, guest_tsc - tsc_deadline);
+	guest_tsc = kvm_read_l1_tsc(apic->vcpu, rdtsc());
+	trace_kvm_wait_lapic_expire(apic->vcpu->vcpu_id, guest_tsc - tsc_deadline);
 
 	if (lapic_timer_advance_dynamic) {
-		adjust_lapic_timer_advance(vcpu, guest_tsc - tsc_deadline);
+		adjust_lapic_timer_advance(apic->vcpu, guest_tsc - tsc_deadline);
 		/*
 		 * If the timer fired early, reread the TSC to account for the
 		 * overhead of the above adjustment to avoid waiting longer
 		 * than is necessary.
 		 */
 		if (guest_tsc < tsc_deadline)
-			guest_tsc = kvm_read_l1_tsc(vcpu, rdtsc());
+			guest_tsc = kvm_read_l1_tsc(apic->vcpu, rdtsc());
 	}
 
 	if (guest_tsc < tsc_deadline)
-		__wait_lapic_expire(vcpu, tsc_deadline - guest_tsc);
+		__wait_lapic_expire(apic, tsc_deadline - guest_tsc);
 }
 
 void kvm_wait_lapic_expire(struct kvm_vcpu *vcpu)
@@ -1846,7 +1845,7 @@ void kvm_wait_lapic_expire(struct kvm_vcpu *vcpu)
 	    vcpu->arch.apic->lapic_timer.expired_tscdeadline &&
 	    vcpu->arch.apic->lapic_timer.timer_advance_ns &&
 	    lapic_timer_int_injected(vcpu))
-		__kvm_wait_lapic_expire(vcpu);
+		__kvm_wait_lapic_expire(vcpu->arch.apic);
 }
 EXPORT_SYMBOL_GPL(kvm_wait_lapic_expire);
 
@@ -1880,7 +1879,7 @@ static void apic_timer_expired(struct kvm_lapic *apic, bool from_timer_fn)
 		return;
 	}
 
-	if (kvm_use_posted_timer_interrupt(apic->vcpu)) {
+	if (kvm_use_posted_timer_interrupt(vcpu)) {
 		/*
 		 * Ensure the guest's timer has truly expired before posting an
 		 * interrupt.  Open code the relevant checks to avoid querying
@@ -1890,7 +1889,7 @@ static void apic_timer_expired(struct kvm_lapic *apic, bool from_timer_fn)
 		 */
 		if (vcpu->arch.apic->lapic_timer.expired_tscdeadline &&
 		    vcpu->arch.apic->lapic_timer.timer_advance_ns)
-			__kvm_wait_lapic_expire(vcpu);
+			__kvm_wait_lapic_expire(apic);
 		kvm_apic_inject_pending_timer_irqs(apic);
 		return;
 	}
@@ -1907,8 +1906,7 @@ static void start_sw_tscdeadline(struct kvm_lapic *apic)
 	u64 guest_tsc, tscdeadline = ktimer->tscdeadline;
 	u64 ns = 0;
 	ktime_t expire;
-	struct kvm_vcpu *vcpu = apic->vcpu;
-	unsigned long this_tsc_khz = vcpu->arch.virtual_tsc_khz;
+	unsigned long this_tsc_khz = apic->vcpu->arch.virtual_tsc_khz;
 	unsigned long flags;
 	ktime_t now;
 
@@ -1918,7 +1916,7 @@ static void start_sw_tscdeadline(struct kvm_lapic *apic)
 	local_irq_save(flags);
 
 	now = ktime_get();
-	guest_tsc = kvm_read_l1_tsc(vcpu, rdtsc());
+	guest_tsc = kvm_read_l1_tsc(apic->vcpu, rdtsc());
 
 	ns = (tscdeadline - guest_tsc) * 1000000ULL;
 	do_div(ns, this_tsc_khz);
@@ -2073,17 +2071,16 @@ static void cancel_hv_timer(struct kvm_lapic *apic)
 static bool start_hv_timer(struct kvm_lapic *apic)
 {
 	struct kvm_timer *ktimer = &apic->lapic_timer;
-	struct kvm_vcpu *vcpu = apic->vcpu;
 	bool expired;
 
 	WARN_ON(preemptible());
-	if (!kvm_can_use_hv_timer(vcpu))
+	if (!kvm_can_use_hv_timer(apic->vcpu))
 		return false;
 
 	if (!ktimer->tscdeadline)
 		return false;
 
-	if (static_call(kvm_x86_set_hv_timer)(vcpu, ktimer->tscdeadline, &expired))
+	if (static_call(kvm_x86_set_hv_timer)(apic->vcpu, ktimer->tscdeadline, &expired))
 		return false;
 
 	ktimer->hv_timer_in_use = true;
@@ -2107,7 +2104,7 @@ static bool start_hv_timer(struct kvm_lapic *apic)
 		}
 	}
 
-	trace_kvm_hv_timer_state(vcpu->vcpu_id, ktimer->hv_timer_in_use);
+	trace_kvm_hv_timer_state(apic->vcpu->vcpu_id, ktimer->hv_timer_in_use);
 
 	return true;
 }
