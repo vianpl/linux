@@ -62,6 +62,8 @@
  */
 #define HV_EXT_CALL_MAX (HV_EXT_CALL_QUERY_CAPABILITIES + 64)
 
+static void stimer_init(struct kvm_vcpu_hv_stimer *stimer, int timer_index);
+static void stimer_cleanup(struct kvm_vcpu_hv_stimer *stimer);
 static void stimer_mark_pending(struct kvm_vcpu_hv_stimer *stimer,
 				bool vcpu_kick);
 
@@ -216,19 +218,18 @@ static struct kvm_vcpu_hv_synic *synic_get(struct kvm *kvm, u32 vpidx)
 	return (synic->active) ? synic : NULL;
 }
 
-static void kvm_hv_notify_acked_sint(struct kvm_vcpu *vcpu, u32 sint)
+static void kvm_hv_notify_acked_sint(struct kvm_vcpu_hv_synic *synic, u32 sint)
 {
+	struct kvm_vcpu *vcpu = hv_synic_to_vcpu(synic);
 	struct kvm *kvm = vcpu->kvm;
-	struct kvm_vcpu_hv_synic *synic = to_hv_synic(vcpu);
-	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
 	struct kvm_vcpu_hv_stimer *stimer;
 	int gsi, idx;
 
 	trace_kvm_hv_notify_acked_sint(vcpu->vcpu_id, sint);
 
 	/* Try to deliver pending Hyper-V SynIC timers messages */
-	for (idx = 0; idx < ARRAY_SIZE(hv_vcpu->stimer); idx++) {
-		stimer = &hv_vcpu->stimer[idx];
+	for (idx = 0; idx < ARRAY_SIZE(synic->stimer); idx++) {
+		stimer = &synic->stimer[idx];
 		if (stimer->msg_pending && stimer->config.enable &&
 		    !stimer->config.direct_mode &&
 		    stimer->config.sintx == sint)
@@ -283,7 +284,7 @@ static int synic_set_msr(struct kvm_vcpu_hv_synic *synic,
 		break;
 	case HV_X64_MSR_SIEFP:
 		if ((data & HV_SYNIC_SIEFP_ENABLE) && !host &&
-		    !synic->dont_zero_synic_pages)
+		    !to_hv_vcpu(vcpu)->dont_zero_synic_pages)
 			if (kvm_clear_guest(vcpu->kvm,
 					    data & PAGE_MASK, PAGE_SIZE)) {
 				ret = 1;
@@ -295,7 +296,7 @@ static int synic_set_msr(struct kvm_vcpu_hv_synic *synic,
 		break;
 	case HV_X64_MSR_SIMP:
 		if ((data & HV_SYNIC_SIMP_ENABLE) && !host &&
-		    !synic->dont_zero_synic_pages)
+		    !to_hv_vcpu(vcpu)->dont_zero_synic_pages)
 			if (kvm_clear_guest(vcpu->kvm,
 					    data & PAGE_MASK, PAGE_SIZE)) {
 				ret = 1;
@@ -312,7 +313,7 @@ static int synic_set_msr(struct kvm_vcpu_hv_synic *synic,
 			break;
 
 		for (i = 0; i < ARRAY_SIZE(synic->sint); i++)
-			kvm_hv_notify_acked_sint(vcpu, i);
+			kvm_hv_notify_acked_sint(synic, i);
 		break;
 	}
 	case HV_X64_MSR_SINT0 ... HV_X64_MSR_SINT15:
@@ -481,6 +482,9 @@ static int synic_set_irq(struct kvm_vcpu_hv_synic *synic, u32 sint)
 	if (sint >= ARRAY_SIZE(synic->sint))
 		return -EINVAL;
 
+	if (!lapic_in_kernel(hv_synic_to_vcpu(synic)))
+		return 0;
+
 	vector = synic_get_sint_vector(synic_read_sint(synic, sint));
 	if (vector < 0)
 		return -ENOENT;
@@ -491,8 +495,9 @@ static int synic_set_irq(struct kvm_vcpu_hv_synic *synic, u32 sint)
 	irq.delivery_mode = APIC_DM_FIXED;
 	irq.vector = vector;
 	irq.level = 1;
+	irq.vtl = synic->vtl;
 
-	ret = kvm_irq_delivery_to_apic(vcpu->kvm, vcpu->arch.apic, &irq, NULL);
+	ret = kvm_apic_set_irq(hv_synic_to_vcpu(synic), &irq, NULL);
 	trace_kvm_hv_synic_set_irq(vcpu->vcpu_id, sint, irq.vector, ret);
 	return ret;
 }
@@ -517,7 +522,7 @@ void kvm_hv_synic_send_eoi(struct kvm_vcpu *vcpu, int vector)
 
 	for (i = 0; i < ARRAY_SIZE(synic->sint); i++)
 		if (synic_get_sint_vector(synic_read_sint(synic, i)) == vector)
-			kvm_hv_notify_acked_sint(vcpu, i);
+			kvm_hv_notify_acked_sint(synic, i);
 }
 
 static int kvm_hv_set_sint_gsi(struct kvm *kvm, u32 vpidx, u32 sint, int gsi)
@@ -553,15 +558,29 @@ void kvm_hv_irq_routing_update(struct kvm *kvm)
 	}
 }
 
-static void synic_init(struct kvm_vcpu_hv_synic *synic)
+static void synic_init(struct kvm_vcpu_hv_synic *synic, struct kvm_vcpu *vcpu, int vtl)
 {
 	int i;
 
 	memset(synic, 0, sizeof(*synic));
 	synic->version = HV_SYNIC_VERSION_1;
+	synic->vcpu = vcpu;
+	synic->vtl = vtl;
 	for (i = 0; i < ARRAY_SIZE(synic->sint); i++) {
 		atomic64_set(&synic->sint[i], HV_SYNIC_SINT_MASKED);
 		atomic_set(&synic->sint_to_gsi[i], -1);
+	}
+
+	bitmap_zero(synic->stimer_pending_bitmap, HV_SYNIC_STIMER_COUNT);
+	for (i = 0; i < ARRAY_SIZE(synic->stimer); i++)
+		stimer_init(&synic->stimer[i], i);
+}
+
+static void synic_uninit(struct kvm_vcpu_hv_synic *synic)
+{
+	int i;
+	for (i = 0; i < ARRAY_SIZE(synic->stimer); i++) {
+		stimer_cleanup(&synic->stimer[i]);
 	}
 }
 
@@ -587,25 +606,23 @@ static u64 get_time_ref_counter(struct kvm *kvm)
 static void stimer_mark_pending(struct kvm_vcpu_hv_stimer *stimer,
 				bool vcpu_kick)
 {
-	struct kvm_vcpu *vcpu = hv_stimer_to_vcpu(stimer);
+	struct kvm_vcpu_hv_synic *synic = stimer_to_synic(stimer);
 
-	set_bit(stimer->index,
-		to_hv_vcpu(vcpu)->stimer_pending_bitmap);
-	kvm_make_request(KVM_REQ_HV_STIMER, vcpu);
+	set_bit(stimer->index, synic->stimer_pending_bitmap);
+	kvm_make_request(KVM_REQ_HV_STIMER, hv_synic_to_vcpu(synic));
 	if (vcpu_kick)
-		kvm_vcpu_kick(vcpu);
+		kvm_vcpu_kick(hv_synic_to_vcpu(synic));
 }
 
 static void stimer_cleanup(struct kvm_vcpu_hv_stimer *stimer)
 {
-	struct kvm_vcpu *vcpu = hv_stimer_to_vcpu(stimer);
+	struct kvm_vcpu_hv_synic *synic = stimer_to_synic(stimer);
 
 	trace_kvm_hv_stimer_cleanup(hv_stimer_to_vcpu(stimer)->vcpu_id,
 				    stimer->index);
 
 	hrtimer_cancel(&stimer->timer);
-	clear_bit(stimer->index,
-		  to_hv_vcpu(vcpu)->stimer_pending_bitmap);
+	clear_bit(stimer->index, synic->stimer_pending_bitmap);
 	stimer->msg_pending = false;
 	stimer->exp_time = 0;
 }
@@ -809,7 +826,7 @@ static int synic_deliver_msg(struct kvm_vcpu_hv_synic *synic, u32 sint,
 
 static int stimer_send_msg(struct kvm_vcpu_hv_stimer *stimer)
 {
-	struct kvm_vcpu *vcpu = hv_stimer_to_vcpu(stimer);
+	struct kvm_vcpu_hv_synic *synic = stimer_to_synic(stimer);
 	struct hv_message *msg = &stimer->msg;
 	struct hv_timer_message_payload *payload =
 			(struct hv_timer_message_payload *)&msg->u.payload;
@@ -821,22 +838,23 @@ static int stimer_send_msg(struct kvm_vcpu_hv_stimer *stimer)
 	bool no_retry = stimer->config.periodic;
 
 	payload->expiration_time = stimer->exp_time;
-	payload->delivery_time = get_time_ref_counter(vcpu->kvm);
-	return synic_deliver_msg(to_hv_synic(vcpu),
+	payload->delivery_time = get_time_ref_counter(hv_synic_to_vcpu(synic)->kvm);
+	return synic_deliver_msg(synic,
 				 stimer->config.sintx, msg,
 				 no_retry);
 }
 
 static int stimer_notify_direct(struct kvm_vcpu_hv_stimer *stimer)
 {
-	struct kvm_vcpu *vcpu = hv_stimer_to_vcpu(stimer);
+	struct kvm_vcpu_hv_synic *synic = stimer_to_synic(stimer);
 	struct kvm_lapic_irq irq = {
 		.delivery_mode = APIC_DM_FIXED,
-		.vector = stimer->config.apic_vector
+		.vector = stimer->config.apic_vector,
+		.vtl = synic->vtl,
 	};
 
-	if (lapic_in_kernel(vcpu))
-		return !kvm_apic_set_irq(vcpu, &irq, NULL);
+	if (lapic_in_kernel(hv_synic_to_vcpu(synic)))
+		return !kvm_apic_set_irq(hv_synic_to_vcpu(synic), &irq, NULL);
 	return 0;
 }
 
@@ -861,6 +879,7 @@ static void stimer_expiration(struct kvm_vcpu_hv_stimer *stimer)
 void kvm_hv_process_stimers(struct kvm_vcpu *vcpu)
 {
 	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
+	struct kvm_vcpu_hv_synic *synic = to_hv_synic(vcpu);
 	struct kvm_vcpu_hv_stimer *stimer;
 	u64 time_now, exp_time;
 	int i;
@@ -868,9 +887,9 @@ void kvm_hv_process_stimers(struct kvm_vcpu *vcpu)
 	if (!hv_vcpu)
 		return;
 
-	for (i = 0; i < ARRAY_SIZE(hv_vcpu->stimer); i++)
-		if (test_and_clear_bit(i, hv_vcpu->stimer_pending_bitmap)) {
-			stimer = &hv_vcpu->stimer[i];
+	for (i = 0; i < ARRAY_SIZE(synic->stimer); i++)
+		if (test_and_clear_bit(i, synic->stimer_pending_bitmap)) {
+			stimer = &synic->stimer[i];
 			if (stimer->config.enable) {
 				exp_time = stimer->exp_time;
 
@@ -898,6 +917,7 @@ static void hv_vcpu_vtl_uninit(struct kvm_vcpu *vcpu, u8 vtl_num)
 	/* Active apic is freed by generic KVM code */
 	if (vtl_num != get_active_vtl(vcpu))
 		kvm_free_lapic(vtl->apic);
+	synic_uninit(&vtl->synic);
 	mutex_destroy(&vtl->lock);
 }
 
@@ -911,9 +931,6 @@ void kvm_hv_vcpu_uninit(struct kvm_vcpu *vcpu)
 
 	for (i = 0; i < HV_NUM_VTLS; ++i)
 		hv_vcpu_vtl_uninit(vcpu, i);
-
-	for (i = 0; i < ARRAY_SIZE(hv_vcpu->stimer); i++)
-		stimer_cleanup(&hv_vcpu->stimer[i]);
 
 	kfree(hv_vcpu);
 	vcpu->arch.hyperv = NULL;
@@ -1034,6 +1051,7 @@ static void hv_vcpu_vtl_init(struct kvm_vcpu *vcpu, u8 vtl_num)
 {
 	struct kvm_vcpu_hv_vtl *vtl = &to_hv_vcpu(vcpu)->vtl[vtl_num];
 	mutex_init(&vtl->lock);
+	synic_init(&vtl->synic, vcpu, vtl_num);
 }
 
 int kvm_hv_vcpu_init(struct kvm_vcpu *vcpu)
@@ -1062,12 +1080,6 @@ int kvm_hv_vcpu_init(struct kvm_vcpu *vcpu)
 		hv_vcpu->vtl[0].apic = vcpu->arch.apic;
 	}
 
-	synic_init(&hv_vcpu->synic);
-
-	bitmap_zero(hv_vcpu->stimer_pending_bitmap, HV_SYNIC_STIMER_COUNT);
-	for (i = 0; i < ARRAY_SIZE(hv_vcpu->stimer); i++)
-		stimer_init(&hv_vcpu->stimer[i], i);
-
 	hv_vcpu->vp_index = vcpu->vcpu_idx;
 
 	for (i = 0; i < HV_NR_TLB_FLUSH_FIFOS; i++) {
@@ -1080,18 +1092,32 @@ int kvm_hv_vcpu_init(struct kvm_vcpu *vcpu)
 
 int kvm_hv_activate_synic(struct kvm_vcpu *vcpu, bool dont_zero_synic_pages)
 {
-	struct kvm_vcpu_hv_synic *synic;
-	int r;
+	int r, i;
 
 	r = kvm_hv_vcpu_init(vcpu);
 	if (r)
 		return r;
 
-	synic = to_hv_synic(vcpu);
+	down_write(&vcpu->kvm->arch.apicv_update_lock);
+	/*
+	 * Hyper-V SynIC auto EOI SINT's are
+	 * not compatible with APICV, so request
+	 * to deactivate APICV permanently.
+	 */
 
-	synic->active = true;
-	synic->dont_zero_synic_pages = dont_zero_synic_pages;
-	synic->control = HV_SYNIC_CONTROL_ENABLE;
+	__kvm_set_or_clear_apicv_inhibit(vcpu->kvm,
+					 APICV_INHIBIT_REASON_HYPERV,
+					 !!to_kvm_hv(vcpu->kvm)->synic_auto_eoi_used);
+
+	up_write(&vcpu->kvm->arch.apicv_update_lock);
+
+	to_hv_vcpu(vcpu)->dont_zero_synic_pages = dont_zero_synic_pages;
+
+	for (i = 0; i < HV_NUM_VTLS; ++i) {
+		struct kvm_vcpu_hv_synic *synic = &to_hv_vcpu(vcpu)->vtl[i].synic;
+		synic->active = true;
+		synic->control = HV_SYNIC_CONTROL_ENABLE;
+	}
 	return 0;
 }
 

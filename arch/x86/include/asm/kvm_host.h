@@ -604,6 +604,7 @@ struct kvm_vcpu_hv_stimer {
 
 /* Hyper-V synthetic interrupt controller (SynIC)*/
 struct kvm_vcpu_hv_synic {
+	struct kvm_vcpu *vcpu;
 	u64 version;
 	u64 control;
 	u64 msg_page;
@@ -613,7 +614,9 @@ struct kvm_vcpu_hv_synic {
 	DECLARE_BITMAP(auto_eoi_bitmap, 256);
 	DECLARE_BITMAP(vec_bitmap, 256);
 	bool active;
-	bool dont_zero_synic_pages;
+	struct kvm_vcpu_hv_stimer stimer[HV_SYNIC_STIMER_COUNT];
+	DECLARE_BITMAP(stimer_pending_bitmap, HV_SYNIC_STIMER_COUNT);
+	int vtl;
 };
 
 /* Hyper-V per-VTL vcpu context */
@@ -646,6 +649,9 @@ struct kvm_vcpu_hv_vtl {
 
 	/* VTL apic context */
 	struct kvm_lapic *apic;
+
+	/* VTL synic/stimer context */
+	struct kvm_vcpu_hv_synic synic;
 };
 
 /* The maximum number of entries on the TLB flush fifo. */
@@ -676,7 +682,7 @@ struct kvm_vcpu_hv {
 	struct kvm_vcpu *vcpu;
 	u32 vp_index;
 	s64 runtime_offset;
-	struct kvm_vcpu_hv_synic synic;
+	bool dont_zero_synic_pages;
 	struct kvm_hyperv_exit exit;
 	struct kvm_vcpu_hv_stimer stimer[HV_SYNIC_STIMER_COUNT];
 	DECLARE_BITMAP(stimer_pending_bitmap, HV_SYNIC_STIMER_COUNT);

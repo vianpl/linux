@@ -83,14 +83,12 @@ static inline struct kvm_vcpu_hv_synic *to_hv_synic(struct kvm_vcpu *vcpu)
 {
 	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
 
-	return &hv_vcpu->synic;
+	return &hv_vcpu->vtl[get_active_vtl(vcpu)].synic;
 }
 
 static inline struct kvm_vcpu *hv_synic_to_vcpu(struct kvm_vcpu_hv_synic *synic)
 {
-	struct kvm_vcpu_hv *hv_vcpu = container_of(synic, struct kvm_vcpu_hv, synic);
-
-	return hv_vcpu->vcpu;
+	return synic->vcpu;
 }
 
 static inline struct kvm_hv_syndbg *to_hv_syndbg(struct kvm_vcpu *vcpu)
@@ -128,16 +126,17 @@ int kvm_hv_get_assist_page(struct kvm_vcpu *vcpu);
 static inline struct kvm_vcpu_hv_stimer *to_hv_stimer(struct kvm_vcpu *vcpu,
 						      int timer_index)
 {
-	return &to_hv_vcpu(vcpu)->stimer[timer_index];
+	return &to_hv_synic(vcpu)->stimer[timer_index];
+}
+
+static inline struct kvm_vcpu_hv_synic *stimer_to_synic(struct kvm_vcpu_hv_stimer *stimer)
+{
+	return container_of(stimer - stimer->index, struct kvm_vcpu_hv_synic, stimer[0]);
 }
 
 static inline struct kvm_vcpu *hv_stimer_to_vcpu(struct kvm_vcpu_hv_stimer *stimer)
 {
-	struct kvm_vcpu_hv *hv_vcpu;
-
-	hv_vcpu = container_of(stimer - stimer->index, struct kvm_vcpu_hv,
-			       stimer[0]);
-	return hv_vcpu->vcpu;
+	return hv_synic_to_vcpu(stimer_to_synic(stimer));
 }
 
 static inline bool kvm_hv_has_stimer_pending(struct kvm_vcpu *vcpu)
@@ -147,7 +146,7 @@ static inline bool kvm_hv_has_stimer_pending(struct kvm_vcpu *vcpu)
 	if (!hv_vcpu)
 		return false;
 
-	return !bitmap_empty(hv_vcpu->stimer_pending_bitmap,
+	return !bitmap_empty(to_hv_synic(vcpu)->stimer_pending_bitmap,
 			     HV_SYNIC_STIMER_COUNT);
 }
 
