@@ -876,15 +876,14 @@ static void stimer_expiration(struct kvm_vcpu_hv_stimer *stimer)
 	}
 }
 
-void kvm_hv_process_stimers(struct kvm_vcpu *vcpu)
+static void synic_process_stimers(struct kvm_vcpu_hv_synic *synic)
 {
-	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
-	struct kvm_vcpu_hv_synic *synic = to_hv_synic(vcpu);
+	struct kvm_vcpu *vcpu = hv_synic_to_vcpu(synic);
 	struct kvm_vcpu_hv_stimer *stimer;
 	u64 time_now, exp_time;
 	int i;
 
-	if (!hv_vcpu)
+	if (!to_hv_vcpu(vcpu))
 		return;
 
 	for (i = 0; i < ARRAY_SIZE(synic->stimer); i++)
@@ -908,6 +907,16 @@ void kvm_hv_process_stimers(struct kvm_vcpu *vcpu)
 					stimer_cleanup(stimer);
 			}
 		}
+}
+
+void kvm_hv_process_stimers(struct kvm_vcpu *vcpu)
+{
+	int vtl;
+
+	/* We need to consider all VTLs in case some other VTL's stimer has fired */
+	for (vtl = 0; vtl < HV_NUM_VTLS; ++vtl) {
+		synic_process_stimers(&to_hv_vcpu(vcpu)->vtl[vtl].synic);
+	}
 }
 
 static void hv_vcpu_vtl_uninit(struct kvm_vcpu *vcpu, u8 vtl_num)
