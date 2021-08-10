@@ -2733,12 +2733,22 @@ static bool lapic_is_periodic(struct kvm_lapic *apic)
 	return apic_lvtt_period(apic);
 }
 
-int apic_has_pending_timer(struct kvm_vcpu *vcpu)
+static int __apic_has_pending_timer(struct kvm_lapic *apic)
 {
-	struct kvm_lapic *apic = vcpu->arch.apic;
-
 	if (apic_enabled(apic) && apic_lvt_enabled(apic, APIC_LVTT))
 		return atomic_read(&apic->lapic_timer.pending);
+
+	return 0;
+}
+
+int apic_has_pending_timer(struct kvm_vcpu *vcpu)
+{
+	int vtl;
+	for (vtl = 0; vtl < HV_NUM_VTLS; vtl++) {
+		struct kvm_lapic *apic = vcpu->arch.vtl_apics[vtl];
+		if (apic && __apic_has_pending_timer(apic))
+			return 1;
+	}
 
 	return 0;
 }
@@ -2900,13 +2910,21 @@ int kvm_apic_accept_pic_intr(struct kvm_vcpu *vcpu)
 	return 0;
 }
 
-void kvm_inject_apic_timer_irqs(struct kvm_vcpu *vcpu)
+static void __inject_apic_timer_irqs(struct kvm_lapic *apic)
 {
-	struct kvm_lapic *apic = vcpu->arch.apic;
-
 	if (atomic_read(&apic->lapic_timer.pending) > 0) {
 		kvm_apic_inject_pending_timer_irqs(apic);
 		atomic_set(&apic->lapic_timer.pending, 0);
+	}
+}
+
+void kvm_inject_apic_timer_irqs(struct kvm_vcpu *vcpu)
+{
+	int vtl;
+	for (vtl = 0; vtl < HV_NUM_VTLS; vtl++) {
+		struct kvm_lapic *apic = vcpu->arch.vtl_apics[vtl];
+		if (apic)
+			__inject_apic_timer_irqs(apic);
 	}
 }
 
