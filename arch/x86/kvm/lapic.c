@@ -1296,7 +1296,6 @@ static int __apic_accept_irq(struct kvm_lapic *apic, int delivery_mode,
 			     int vector, int level, int trig_mode,
 			     struct dest_map *dest_map)
 {
-	int result = 0;
 	struct kvm_vcpu *vcpu = apic->vcpu;
 
 	trace_kvm_apic_accept_irq(vcpu->vcpu_id, delivery_mode,
@@ -1307,13 +1306,11 @@ static int __apic_accept_irq(struct kvm_lapic *apic, int delivery_mode,
 		fallthrough;
 	case APIC_DM_FIXED:
 		if (unlikely(trig_mode && !level))
-			break;
+			return 0;
 
 		/* FIXME add logic for vcpu on reset */
 		if (unlikely(!apic_enabled(apic)))
-			break;
-
-		result = 1;
+			return 0;
 
 		if (dest_map) {
 			__set_bit(vcpu->vcpu_id, dest_map->map);
@@ -1334,43 +1331,34 @@ static int __apic_accept_irq(struct kvm_lapic *apic, int delivery_mode,
 		break;
 
 	case APIC_DM_REMRD:
-		result = 1;
 		vcpu->arch.pv.pv_unhalted = 1;
 		kvm_make_request(KVM_REQ_EVENT, vcpu);
-		kvm_vcpu_kick(vcpu);
 		break;
 
 	case APIC_DM_SMI:
-		if (!kvm_inject_smi(vcpu)) {
-			kvm_vcpu_kick(vcpu);
-			result = 1;
-		}
+		if (kvm_inject_smi(vcpu))
+			return 0;
 		break;
 
 	case APIC_DM_NMI:
-		result = 1;
 		kvm_inject_nmi(vcpu);
-		kvm_vcpu_kick(vcpu);
 		break;
 
 	case APIC_DM_INIT:
-		if (!trig_mode || level) {
-			result = 1;
-			/* assumes that there are only KVM_APIC_INIT/SIPI */
-			apic->pending_events = (1UL << KVM_APIC_INIT);
-			kvm_make_request(KVM_REQ_EVENT, vcpu);
-			kvm_vcpu_kick(vcpu);
-		}
+		if (trig_mode && !level)
+			return 0;
+
+		/* assumes that there are only KVM_APIC_INIT/SIPI */
+		apic->pending_events = (1UL << KVM_APIC_INIT);
+		kvm_make_request(KVM_REQ_EVENT, vcpu);
 		break;
 
 	case APIC_DM_STARTUP:
-		result = 1;
 		apic->sipi_vector = vector;
 		/* make sure sipi_vector is visible for the receiver */
 		smp_wmb();
 		set_bit(KVM_APIC_SIPI, &apic->pending_events);
 		kvm_make_request(KVM_REQ_EVENT, vcpu);
-		kvm_vcpu_kick(vcpu);
 		break;
 
 	case APIC_DM_EXTINT:
@@ -1379,14 +1367,20 @@ static int __apic_accept_irq(struct kvm_lapic *apic, int delivery_mode,
 		 * before NMI watchdog was enabled. Already handled by
 		 * kvm_apic_accept_pic_intr().
 		 */
-		break;
+		return 0;
 
 	default:
 		printk(KERN_ERR "TODO: unsupported delivery mode %x\n",
 		       delivery_mode);
-		break;
+		return 0;
 	}
-	return result;
+
+	/* Hyper-V: mark this apic's VTL in pending bitmap */
+	set_bit(apic->hv_vtl, &vcpu->arch.hyperv->apic_pending_vtls);
+
+	/* If we're here then we need to make a vcpu request */
+	kvm_vcpu_kick(vcpu);
+	return 1;
 }
 
 /*

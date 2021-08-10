@@ -699,6 +699,9 @@ struct kvm_vcpu_hv {
 
 	struct kvm_vcpu_hv_vtl vtl[HV_NUM_VTLS];
 	union hv_register_vsm_vp_status vsm_vp_status;
+
+	/* Bitmap of VTLs which have their apics requesting attention */
+	unsigned long apic_pending_vtls;
 };
 
 struct kvm_hypervisor_cpuid {

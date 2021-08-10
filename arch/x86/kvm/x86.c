@@ -10632,6 +10632,23 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 			static_call(kvm_x86_update_cpu_dirty_logging)(vcpu);
 	}
 
+	/*
+	 * hyper-v: before we inject pending apic events we need to consider
+	 * if higher-vtl apic wants attention. if it does, we need to switch into it.
+	 * any requests that were pending for currently active apic will not be lost,
+	 * we will re-inject them once guest executes a vtl return.
+	 */
+	if (kvm_test_request(KVM_REQ_EVENT, vcpu)) {
+		int active_vtl = get_active_vtl(vcpu);
+		int highest_vtl = fls(vcpu->arch.hyperv->apic_pending_vtls) - 1;
+
+		if (highest_vtl >= active_vtl) {
+			clear_bit(highest_vtl, &vcpu->arch.hyperv->apic_pending_vtls);
+			if (highest_vtl > active_vtl)
+				kvm_hv_vtl_interrupt(vcpu, highest_vtl);
+		}
+	}
+
 	if (kvm_check_request(KVM_REQ_EVENT, vcpu) || req_int_win ||
 	    kvm_xen_has_interrupt(vcpu)) {
 		++vcpu->stat.req_event;
@@ -12823,6 +12840,9 @@ static inline bool kvm_vcpu_has_events(struct kvm_vcpu *vcpu)
 		return true;
 
 	if (kvm_is_exception_pending(vcpu))
+		return true;
+
+	if (vcpu->arch.hyperv->apic_pending_vtls)
 		return true;
 
 	if (kvm_test_request(KVM_REQ_NMI, vcpu) ||
