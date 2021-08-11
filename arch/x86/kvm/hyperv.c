@@ -1075,6 +1075,12 @@ static bool is_partition_vtl_enabled(struct kvm *kvm, u8 vtl)
 	return kvm->arch.hyperv.vsm_partition_status.enabled_vtl_set & (1u << vtl);
 }
 
+static bool is_vp_vtl_enabled(struct kvm_vcpu *vcpu, int vtl)
+{
+	BUG_ON(vtl >= HV_NUM_VTLS);
+	return (to_hv_vcpu(vcpu)->vsm_vp_status.enabled_vtl_set & (1ul << vtl)) != 0;
+}
+
 static void hv_vcpu_vtl_init(struct kvm_vcpu *vcpu, u8 vtl_num)
 {
 	struct kvm_vcpu_hv_vtl *vtl = &to_hv_vcpu(vcpu)->vtl[vtl_num];
@@ -3155,13 +3161,11 @@ static void store_kvm_segment(const struct kvm_segment *kvmseg, struct hv_x64_se
 	reg->available = kvmseg->avl;
 }
 
-/* Store VCPU context into VTL VP context */
-static bool store_vtl(struct kvm_vcpu *vcpu, struct kvm_vcpu_hv_vtl* vtl)
+/* Store VTL VP system registers context.
+ * VTL lock is assumed to be held by the caller. */
+static void __store_vtl_sregs(struct kvm_vcpu *vcpu, struct kvm_vcpu_hv_vtl *vtl)
 {
-	int ret = 0;
 	struct kvm_sregs sregs = {0};
-
-	mutex_lock(&vtl->lock);
 
 	kvm_get_sregs(vcpu, &sregs);
 	store_kvm_segment(&sregs.cs, &vtl->ctx.cs);
@@ -3185,6 +3189,23 @@ static bool store_vtl(struct kvm_vcpu *vcpu, struct kvm_vcpu_hv_vtl* vtl)
 
 	vtl->tpr = sregs.cr8;
 	vtl->apic_base = sregs.apic_base;
+}
+
+static void store_vtl_sregs(struct kvm_vcpu *vcpu, struct kvm_vcpu_hv_vtl *vtl)
+{
+	mutex_lock(&vtl->lock);
+	__store_vtl_sregs(vcpu, vtl);
+	mutex_unlock(&vtl->lock);
+}
+
+/* Store VCPU context into VTL VP context */
+static bool store_vtl(struct kvm_vcpu *vcpu, struct kvm_vcpu_hv_vtl* vtl)
+{
+	int ret = 0;
+
+	mutex_lock(&vtl->lock);
+
+	__store_vtl_sregs(vcpu, vtl);
 
 	kvm_get_dr(vcpu, 7, &vtl->dr7);
 
@@ -3209,14 +3230,11 @@ static bool store_vtl(struct kvm_vcpu *vcpu, struct kvm_vcpu_hv_vtl* vtl)
 	return ret == 0;
 }
 
-/* Load VTL VP content into VCPU.
- * If failed, vcpu can be left in an undefined state, which should end in #UD */
-static bool load_vtl(struct kvm_vcpu *vcpu, struct kvm_vcpu_hv_vtl *vtl)
+/* Load VTL VP system registers context.
+ * VTL lock is assumed to be held by the caller. */
+static int __load_vtl_sregs(struct kvm_vcpu *vcpu, struct kvm_vcpu_hv_vtl *vtl)
 {
-	int ret = 0;
 	struct kvm_sregs sregs = {0};
-
-	mutex_lock(&vtl->lock);
 
 	load_kvm_segment(&vtl->ctx.cs, &sregs.cs);
 	load_kvm_segment(&vtl->ctx.ds, &sregs.ds);
@@ -3250,7 +3268,32 @@ static bool load_vtl(struct kvm_vcpu *vcpu, struct kvm_vcpu_hv_vtl *vtl)
 		sregs.apic_base = vtl->apic_base;
 	}
 
-	ret |= kvm_set_sregs(vcpu, &sregs);
+	/* Will call kvm_mmu_reset_context if needed */
+	return kvm_set_sregs(vcpu, &sregs);
+}
+
+static bool load_vtl_sregs(struct kvm_vcpu *vcpu, struct kvm_vcpu_hv_vtl *vtl)
+{
+	bool res;
+
+	mutex_lock(&vtl->lock);
+	res = __load_vtl_sregs(vcpu, vtl) == 0;
+	mutex_unlock(&vtl->lock);
+
+	return res;
+}
+
+/* Load VTL VP content into VCPU.
+ * If failed, vcpu can be left in an undefined state, which should end in #UD */
+static bool load_vtl(struct kvm_vcpu *vcpu, struct kvm_vcpu_hv_vtl *vtl)
+{
+	int ret = 0;
+
+	mutex_lock(&vtl->lock);
+
+	ret = __load_vtl_sregs(vcpu, vtl);
+	if (ret)
+		goto unlock_out;
 
 	ret |= kvm_set_dr(vcpu, 7, vtl->dr7);
 
@@ -3291,6 +3334,7 @@ static bool load_vtl(struct kvm_vcpu *vcpu, struct kvm_vcpu_hv_vtl *vtl)
 		vtl->pending_event.event_pending = 0;
 	}
 
+unlock_out:
 	mutex_unlock(&vtl->lock);
 	return ret == 0;
 }
@@ -3434,6 +3478,116 @@ static bool kvm_hv_vtl_return(struct kvm_vcpu *vcpu)
 	}
 
 	return do_vtl_switch(vcpu, prev_vtl);
+}
+
+static bool kvm_hv_xlate_va_validate_input(struct kvm_vcpu* vcpu,
+					   struct hv_xlate_va_input *in,
+					   u8 *vtl, u8 *flags)
+{
+	struct kvm_vcpu_hv *hv = to_hv_vcpu(vcpu);
+	union hv_input_vtl in_vtl;
+
+	if (in->partition_id != HV_PARTITION_ID_SELF)
+		return false;
+
+	if (in->vp_index != HV_VP_INDEX_SELF && in->vp_index != hv->vp_index)
+		return false;
+
+	in_vtl.as_uint8 = in->control_flags >> 56;
+	*flags = in->control_flags & HV_XLATE_GVA_FLAGS_MASK;
+	if (*flags > (HV_XLATE_GVA_VAL_READ |
+		      HV_XLATE_GVA_VAL_WRITE |
+		      HV_XLATE_GVA_VAL_EXECUTE))
+		pr_warn("Translate VA control flags unsupported and will be ignored: 0x%llx\n", in->control_flags);
+
+	*vtl = in_vtl.use_target_vtl ? in_vtl.target_vtl : get_active_vtl(vcpu);
+
+	if (*vtl >= HV_NUM_VTLS || *vtl > get_active_vtl(vcpu) || !is_vp_vtl_enabled(vcpu, *vtl))
+		return false;
+
+	return true;
+}
+
+static u64 kvm_hv_xlate_va_walk(struct kvm_vcpu* vcpu, u64 gva, u8 flags)
+{
+	u32 access = 0;
+
+	if (flags & HV_XLATE_GVA_VAL_WRITE)
+		access |= PFERR_WRITE_MASK;
+	if (flags & HV_XLATE_GVA_VAL_EXECUTE)
+		access |= PFERR_FETCH_MASK;
+
+	return vcpu->arch.walk_mmu->gva_to_gpa(vcpu, vcpu->arch.mmu, gva, access, NULL);
+}
+
+static u64 kvm_hv_translate_virtual_address(struct kvm_vcpu* vcpu,
+					    struct kvm_hv_hcall *hc)
+{
+	u8 flags, target_vtl, current_vtl = get_active_vtl(vcpu);
+	struct kvm_vcpu_hv* vp = to_hv_vcpu(vcpu);
+	struct hv_xlate_va_output output = {};
+	struct hv_xlate_va_input input;
+
+	if (hc->fast) {
+		input.partition_id = hc->ingpa;
+		input.vp_index = hc->outgpa & 0xFFFFFFFF;
+		input.control_flags = sse128_lo(hc->xmm[0]);
+		input.gva = sse128_hi(hc->xmm[0]);
+	} else {
+		if (unlikely(kvm_read_guest(vcpu->kvm, hc->ingpa, &input, sizeof(input)) != 0))
+			return HV_STATUS_INVALID_HYPERCALL_INPUT;
+	}
+
+	trace_kvm_hv_translate_virtual_address(input.partition_id, input.vp_index, input.control_flags, input.gva);
+
+	if (!kvm_hv_xlate_va_validate_input(vcpu, &input, &target_vtl, &flags))
+		return HV_STATUS_INVALID_HYPERCALL_INPUT;
+
+	if (target_vtl != current_vtl) {
+		/* We need to do a temporary VTL switch on this vcpu to be able to walk target VTL's
+		 * guest paging structures. Switching systems regs is enough for that. */
+		struct kvm_vcpu_hv_vtl* vtl_from = &vp->vtl[current_vtl];
+		struct kvm_vcpu_hv_vtl* vtl_to = &vp->vtl[target_vtl];
+
+		store_vtl_sregs(vcpu, vtl_from);
+		if (!load_vtl_sregs(vcpu, vtl_to)) {
+			if (!load_vtl_sregs(vcpu, vtl_from)) {
+				/* Guest is now in a weird state, no other way but to inject a UD */
+				kvm_queue_exception(vcpu, UD_VECTOR);
+			}
+
+			return HV_STATUS_ACCESS_DENIED;
+		}
+	}
+	output.gpa = kvm_hv_xlate_va_walk(vcpu, input.gva << PAGE_SHIFT, flags);
+	if (output.gpa == INVALID_GPA) {
+		output.result_code = HV_XLATE_GVA_UNMAPPED;
+	} else {
+		output.gpa >>= PAGE_SHIFT;
+		output.result_code = HV_XLATE_GVA_SUCCESS;
+		output.cache_type = HV_CACHE_TYPE_X64_WB;
+	}
+	if (target_vtl != current_vtl) {
+		/* Undo the VTL sregs switch we did before, except we don't need to preserve
+		 * target VTLs sregs, those are unchanged since guest hasn't been actually running. */
+		struct kvm_vcpu_hv_vtl* vtl_from = &vp->vtl[current_vtl];
+
+		if (!load_vtl_sregs(vcpu, vtl_from)) {
+			/* Guest is now in a weird state, no other way but to inject a UD */
+			kvm_queue_exception(vcpu, UD_VECTOR);
+			return HV_STATUS_ACCESS_DENIED;
+		}
+	}
+
+	if (hc->fast) {
+		memcpy(&hc->xmm[1], &output, sizeof(output));
+		hc->xmm_dirty = true;
+	} else {
+		if (unlikely(kvm_write_guest(vcpu->kvm, hc->outgpa, &output, sizeof(output)) != 0))
+			return HV_STATUS_INVALID_HYPERCALL_INPUT;
+	}
+
+	return HV_STATUS_SUCCESS;
 }
 
 void kvm_hv_set_cpuid(struct kvm_vcpu *vcpu, bool hyperv_enabled)
@@ -3594,6 +3748,7 @@ static bool is_xmm_fast_hypercall(struct kvm_hv_hcall *hc)
 	case HVCALL_SEND_IPI_EX:
 	case HVCALL_GET_VP_REGISTERS:
 	case HVCALL_SET_VP_REGISTERS:
+	case HVCALL_TRANSLATE_VIRTUAL_ADDRESS:
 		return true;
 	}
 
@@ -3931,6 +4086,14 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 		if (!kvm_hv_vtl_return(vcpu))
 			goto inject_ud;
 		return 1;
+	case HVCALL_TRANSLATE_VIRTUAL_ADDRESS:
+		if (unlikely(hc.rep_cnt)) {
+			ret = HV_STATUS_INVALID_HYPERCALL_INPUT;
+			break;
+		}
+
+		ret = kvm_hv_translate_virtual_address(vcpu, &hc);
+		break;
 	default:
 		ret = HV_STATUS_INVALID_HYPERCALL_CODE;
 		break;
