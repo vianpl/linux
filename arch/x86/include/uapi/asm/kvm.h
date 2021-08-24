@@ -123,6 +123,13 @@ struct kvm_lapic_state {
 	char regs[KVM_APIC_REG_SIZE];
 };
 
+/* for KVM_GET_VTL_LAPIC and KVM_SET_VTL_LAPIC */
+struct kvm_vtl_lapic_state {
+	char regs[KVM_APIC_REG_SIZE];
+	__u8 vtl;
+	__u8 padding[3];
+};
+
 struct kvm_segment {
 	__u64 base;
 	__u32 limit;

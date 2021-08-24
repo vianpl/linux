@@ -1880,6 +1880,10 @@ struct kvm_xen_vcpu_attr {
 #define KVM_XEN_VCPU_ATTR_TYPE_TIMER		0x7
 #define KVM_XEN_VCPU_ATTR_TYPE_UPCALL_VECTOR	0x8
 
+/* Per-VTL LAPIC state */
+#define KVM_GET_VTL_LAPIC       _IOR(KVMIO,  0xd5, struct kvm_vtl_lapic_state)
+#define KVM_SET_VTL_LAPIC       _IOW(KVMIO,  0xd6, struct kvm_vtl_lapic_state)
+
 /* Secure Encrypted Virtualization command */
 enum sev_cmd_id {
 	/* Guest initialization commands */

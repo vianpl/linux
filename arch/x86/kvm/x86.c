@@ -4935,20 +4935,22 @@ void kvm_arch_vcpu_put(struct kvm_vcpu *vcpu)
 	vcpu->arch.last_host_tsc = rdtsc();
 }
 
-static int kvm_vcpu_ioctl_get_lapic(struct kvm_vcpu *vcpu,
+static int kvm_vcpu_ioctl_get_lapic(struct kvm_vcpu *vcpu, u8 vtl_num,
 				    struct kvm_lapic_state *s)
 {
-	static_call_cond(kvm_x86_sync_pir_to_irr)(vcpu);
+	struct kvm_vcpu_hv_vtl *vtl = &vcpu_to_hv_vcpu(vcpu)->vtl[vtl_num];
 
-	return kvm_apic_get_state(vcpu->arch.apic, s);
+	static_call_cond(kvm_x86_sync_pir_to_irr)(vcpu);
+	return kvm_apic_get_state(vtl->apic, s);
 }
 
-static int kvm_vcpu_ioctl_set_lapic(struct kvm_vcpu *vcpu,
+static int kvm_vcpu_ioctl_set_lapic(struct kvm_vcpu *vcpu, u8 vtl_num,
 				    struct kvm_lapic_state *s)
 {
 	int r;
+	struct kvm_vcpu_hv_vtl *vtl = &vcpu_to_hv_vcpu(vcpu)->vtl[vtl_num];
 
-	r = kvm_apic_set_state(vcpu->arch.apic, s);
+	r = kvm_apic_set_state(vtl->apic, s);
 	if (r)
 		return r;
 	update_cr8_intercept(vcpu);
@@ -5648,6 +5650,7 @@ long kvm_arch_vcpu_ioctl(struct file *filp,
 	union {
 		struct kvm_sregs2 *sregs2;
 		struct kvm_lapic_state *lapic;
+		struct kvm_vtl_lapic_state *vtl_lapic;
 		struct kvm_xsave *xsave;
 		struct kvm_xcrs *xcrs;
 		void *buffer;
@@ -5667,7 +5670,7 @@ long kvm_arch_vcpu_ioctl(struct file *filp,
 		r = -ENOMEM;
 		if (!u.lapic)
 			goto out;
-		r = kvm_vcpu_ioctl_get_lapic(vcpu, u.lapic);
+		r = kvm_vcpu_ioctl_get_lapic(vcpu, 0, u.lapic);
 		if (r)
 			goto out;
 		r = -EFAULT;
@@ -5686,7 +5689,47 @@ long kvm_arch_vcpu_ioctl(struct file *filp,
 			goto out_nofree;
 		}
 
-		r = kvm_vcpu_ioctl_set_lapic(vcpu, u.lapic);
+		r = kvm_vcpu_ioctl_set_lapic(vcpu, 0, u.lapic);
+		break;
+	}
+	case KVM_GET_VTL_LAPIC: {
+		struct kvm_vtl_lapic_state __user *lapic_arg = argp;
+
+		r = -EINVAL;
+		if (!lapic_in_kernel(vcpu) || !vcpu->kvm->arch.hyperv.hv_enable_vsm)
+			goto out;
+		r = -ENOMEM;
+		u.vtl_lapic = kzalloc(sizeof(struct kvm_vtl_lapic_state),
+				GFP_KERNEL_ACCOUNT);
+		if (!u.vtl_lapic)
+			goto out;
+		r = -EFAULT;
+		if (get_user(u.vtl_lapic->vtl, &lapic_arg->vtl))
+			goto out;
+		if (u.vtl_lapic->vtl >= HV_NUM_VTLS)
+			goto out;
+		r = kvm_vcpu_ioctl_get_lapic(vcpu, u.vtl_lapic->vtl,
+				(struct kvm_lapic_state *)u.vtl_lapic);
+		if (r)
+			goto out;
+		if (copy_to_user(argp, u.vtl_lapic, sizeof(struct kvm_vtl_lapic_state)))
+			goto out;
+		r = 0;
+		break;
+	}
+	case KVM_SET_VTL_LAPIC: {
+		r = -EINVAL;
+		if (!lapic_in_kernel(vcpu) || !vcpu->kvm->arch.hyperv.hv_enable_vsm)
+			goto out;
+		u.vtl_lapic = memdup_user(argp, sizeof(*u.vtl_lapic));
+		if (IS_ERR(u.lapic)) {
+			r = PTR_ERR(u.lapic);
+			goto out_nofree;
+		}
+		if (u.vtl_lapic->vtl >= HV_NUM_VTLS)
+			goto out;
+		r = kvm_vcpu_ioctl_set_lapic(vcpu, u.vtl_lapic->vtl,
+				(struct kvm_lapic_state *)u.vtl_lapic);
 		break;
 	}
 	case KVM_INTERRUPT: {

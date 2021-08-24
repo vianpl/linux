@@ -3023,7 +3023,6 @@ static int kvm_apic_state_fixup(struct kvm_lapic *apic,
 
 int kvm_apic_get_state(struct kvm_lapic *apic, struct kvm_lapic_state *s)
 {
-	memcpy(s->regs, apic->regs, sizeof(*s));
 
 	/*
 	 * Get calculated timer current count for remaining timer period (if
@@ -3031,6 +3030,7 @@ int kvm_apic_get_state(struct kvm_lapic *apic, struct kvm_lapic_state *s)
 	 */
 	__kvm_lapic_set_reg(s->regs, APIC_TMCCT,
 			    __apic_read(apic, APIC_TMCCT));
+	memcpy(s->regs, apic->regs, sizeof(s->regs));
 
 	return kvm_apic_state_fixup(apic, s, false);
 }
@@ -3050,7 +3050,7 @@ int kvm_apic_set_state(struct kvm_lapic *apic, struct kvm_lapic_state *s)
 		kvm_recalculate_apic_map(apic);
 		return r;
 	}
-	memcpy(apic->regs, s->regs, sizeof(*s));
+	memcpy(apic->regs, s->regs, sizeof(s->regs));
 
 	atomic_set_release(&map->apic_map_dirty, DIRTY);
 	kvm_recalculate_apic_map(apic);
