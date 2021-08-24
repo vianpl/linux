@@ -2941,16 +2941,16 @@ int kvm_get_apic_interrupt(struct kvm_vcpu *vcpu)
 	return vector;
 }
 
-static int kvm_apic_state_fixup(struct kvm_vcpu *vcpu,
+static int kvm_apic_state_fixup(struct kvm_lapic *apic,
 		struct kvm_lapic_state *s, bool set)
 {
-	if (apic_x2apic_mode(vcpu->arch.apic)) {
+	if (apic_x2apic_mode(apic)) {
 		u32 *id = (u32 *)(s->regs + APIC_ID);
 		u32 *ldr = (u32 *)(s->regs + APIC_LDR);
 		u64 icr;
 
-		if (vcpu->kvm->arch.x2apic_format) {
-			if (*id != vcpu->vcpu_id)
+		if (apic->vcpu->kvm->arch.x2apic_format) {
+			if (*id != apic->vcpu->vcpu_id)
 				return -EINVAL;
 		} else {
 			if (set)
@@ -2979,35 +2979,35 @@ static int kvm_apic_state_fixup(struct kvm_vcpu *vcpu,
 	return 0;
 }
 
-int kvm_apic_get_state(struct kvm_vcpu *vcpu, struct kvm_lapic_state *s)
+int kvm_apic_get_state(struct kvm_lapic *apic, struct kvm_lapic_state *s)
 {
-	memcpy(s->regs, vcpu->arch.apic->regs, sizeof(*s));
+	memcpy(s->regs, apic->regs, sizeof(*s));
 
 	/*
 	 * Get calculated timer current count for remaining timer period (if
 	 * any) and store it in the returned register set.
 	 */
 	__kvm_lapic_set_reg(s->regs, APIC_TMCCT,
-			    __apic_read(vcpu->arch.apic, APIC_TMCCT));
+			    __apic_read(apic, APIC_TMCCT));
 
-	return kvm_apic_state_fixup(vcpu, s, false);
+	return kvm_apic_state_fixup(apic, s, false);
 }
 
-int kvm_apic_set_state(struct kvm_vcpu *vcpu, struct kvm_lapic_state *s)
+int kvm_apic_set_state(struct kvm_lapic *apic, struct kvm_lapic_state *s)
 {
-	struct kvm_lapic *apic = vcpu->arch.apic;
+	struct kvm_vcpu *vcpu = apic->vcpu;
 	int r;
 
 	kvm_lapic_set_base(vcpu, vcpu->arch.apic_base);
 	/* set SPIV separately to get count of SW disabled APICs right */
 	apic_set_spiv(apic, *((u32 *)(s->regs + APIC_SPIV)));
 
-	r = kvm_apic_state_fixup(vcpu, s, true);
+	r = kvm_apic_state_fixup(apic, s, true);
 	if (r) {
 		kvm_recalculate_apic_map(vcpu->kvm);
 		return r;
 	}
-	memcpy(vcpu->arch.apic->regs, s->regs, sizeof(*s));
+	memcpy(apic->regs, s->regs, sizeof(*s));
 
 	atomic_set_release(&vcpu->kvm->arch.apic_map_dirty, DIRTY);
 	kvm_recalculate_apic_map(vcpu->kvm);
@@ -3022,16 +3022,25 @@ int kvm_apic_set_state(struct kvm_vcpu *vcpu, struct kvm_lapic_state *s)
 	__start_apic_timer(apic, APIC_TMCCT);
 	kvm_lapic_set_reg(apic, APIC_TMCCT, 0);
 	kvm_apic_update_apicv(vcpu);
-	if (apic->apicv_active) {
-		static_call_cond(kvm_x86_apicv_post_state_restore)(vcpu);
-		static_call_cond(kvm_x86_hwapic_irr_update)(vcpu, apic_find_highest_irr(apic));
-		static_call_cond(kvm_x86_hwapic_isr_update)(apic_find_highest_isr(apic));
-	}
-	kvm_make_request(KVM_REQ_EVENT, vcpu);
-	if (ioapic_in_kernel(vcpu->kvm))
-		kvm_rtc_eoi_tracking_restore_one(vcpu);
+	apic->highest_isr_cache = -1;
 
-	vcpu->arch.apic_arb_prio = 0;
+	/* Commit global changes only if this is the effective apic */
+	if (is_effective_apic(apic)) {
+		kvm_lapic_set_base(vcpu, vcpu->arch.apic_base);
+		kvm_recalculate_apic_map(vcpu->kvm);
+
+		if (apic->apicv_active ) {
+			static_call_cond(kvm_x86_apicv_post_state_restore)(vcpu);
+			static_call_cond(kvm_x86_hwapic_irr_update)(vcpu, apic_find_highest_irr(apic));
+			static_call_cond(kvm_x86_hwapic_isr_update)(apic_find_highest_isr(apic));
+		}
+
+		if (ioapic_in_kernel(vcpu->kvm))
+			kvm_rtc_eoi_tracking_restore_one(vcpu);
+
+		vcpu->arch.apic_arb_prio = 0;
+	}
+	kvm_make_request(KVM_REQ_EVENT, apic->vcpu);
 
 	return 0;
 }
