@@ -187,7 +187,8 @@ struct kvm_hyperv_exit {
 	union {
 		struct {
 			__u32 msr;
-			__u32 pad2;
+			__u8 vtl;
+			__u8 pad[3];
 			__u64 control;
 			__u64 evt_page;
 			__u64 msg_page;

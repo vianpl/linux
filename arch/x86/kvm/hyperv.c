@@ -259,6 +259,7 @@ static void synic_exit(struct kvm_vcpu_hv_synic *synic, u32 msr)
 	hv_vcpu->exit.u.synic.control = synic->control;
 	hv_vcpu->exit.u.synic.evt_page = synic->evt_page;
 	hv_vcpu->exit.u.synic.msg_page = synic->msg_page;
+	hv_vcpu->exit.u.synic.vtl = get_active_vtl(vcpu);
 
 	kvm_make_request(KVM_REQ_HV_EXIT, vcpu);
 }
