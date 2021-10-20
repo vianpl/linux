@@ -3094,6 +3094,13 @@ static bool do_vtl_switch(struct kvm_vcpu *vcpu, int vtl)
 
 	/* Set new effective VTL */
 	set_active_vtl(vcpu, vtl);
+
+	/* Guest might have been executing hlt/mwait/pause instructions in previous VTL,
+	 * putting VCPU in an inactive state. Clear that for target VTL so that we are not stuck.
+	 * When we will switch back, previous VTL will see a spurios un-halt, which should be fine */
+	if (kvm_x86_ops.clear_hlt)
+		kvm_x86_ops.clear_hlt(vcpu);
+
 	return true;
 }
 

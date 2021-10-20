@@ -8309,6 +8309,8 @@ static struct kvm_x86_ops vmx_x86_ops __initdata = {
 	.complete_emulated_msr = kvm_complete_insn_gp,
 
 	.vcpu_deliver_sipi_vector = kvm_vcpu_deliver_sipi_vector,
+
+	.clear_hlt = vmx_clear_hlt,
 };
 
 static unsigned int vmx_handle_intel_pt_intr(void)
