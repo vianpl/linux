@@ -4938,7 +4938,7 @@ void kvm_arch_vcpu_put(struct kvm_vcpu *vcpu)
 static int kvm_vcpu_ioctl_get_lapic(struct kvm_vcpu *vcpu, u8 vtl_num,
 				    struct kvm_lapic_state *s)
 {
-	struct kvm_vcpu_hv_vtl *vtl = &vcpu_to_hv_vcpu(vcpu)->vtl[vtl_num];
+	struct kvm_vcpu_hv_vtl *vtl = &to_hv_vcpu(vcpu)->vtl[vtl_num];
 
 	static_call_cond(kvm_x86_sync_pir_to_irr)(vcpu);
 	return kvm_apic_get_state(vtl->apic, s);
@@ -4948,7 +4948,7 @@ static int kvm_vcpu_ioctl_set_lapic(struct kvm_vcpu *vcpu, u8 vtl_num,
 				    struct kvm_lapic_state *s)
 {
 	int r;
-	struct kvm_vcpu_hv_vtl *vtl = &vcpu_to_hv_vcpu(vcpu)->vtl[vtl_num];
+	struct kvm_vcpu_hv_vtl *vtl = &to_hv_vcpu(vcpu)->vtl[vtl_num];
 
 	r = kvm_apic_set_state(vtl->apic, s);
 	if (r)

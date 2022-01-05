@@ -264,6 +264,18 @@ static void synic_exit(struct kvm_vcpu_hv_synic *synic, u32 msr)
 	kvm_make_request(KVM_REQ_HV_EXIT, vcpu);
 }
 
+static void overlay_exit(struct kvm_vcpu *vcpu, u8 vtl, u32 msr, u64 gpa)
+{
+	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
+
+	hv_vcpu->exit.type = KVM_EXIT_HYPERV_OVERLAY;
+	hv_vcpu->exit.u.overlay.msr = msr;
+	hv_vcpu->exit.u.overlay.vtl = vtl;
+	hv_vcpu->exit.u.overlay.gpa = gpa;
+
+	kvm_make_request(KVM_REQ_HV_EXIT, vcpu);
+}
+
 static int synic_set_msr(struct kvm_vcpu_hv_synic *synic,
 			 u32 msr, u64 data, bool host)
 {
@@ -2281,7 +2293,8 @@ static u64 set_vp_register(u32 name,
 		vtl->pending_event.as_u64[1] = val->high;
 		break;
 	case HV_REGISTER_VP_ASSIST_PAGE:
-		return set_vp_assist_page(target_vcpu, val->low, vtl_num);
+		overlay_exit(target_vcpu, vtl_num, HV_X64_MSR_VP_ASSIST_PAGE, val->low);
+		break;
 	case HV_REGISTER_VSM_VINA:
 	case HV_X64_REGISTER_CR_INTERCEPT_CONTROL:
 	case HV_X64_REGISTER_CR_INTERCEPT_CR0_MASK:

@@ -182,6 +182,7 @@ struct kvm_hyperv_exit {
 #define KVM_EXIT_HYPERV_SYNIC          1
 #define KVM_EXIT_HYPERV_HCALL          2
 #define KVM_EXIT_HYPERV_SYNDBG         3
+#define KVM_EXIT_HYPERV_OVERLAY        4
 	__u32 type;
 	__u32 pad1;
 	union {
@@ -207,6 +208,12 @@ struct kvm_hyperv_exit {
 			__u64 recv_page;
 			__u64 pending_page;
 		} syndbg;
+		struct {
+			__u32 msr;
+			__u8 vtl;
+			__u8 pad[3];
+			__u64 gpa;
+		} overlay;
 	} u;
 };
 
