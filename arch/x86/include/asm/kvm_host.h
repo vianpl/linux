@@ -638,6 +638,7 @@ struct kvm_vcpu_hv_vtl {
 	u64 msr_cstar;
 	u64 msr_sfmask;
 	unsigned long dr7;
+	union hv_x64_pending_exception_event pending_event;
 
 	/* Per-VP, per-VTL config register set by upper VTL for lower VTL (us).
 	 * Does not exist for highest VTL possible */

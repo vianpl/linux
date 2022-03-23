@@ -2276,6 +2276,10 @@ static u64 set_vp_register(u32 name,
 		if (!set_vsm_vp_secure_vtl_config(target_vcpu, vtl_num, name, val->low))
 			return HV_STATUS_INVALID_PARAMETER;
 		break;
+	case HV_X64_REGISTER_PENDING_EVENT0:
+		vtl->pending_event.as_u64[0] = val->low;
+		vtl->pending_event.as_u64[1] = val->high;
+		break;
 	case HV_REGISTER_VP_ASSIST_PAGE:
 		return set_vp_assist_page(target_vcpu, val->low, vtl_num);
 	case HV_REGISTER_VSM_VINA:
@@ -3250,6 +3254,23 @@ static bool load_vtl(struct kvm_vcpu *vcpu, struct kvm_vcpu_hv_vtl *vtl)
 
 	if (lapic_in_kernel(vcpu))
 		kvm_set_effective_apic(vcpu, vtl->apic);
+
+	/* Check for pending events at this VTL */
+	if (vtl->pending_event.event_pending) {
+		switch (vtl->pending_event.event_type) {
+		case HV_X64_PENDING_EVENT_EXCEPTION:
+			vtl->pending_event.deliver_error_code ?
+				kvm_queue_exception_e(vcpu, vtl->pending_event.vector, vtl->pending_event.error_code):
+				kvm_queue_exception(vcpu, vtl->pending_event.vector);
+			break;
+		default:
+			pr_err("Unknown event type %d\n", vtl->pending_event.event_type);
+			ret |= 1;
+			break;
+		}
+
+		vtl->pending_event.event_pending = 0;
+	}
 
 	mutex_unlock(&vtl->lock);
 	return ret == 0;

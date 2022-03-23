@@ -326,6 +326,7 @@ struct hv_gpa_range_for_visibility {
 } __packed;
 
 /* VSM registers */
+#define HV_X64_REGISTER_PENDING_EVENT0		0x00010004
 #define HV_X64_REGISTER_RSP			0x00020004
 #define HV_X64_REGISTER_RIP			0x00020010
 #define HV_X64_REGISTER_RFLAGS			0x00020011
@@ -413,6 +414,54 @@ struct hv_tsc_emulation_status {
 
 #define HV_X64_MSR_TSC_REFERENCE_ENABLE		0x00000001
 #define HV_X64_MSR_TSC_REFERENCE_ADDRESS_SHIFT	12
+
+enum hv_x64_pending_interruption_type {
+	HV_X64_PENDING_INTERRUPT = 0,
+	HV_X64_PENDING_NMI = 2,
+	HV_X64_PENDING_EXCEPTION = 3,
+	HV_X64_PENDING_SOFTWARE_INTERRUPT = 4,
+	HV_X64_PENDING_PRIVILEGED_SOFTWARE_EXCEPTION = 5,
+	HV_X64_PENDING_SOFTWARE_EXCEPTION = 6
+};
+
+union hv_x64_pending_interruption_register {
+	__u64 as_u64;
+	struct {
+		__u32 interruption_pending:1;
+		__u32 interruption_type:3;
+		__u32 deliver_error_code:1;
+		__u32 instruction_length:4;
+		__u32 _reserved:7;
+		__u32 interruption_vector:16;
+		__u32 error_code;
+	};
+};
+
+enum hv_x64_pending_event_type {
+	HV_X64_PENDING_EVENT_EXCEPTION = 0,
+	HV_X64_PENDING_EVENT_MEMORY_INTERCEPT = 1,
+	HV_X64_PENDING_EVENT_NESTED_MEMORY_INTERCEPT = 2,
+	HV_X64_PENDING_EVENT_VIRTUALIZATION_FAULT = 3,
+	HV_X64_PENDING_EVENT_HYPERCALL_OUTPUT = 4,
+	HV_X64_PENDING_EXT_INT = 5,
+	HV_X64_PENDING_EVENT_SHADOW_IPT = 6
+};
+
+union hv_x64_pending_exception_event {
+	__u64 as_u64[2];
+	struct {
+		struct {
+			__u32 event_pending:1;
+			__u32 event_type:3;
+			__u32 _reserved0:4;
+			__u32 deliver_error_code:1;
+			__u32 _reserved1:7;
+			__u32 vector:16;
+		};
+		__u32 error_code;
+		__u64 exception_parameter;
+	};
+};
 
 /* Number of XMM registers used in hypercall input/output */
 #define HV_HYPERCALL_MAX_XMM_REGISTERS		6
