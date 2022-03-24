@@ -834,7 +834,7 @@ static void account_shadowed(struct kvm *kvm, struct kvm_mmu_page *sp)
 
 	kvm->arch.indirect_shadow_pages++;
 	gfn = sp->gfn;
-	slots = kvm_memslots_for_spte_role(kvm, sp->role);
+	slots = kvm_memslots_for_spte_role(kvm, &sp->role);
 	slot = __gfn_to_memslot(slots, gfn);
 
 	/* the non-leaf shadow pages are keeping readonly. */
@@ -883,7 +883,7 @@ static void unaccount_shadowed(struct kvm *kvm, struct kvm_mmu_page *sp)
 
 	kvm->arch.indirect_shadow_pages--;
 	gfn = sp->gfn;
-	slots = kvm_memslots_for_spte_role(kvm, sp->role);
+	slots = kvm_memslots_for_spte_role(kvm, &sp->role);
 	slot = __gfn_to_memslot(slots, gfn);
 	if (sp->role.level > PG_LEVEL_4K)
 		return kvm_slot_page_track_remove_page(kvm, slot, gfn,
@@ -1115,7 +1115,7 @@ static void rmap_remove(struct kvm *kvm, u64 *spte)
 	 * so we have to determine which memslots to use based on context
 	 * information in sp->role.
 	 */
-	slots = kvm_memslots_for_spte_role(kvm, sp->role);
+	slots = kvm_memslots_for_spte_role(kvm, &sp->role);
 
 	slot = __gfn_to_memslot(slots, gfn);
 	rmap_head = gfn_to_rmap(gfn, sp->role.level, slot);
@@ -7134,7 +7134,7 @@ static void kvm_recover_nx_huge_pages(struct kvm *kvm)
 		if (atomic_read(&kvm->nr_memslots_dirty_logging)) {
 			struct kvm_memslots *slots;
 
-			slots = kvm_memslots_for_spte_role(kvm, sp->role);
+			slots = kvm_memslots_for_spte_role(kvm, &sp->role);
 			slot = __gfn_to_memslot(slots, sp->gfn);
 			WARN_ON_ONCE(!slot);
 		}

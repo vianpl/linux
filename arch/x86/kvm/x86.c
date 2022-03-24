@@ -13046,7 +13046,23 @@ static inline bool kvm_vcpu_has_events(struct kvm_vcpu *vcpu)
 
 int kvm_address_space_id_for_vtl(u8 vtl)
 {
-	return 0;
+	return vtl;
+}
+
+int kvm_arch_vcpu_memslots_id(struct kvm_vcpu *vcpu)
+{
+	if (vcpu->arch.hflags & HF_SMM_MASK)
+		return KVM_SMM_ADDRESS_SPACE_ID;
+
+	return kvm_address_space_id_for_vtl(get_active_vtl(vcpu));
+}
+
+struct kvm_memslots *kvm_memslots_for_spte_role(struct kvm *kvm, union kvm_mmu_page_role *role)
+{
+	if (role->smm)
+		return __kvm_memslots(kvm, KVM_SMM_ADDRESS_SPACE_ID);
+
+	return __kvm_memslots(kvm, kvm_address_space_id_for_vtl(role->vtl));
 }
 
 int kvm_arch_vcpu_runnable(struct kvm_vcpu *vcpu)
