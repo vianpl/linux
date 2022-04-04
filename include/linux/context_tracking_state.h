@@ -6,6 +6,10 @@
 #include <linux/static_key.h>
 #include <linux/context_tracking_irq.h>
 
+#ifdef CONFIG_HAVE_CONTEXT_TRACKING_WORK
+#include <asm/context_tracking_work.h>
+#endif
+
 /* Offset to allow distinguishing irq vs. task-based idle entry/exit. */
 #define DYNTICK_IRQ_NONIDLE	((LONG_MAX / 2) + 1)
 
@@ -18,11 +22,12 @@ enum ctx_state {
 	CONTEXT_MAX		= 4,
 };
 
-/* Even value for idle, else odd. */
-#define RCU_DYNTICKS_IDX CONTEXT_MAX
+#define CT_WORK_PENDING CONTEXT_MAX
+#define CT_STATE_MASK (CT_WORK_PENDING - 1)
 
-#define CT_STATE_MASK (CONTEXT_MAX - 1)
-#define CT_DYNTICKS_MASK (~CT_STATE_MASK)
+/* Even value for idle, else odd. */
+#define RCU_DYNTICKS_IDX (CT_WORK_PENDING << 1)
+#define CT_DYNTICKS_MASK ~(RCU_DYNTICKS_IDX - 1)
 
 struct context_tracking {
 #ifdef CONFIG_CONTEXT_TRACKING_USER
@@ -36,6 +41,7 @@ struct context_tracking {
 	int recursion;
 #endif
 #ifdef CONFIG_CONTEXT_TRACKING
+	atomic_t work;
 	atomic_t state;
 #endif
 #ifdef CONFIG_CONTEXT_TRACKING_IDLE

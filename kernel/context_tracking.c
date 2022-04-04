@@ -72,6 +72,70 @@ static __always_inline void rcu_dynticks_task_trace_exit(void)
 #endif /* #ifdef CONFIG_TASKS_TRACE_RCU */
 }
 
+#ifdef CONFIG_HAVE_CONTEXT_TRACKING_WORK
+static noinstr void ct_enter_work(void)
+{
+	struct context_tracking *ct = this_cpu_ptr(&context_tracking);
+	int work = arch_atomic_read(&ct->work);
+
+	WARN_ON_ONCE(work & ~(CONTEXT_WORK_MAX - 1));
+
+	for (int i = BIT(ffs(work) - 1); work && i < CONTEXT_WORK_MAX; i <<= 1) {
+		if (!(work & i))
+			continue;
+
+		/*
+		 * arch_context_tracking_work() must be noinstr, non-blocking,
+		 * NMI safe and deal with spurious calls.
+		 */
+		arch_context_tracking_work(i);
+
+		work = arch_atomic_fetch_andnot(i, &ct->work) & ~i;
+	}
+
+	smp_mb__before_atomic();
+	arch_atomic_andnot(CT_WORK_PENDING, &ct->state);
+}
+
+bool context_tracking_set_cpu_work(unsigned int cpu, unsigned int work)
+{
+	struct context_tracking *ct = per_cpu_ptr(&context_tracking, cpu);
+	unsigned int old_state, state;
+
+	preempt_disable();
+	old_state = state = atomic_read(&ct->state);
+	if (rcu_dynticks_in_eqs(state)) {
+		/* ctrl-dep */
+		atomic_or(work, &ct->work);
+
+		/*
+		 * We might race with another CPU enabling work. As long as the
+		 * target CPU is still in the same execution context (same
+		 * dynticks seq) we should be OK.
+		 *
+		 * Note that a failed cmpxchg imposes no ordering, so retry the
+		 * cmpxchg with the corrected state to ensure the target CPU
+		 * sees this CPU's ct->work update.
+		 */
+		do {
+			if (atomic_try_cmpxchg(&ct->state, &state, state | CT_WORK_PENDING)) {
+				preempt_enable();
+				return true;
+			}
+		} while (state == (old_state | CT_WORK_PENDING));
+	}
+
+	preempt_enable();
+	return false;
+}
+#else
+static __always_inline void ct_enter_work(void) { }
+void context_tracking_set_cpu_work(void)
+{
+	return false;
+}
+#endif
+
 /*
  * Record entry into an extended quiescent state.  This is only to be
  * called when not already in an extended quiescent state, that is,
@@ -108,6 +172,8 @@ static noinstr void ct_kernel_enter_state(int offset)
 	 * critical section.
 	 */
 	seq = ct_state_inc(offset);
+	if (seq & CT_WORK_PENDING)
+		ct_enter_work();
 	// RCU is now watching.  Better not be in an extended quiescent state!
 	rcu_dynticks_task_trace_exit();  // After ->dynticks update!
 	WARN_ON_ONCE(IS_ENABLED(CONFIG_RCU_EQS_DEBUG) && !(seq & RCU_DYNTICKS_IDX));
@@ -259,6 +325,7 @@ void noinstr ct_nmi_enter(void)
 {
 	long incby = 2;
 	struct context_tracking *ct = this_cpu_ptr(&context_tracking);
+	int seq;
 
 	/* Complain about underflow. */
 	WARN_ON_ONCE(ct_dynticks_nmi_nesting() < 0);
@@ -271,7 +338,8 @@ void noinstr ct_nmi_enter(void)
 	 * to be in the outermost NMI handler that interrupted an RCU-idle
 	 * period (observation due to Andy Lutomirski).
 	 */
-	if (rcu_dynticks_curr_cpu_in_eqs()) {
+	seq = arch_atomic_read(&ct->state);
+	if (rcu_dynticks_in_eqs(seq)) {
 
 		if (!in_nmi())
 			rcu_dynticks_task_exit();
@@ -291,6 +359,21 @@ void noinstr ct_nmi_enter(void)
 		instrumentation_begin();
 		rcu_irq_enter_check_tick();
 	} else  {
+		/*
+		 * Entering NMI context: we may have interrupted a task,
+		 * interrupt, or even another NMI that just exited EQS but
+		 * didn't yet run its context tracking entry work. We need to
+		 * run it ourselves before continuing.
+		 *
+		 * Note that we already exited EQS, so we can count on that
+		 * operation's memory barrier to ensure we see an up-to-date
+		 * ct->work.
+		 *
+		 * Also, this is not necessary on regular irq entry code as it
+		 * runs with interrupts disabled.
+		 */
+		if (seq & CT_WORK_PENDING)
+			ct_enter_work();
 		instrumentation_begin();
 	}
 
