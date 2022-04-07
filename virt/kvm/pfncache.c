@@ -76,10 +76,8 @@ void gfn_to_pfn_cache_invalidate_start(struct kvm *kvm, unsigned long start,
 	}
 }
 
-bool kvm_gpc_check(struct gfn_to_pfn_cache *gpc, unsigned long len)
+static bool memslots_gpc_check(struct kvm_memslots *slots, struct gfn_to_pfn_cache *gpc, unsigned long len)
 {
-	struct kvm_memslots *slots = kvm_memslots(gpc->kvm);
-
 	if (!gpc->active)
 		return false;
 
@@ -94,7 +92,26 @@ bool kvm_gpc_check(struct gfn_to_pfn_cache *gpc, unsigned long len)
 
 	return true;
 }
+
+bool kvm_gpc_check(struct gfn_to_pfn_cache *gpc, unsigned long len)
+{
+	struct kvm_memslots *slots = kvm_memslots(gpc->kvm);
+
+	return memslots_gpc_check(slots, gpc, len);
+}
 EXPORT_SYMBOL_GPL(kvm_gpc_check);
+
+bool kvm_vcpu_gpc_check(struct kvm_vcpu *vcpu, struct gfn_to_pfn_cache *gpc, unsigned long len)
+{
+	struct kvm_memslots *slots = kvm_vcpu_memslots(vcpu);
+	int as_id = kvm_arch_vcpu_memslots_id(vcpu);
+
+	if (gpc->memslot->as_id != as_id)
+		return false;
+
+	return memslots_gpc_check(slots, gpc, len);
+}
+EXPORT_SYMBOL_GPL(kvm_vcpu_gpc_check);
 
 static void gpc_unmap_khva(kvm_pfn_t pfn, void *khva)
 {
@@ -236,10 +253,9 @@ out_error:
 	return -EFAULT;
 }
 
-static int __kvm_gpc_refresh(struct gfn_to_pfn_cache *gpc, gpa_t gpa,
+static int __kvm_gpc_refresh(struct kvm_memslots *slots, struct gfn_to_pfn_cache *gpc, gpa_t gpa,
 			     unsigned long len)
 {
-	struct kvm_memslots *slots = kvm_memslots(gpc->kvm);
 	unsigned long page_offset = gpa & ~PAGE_MASK;
 	bool unmap_old = false;
 	unsigned long old_uhva;
@@ -333,9 +349,17 @@ out_unlock:
 
 int kvm_gpc_refresh(struct gfn_to_pfn_cache *gpc, unsigned long len)
 {
-	return __kvm_gpc_refresh(gpc, gpc->gpa, len);
+	struct kvm_memslots *slots = kvm_memslots(gpc->kvm);
+	return __kvm_gpc_refresh(slots, gpc, gpc->gpa, len);
 }
 EXPORT_SYMBOL_GPL(kvm_gpc_refresh);
+
+int kvm_vcpu_gpc_refresh(struct kvm_vcpu *vcpu, struct gfn_to_pfn_cache *gpc, unsigned long len)
+{
+	struct kvm_memslots *slots = kvm_vcpu_memslots(vcpu);
+	return __kvm_gpc_refresh(slots, gpc, gpc->gpa, len);
+}
+EXPORT_SYMBOL_GPL(kvm_vcpu_gpc_refresh);
 
 void kvm_gpc_init(struct gfn_to_pfn_cache *gpc, struct kvm *kvm,
 		  struct kvm_vcpu *vcpu, enum pfn_cache_usage usage)
@@ -357,6 +381,7 @@ EXPORT_SYMBOL_GPL(kvm_gpc_init);
 int kvm_gpc_activate(struct gfn_to_pfn_cache *gpc, gpa_t gpa, unsigned long len)
 {
 	struct kvm *kvm = gpc->kvm;
+	struct kvm_memslots *slots = kvm_memslots(kvm);
 
 	if (!gpc->active) {
 		if (KVM_BUG_ON(gpc->valid, kvm))
@@ -375,9 +400,35 @@ int kvm_gpc_activate(struct gfn_to_pfn_cache *gpc, gpa_t gpa, unsigned long len)
 		gpc->active = true;
 		write_unlock_irq(&gpc->lock);
 	}
-	return __kvm_gpc_refresh(gpc, gpa, len);
+	return __kvm_gpc_refresh(slots, gpc, gpa, len);
 }
 EXPORT_SYMBOL_GPL(kvm_gpc_activate);
+
+int kvm_vcpu_gpc_activate(struct kvm_vcpu *vcpu, struct gfn_to_pfn_cache *gpc, gpa_t gpa, unsigned long len)
+{
+	struct kvm *kvm = gpc->kvm;
+	struct kvm_memslots *slots = kvm_vcpu_memslots(vcpu);
+
+	if (!gpc->active) {
+		if (KVM_BUG_ON(gpc->valid, kvm))
+			return -EIO;
+
+		spin_lock(&kvm->gpc_lock);
+		list_add(&gpc->list, &kvm->gpc_list);
+		spin_unlock(&kvm->gpc_lock);
+
+		/*
+		 * Activate the cache after adding it to the list, a concurrent
+		 * refresh must not establish a mapping until the cache is
+		 * reachable by mmu_notifier events.
+		 */
+		write_lock_irq(&gpc->lock);
+		gpc->active = true;
+		write_unlock_irq(&gpc->lock);
+	}
+	return __kvm_gpc_refresh(slots, gpc, gpa, len);
+}
+EXPORT_SYMBOL_GPL(kvm_vcpu_gpc_activate);
 
 void kvm_gpc_deactivate(struct gfn_to_pfn_cache *gpc)
 {

@@ -1188,6 +1188,18 @@ int kvm_write_guest_cached(struct kvm *kvm, struct gfn_to_hva_cache *ghc,
 int kvm_write_guest_offset_cached(struct kvm *kvm, struct gfn_to_hva_cache *ghc,
 				  void *data, unsigned int offset,
 				  unsigned long len);
+int kvm_vcpu_read_guest_cached(struct kvm_vcpu *vcpu, struct gfn_to_hva_cache *ghc,
+			       void *data, unsigned long len);
+int kvm_vcpu_read_guest_offset_cached(struct kvm_vcpu *vcpu, struct gfn_to_hva_cache *ghc,
+				      void *data, unsigned int offset,
+				      unsigned long len);
+int kvm_vcpu_write_guest_cached(struct kvm_vcpu *vcpu, struct gfn_to_hva_cache *ghc,
+			   void *data, unsigned long len);
+int kvm_vcpu_write_guest_offset_cached(struct kvm_vcpu *vcpu, struct gfn_to_hva_cache *ghc,
+				       void *data, unsigned int offset,
+				       unsigned long len);
+int kvm_vcpu_gfn_to_hva_cache_init(struct kvm_vcpu *vcpu, struct gfn_to_hva_cache *ghc,
+			      gpa_t gpa, unsigned long len);
 int kvm_gfn_to_hva_cache_init(struct kvm *kvm, struct gfn_to_hva_cache *ghc,
 			      gpa_t gpa, unsigned long len);
 int kvm_asid_gfn_to_hva_cache_init(struct kvm *kvm, int as_id,
@@ -1305,6 +1317,7 @@ void kvm_gpc_init(struct gfn_to_pfn_cache *gpc, struct kvm *kvm,
  */
 int kvm_gpc_activate(struct gfn_to_pfn_cache *gpc, gpa_t gpa, unsigned long len);
 
+int kvm_vcpu_gpc_activate(struct kvm_vcpu *vcpu, struct gfn_to_pfn_cache *gpc, gpa_t gpa, unsigned long len);
 /**
  * kvm_gpc_check - check validity of a gfn_to_pfn_cache.
  *
@@ -1322,6 +1335,8 @@ int kvm_gpc_activate(struct gfn_to_pfn_cache *gpc, gpa_t gpa, unsigned long len)
  * still hold a read lock on kvm->scru for the memslot checks.
  */
 bool kvm_gpc_check(struct gfn_to_pfn_cache *gpc, unsigned long len);
+
+bool kvm_vcpu_gpc_check(struct kvm_vcpu *vcpu, struct gfn_to_pfn_cache *gpc, unsigned long len);
 
 /**
  * kvm_gpc_refresh - update a previously initialized cache.
@@ -1341,6 +1356,7 @@ bool kvm_gpc_check(struct gfn_to_pfn_cache *gpc, unsigned long len);
  */
 int kvm_gpc_refresh(struct gfn_to_pfn_cache *gpc, unsigned long len);
 
+int kvm_vcpu_gpc_refresh(struct kvm_vcpu *vcpu, struct gfn_to_pfn_cache *gpc, unsigned long len);
 /**
  * kvm_gpc_deactivate - deactivate and unlink a gfn_to_pfn_cache.
  *
