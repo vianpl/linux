@@ -18,6 +18,7 @@
 #include <linux/mmu_context.h>
 #include <linux/bsearch.h>
 #include <linux/sync_core.h>
+#include <linux/context_tracking.h>
 #include <asm/text-patching.h>
 #include <asm/alternative.h>
 #include <asm/sections.h>
@@ -1226,9 +1227,14 @@ static void do_sync_core(void *info)
 	sync_core();
 }
 
+static bool do_sync_core_cond(int cpu, void *info)
+{
+	return !context_tracking_set_cpu_work(cpu, CONTEXT_WORK_SYNC);
+}
+
 void text_poke_sync(void)
 {
-	on_each_cpu(do_sync_core, NULL, 1);
+	on_each_cpu_cond(do_sync_core_cond, do_sync_core, NULL, 1);
 }
 
 struct text_poke_loc {
