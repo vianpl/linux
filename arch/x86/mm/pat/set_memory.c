@@ -20,6 +20,7 @@
 #include <linux/kernel.h>
 #include <linux/cc_platform.h>
 #include <linux/set_memory.h>
+#include <linux/context_tracking.h>
 
 #include <asm/e820/api.h>
 #include <asm/processor.h>
@@ -360,6 +361,11 @@ static void __cpa_flush_tlb(void *data)
 		flush_tlb_one_kernel(fix_addr(__cpa_addr(cpa, i)));
 }
 
+static bool __cpa_flush_tlb_cond(int cpu, void *info)
+{
+	return !context_tracking_set_cpu_work(cpu, CONTEXT_WORK_TLBI);
+}
+
 static void cpa_flush(struct cpa_data *data, int cache)
 {
 	struct cpa_data *cpa = data;
@@ -375,7 +381,7 @@ static void cpa_flush(struct cpa_data *data, int cache)
 	if (cpa->force_flush_all || cpa->numpages > tlb_single_page_flush_ceiling)
 		flush_tlb_all();
 	else
-		on_each_cpu(__cpa_flush_tlb, cpa, 1);
+		on_each_cpu_cond(__cpa_flush_tlb_cond, __cpa_flush_tlb, cpa, 1);
 
 	if (!cache)
 		return;
