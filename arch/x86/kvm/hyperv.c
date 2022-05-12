@@ -970,16 +970,21 @@ static int stimer_get_count(struct kvm_vcpu_hv_stimer *stimer, u64 *pcount)
 }
 
 static int synic_deliver_msg(struct kvm_vcpu_hv_synic *synic, u32 sint,
-			     struct hv_message *src_msg, bool no_retry, bool overwrite)
+			     struct hv_message *src_msg, bool no_retry, bool overwrite,
+			     bool skip_irq)
 {
 	struct kvm_vcpu *vcpu = hv_synic_to_vcpu(synic);
 	int msg_off = offsetof(struct hv_message_page, sint_message[sint]);
+	bool defer_write = synic->vtl != get_active_vtl(vcpu);
 	gfn_t msg_page_gfn;
 	struct hv_message_header hv_hdr;
 	int r;
 
 	if (!(synic->msg_page & HV_SYNIC_SIMP_ENABLE))
 		return -ENOENT;
+
+	if (defer_write)
+		goto out_set_irq;
 
 	msg_page_gfn = synic->msg_page >> PAGE_SHIFT;
 
@@ -1015,18 +1020,20 @@ static int synic_deliver_msg(struct kvm_vcpu_hv_synic *synic, u32 sint,
 	r = kvm_vcpu_write_guest_page(vcpu, msg_page_gfn, src_msg, msg_off,
 				      sizeof(src_msg->header) +
 				      src_msg->header.payload_size);
-	if (r < 0)
+	if (r < 0 || skip_irq)
 		return r;
 
+out_set_irq:
 	r = synic_set_irq(synic, sint);
 	if (r < 0)
 		return r;
 	if (r == 0)
 		return -EFAULT;
-	return 0;
+
+	return defer_write ? 1 : 0;
 }
 
-static int stimer_send_msg(struct kvm_vcpu_hv_stimer *stimer)
+static int stimer_send_msg(struct kvm_vcpu_hv_stimer *stimer, bool skip_irq)
 {
 	struct kvm_vcpu_hv_synic *synic = stimer_to_synic(stimer);
 	struct hv_message *msg = &stimer->msg;
@@ -1043,7 +1050,7 @@ static int stimer_send_msg(struct kvm_vcpu_hv_stimer *stimer)
 	payload->delivery_time = get_time_ref_counter(hv_synic_to_vcpu(synic)->kvm);
 	return synic_deliver_msg(synic,
 				 stimer->config.sintx, msg,
-				 no_retry, false);
+				 no_retry, false, skip_irq);
 }
 
 static int stimer_notify_direct(struct kvm_vcpu_hv_stimer *stimer)
@@ -1060,13 +1067,20 @@ static int stimer_notify_direct(struct kvm_vcpu_hv_stimer *stimer)
 	return 0;
 }
 
-static void stimer_expiration(struct kvm_vcpu_hv_stimer *stimer)
+static int stimer_expiration(struct kvm_vcpu_hv_stimer *stimer, bool skip_irq)
 {
 	int r, direct = stimer->config.direct_mode;
 
+	/* For IRQ to be skipped, the message deliverly should have been tried
+	 * at least once before. Since we don't want to keep track of those
+	 * timers which we've already sent an IRQ for, we can look at the
+	 * msg_pending status to discard the skip_irq flag */
+	if (skip_irq && !stimer->msg_pending)
+		skip_irq = false;
+
 	stimer->msg_pending = true;
 	if (!direct)
-		r = stimer_send_msg(stimer);
+		r = stimer_send_msg(stimer, skip_irq);
 	else
 		r = stimer_notify_direct(stimer);
 	trace_kvm_hv_stimer_expiration(hv_stimer_to_vcpu(stimer)->vcpu_id,
@@ -1076,9 +1090,10 @@ static void stimer_expiration(struct kvm_vcpu_hv_stimer *stimer)
 		if (!(stimer->config.periodic))
 			stimer->config.enable = 0;
 	}
+	return r;
 }
 
-static void synic_process_stimers(struct kvm_vcpu_hv_synic *synic)
+static void synic_process_stimers(struct kvm_vcpu_hv_synic *synic, bool skip_irq)
 {
 	struct kvm_vcpu *vcpu = hv_synic_to_vcpu(synic);
 	struct kvm_vcpu_hv_stimer *stimer;
@@ -1095,14 +1110,14 @@ static void synic_process_stimers(struct kvm_vcpu_hv_synic *synic)
 				exp_time = stimer->exp_time;
 
 				if (exp_time) {
-					time_now =
-						get_time_ref_counter(vcpu->kvm);
-					if (time_now >= exp_time)
-						stimer_expiration(stimer);
+					time_now = get_time_ref_counter(vcpu->kvm);
+					if (time_now >= exp_time &&
+					    stimer_expiration(stimer, skip_irq) == 1)
+						/* Unable to deliver message now */
+						set_bit(i, synic->stimer_pending_bitmap);
 				}
 
-				if ((stimer->config.enable) &&
-				    stimer->count) {
+				if ((stimer->config.enable) && stimer->count) {
 					if (!stimer->msg_pending)
 						stimer_start(stimer);
 				} else
@@ -1117,7 +1132,7 @@ void kvm_hv_process_stimers(struct kvm_vcpu *vcpu)
 
 	/* We need to consider all VTLs in case some other VTL's stimer has fired */
 	for (vtl = 0; vtl < HV_NUM_VTLS; ++vtl) {
-		synic_process_stimers(&to_hv_vcpu(vcpu)->vtl[vtl].synic);
+		synic_process_stimers(&to_hv_vcpu(vcpu)->vtl[vtl].synic, false);
 	}
 }
 
@@ -3444,6 +3459,11 @@ static bool do_vtl_switch(struct kvm_vcpu *vcpu, int vtl)
 	if (kvm_x86_ops.clear_hlt)
 		kvm_x86_ops.clear_hlt(vcpu);
 
+	/* Any timer messages for inactive VTL is staged but not delivered. Check
+	 * and deliver them. Since we already injected the irq, we don't have to
+	 * inject it again. */
+	synic_process_stimers(&vtl_to->synic, true);
+
 	return true;
 }
 
@@ -3493,12 +3513,12 @@ static bool kvm_hv_vtl_call(struct kvm_vcpu *vcpu)
 }
 
 /* External VTL call entry for timer events */
-void kvm_hv_vtl_interrupt(struct kvm_vcpu *vcpu, u8 vtl)
+int kvm_hv_vtl_interrupt(struct kvm_vcpu *vcpu, u8 vtl)
 {
 	if (vtl <= get_active_vtl(vcpu)) {
 		pr_warn("Trying to do a VTL interrupt into VTL %u <= current VTL %u\n",
 			   vtl, get_active_vtl(vcpu));
-		return;
+		return -1;
 	}
 
 	trace_kvm_hv_vtl_interrupt(to_hv_vcpu(vcpu)->vp_index, get_active_vtl(vcpu), vtl);
@@ -3512,10 +3532,11 @@ void kvm_hv_vtl_interrupt(struct kvm_vcpu *vcpu, u8 vtl)
 		goto inject_ud;
 	}
 
-	return;
+	return 0;
 
 inject_ud:
 	kvm_queue_exception(vcpu, UD_VECTOR);
+	return -1;
 }
 
 static bool kvm_hv_vtl_return(struct kvm_vcpu *vcpu)
@@ -4439,7 +4460,11 @@ static void deliver_gpa_intercept(struct kvm_vcpu *vcpu, u8 target_vtl,
 	intercept->r14 = kvm_r14_read(vcpu);
 	intercept->r15 = kvm_r15_read(vcpu);
 
-	if (synic_deliver_msg(&hv_vcpu->vtl[target_vtl].synic, 0, &msg, true, true))
+	/* switch to target VTL */
+	if (kvm_hv_vtl_interrupt(vcpu, target_vtl))
+		return;
+
+	if (synic_deliver_msg(&hv_vcpu->vtl[target_vtl].synic, 0, &msg, true, true, false))
 		goto inject_ud;
 
 	return;

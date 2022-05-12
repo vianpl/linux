@@ -260,7 +260,7 @@ int kvm_hv_vcpu_flush_tlb(struct kvm_vcpu *vcpu);
  * On failure implementation will inject #UD on this vcpu (as per TLFS).
  * Must be called from vcpu thread, remote switched are not supported.
  */
-void kvm_hv_vtl_interrupt(struct kvm_vcpu *vcpu, u8 vtl);
+int kvm_hv_vtl_interrupt(struct kvm_vcpu *vcpu, u8 vtl);
 void kvm_hv_deliver_intercept(struct kvm_vcpu *vcpu);
 
 int kvm_vcpu_ioctl_get_hv_vsm_state(struct kvm_vcpu *vcpu,
