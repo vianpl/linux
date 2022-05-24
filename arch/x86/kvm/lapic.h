@@ -79,27 +79,53 @@ struct kvm_lapic {
 	gpa_t vapic_addr;
 	struct gfn_to_hva_cache vapic_cache;
 	unsigned long pending_events;
+	unsigned long apic_attention;
 	unsigned int sipi_vector;
 	int nr_lvt_entries;
+
+	struct {
+		u64 msr_val;
+		struct gfn_to_hva_cache data;
+	} pv_eoi;
+
+	/* Hyper-V: copy of vcpu's apic_base value when we are not the active apic */
+	u64 apic_base;
 };
 
 struct dest_map;
 
-int kvm_create_lapic(struct kvm_vcpu *vcpu, int timer_advance_ns);
-void kvm_free_lapic(struct kvm_vcpu *vcpu);
+struct kvm_lapic *kvm_create_lapic(struct kvm_vcpu *vcpu, int timer_advance_ns);
+void kvm_free_lapic(struct kvm_lapic *lapic);
+
+static inline int kvm_vcpu_create_apic(struct kvm_vcpu *vcpu, int timer_advance_ns)
+{
+	struct kvm_lapic *apic = kvm_create_lapic(vcpu, timer_advance_ns);
+	if (!apic)
+		return -ENOMEM;
+
+	vcpu->arch.apic = apic;
+	vcpu->arch.apic_base = apic->apic_base;
+	return 0;
+}
+
+static inline void kvm_vcpu_free_apic(struct kvm_vcpu *vcpu)
+{
+	kvm_free_lapic(vcpu->arch.apic);
+	vcpu->arch.apic = NULL;
+}
 
 int kvm_apic_has_interrupt(struct kvm_vcpu *vcpu);
 int kvm_apic_accept_pic_intr(struct kvm_vcpu *vcpu);
 int kvm_get_apic_interrupt(struct kvm_vcpu *vcpu);
 int kvm_apic_accept_events(struct kvm_vcpu *vcpu);
-void kvm_lapic_reset(struct kvm_vcpu *vcpu, bool init_event);
+void kvm_lapic_reset(struct kvm_lapic *lapic, bool init_event);
 u64 kvm_lapic_get_cr8(struct kvm_vcpu *vcpu);
 void kvm_lapic_set_tpr(struct kvm_vcpu *vcpu, unsigned long cr8);
 void kvm_lapic_set_eoi(struct kvm_vcpu *vcpu);
 void kvm_lapic_set_base(struct kvm_vcpu *vcpu, u64 value);
 u64 kvm_lapic_get_base(struct kvm_vcpu *vcpu);
 void kvm_recalculate_apic_map(struct kvm *kvm);
-void kvm_apic_set_version(struct kvm_vcpu *vcpu);
+void kvm_apic_set_version(struct kvm_lapic *apic);
 void kvm_apic_after_set_mcg_cap(struct kvm_vcpu *vcpu);
 bool kvm_apic_match_dest(struct kvm_vcpu *vcpu, struct kvm_lapic *source,
 			   int shorthand, unsigned int dest, int dest_mode);
@@ -195,7 +221,7 @@ extern struct static_key_false_deferred apic_hw_disabled;
 static inline bool kvm_apic_hw_enabled(struct kvm_lapic *apic)
 {
 	if (static_branch_unlikely(&apic_hw_disabled.key))
-		return apic->vcpu->arch.apic_base & MSR_IA32_APICBASE_ENABLE;
+		return apic->apic_base & MSR_IA32_APICBASE_ENABLE;
 	return true;
 }
 
@@ -220,7 +246,7 @@ static inline int kvm_lapic_enabled(struct kvm_vcpu *vcpu)
 
 static inline int apic_x2apic_mode(struct kvm_lapic *apic)
 {
-	return apic->vcpu->arch.apic_base & X2APIC_ENABLE;
+	return apic->apic_base & X2APIC_ENABLE;
 }
 
 static inline bool kvm_vcpu_apicv_active(struct kvm_vcpu *vcpu)

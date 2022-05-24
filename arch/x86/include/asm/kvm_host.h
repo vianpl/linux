@@ -764,7 +764,6 @@ struct kvm_vcpu_arch {
 	struct kvm_lapic *apic;    /* kernel irqchip context */
 	bool load_eoi_exitmap_pending;
 	DECLARE_BITMAP(ioapic_handled_vectors, 256);
-	unsigned long apic_attention;
 	int32_t apic_arb_prio;
 	int mp_state;
 	u64 ia32_misc_enable_msr;
@@ -964,11 +963,6 @@ struct kvm_vcpu_arch {
 		u64 length;
 		u64 status;
 	} osvw;
-
-	struct {
-		u64 msr_val;
-		struct gfn_to_hva_cache data;
-	} pv_eoi;
 
 	u64 msr_kvm_poll_control;
 

@@ -966,7 +966,7 @@ bool kvm_hv_assist_page_enabled(struct kvm_vcpu *vcpu)
 
 	if (!(get_vp_assist_page(vcpu, get_active_vtl(vcpu)) & HV_X64_MSR_VP_ASSIST_PAGE_ENABLE))
 		return false;
-	return vcpu->arch.pv_eoi.msr_val & KVM_MSR_ENABLED;
+	return vcpu->arch.apic->pv_eoi.msr_val & KVM_MSR_ENABLED;
 }
 EXPORT_SYMBOL_GPL(kvm_hv_assist_page_enabled);
 
@@ -977,7 +977,7 @@ int kvm_hv_get_assist_page(struct kvm_vcpu *vcpu)
 	if (!hv_vcpu || !kvm_hv_assist_page_enabled(vcpu))
 		return -EFAULT;
 
-	return kvm_read_guest_cached(vcpu->kvm, &vcpu->arch.pv_eoi.data,
+	return kvm_read_guest_cached(vcpu->kvm, &vcpu->arch.apic->pv_eoi.data,
 				     &hv_vcpu->vp_assist_page, sizeof(struct hv_vp_assist_page));
 }
 EXPORT_SYMBOL_GPL(kvm_hv_get_assist_page);
@@ -985,14 +985,14 @@ EXPORT_SYMBOL_GPL(kvm_hv_get_assist_page);
 static bool hv_read_vtl_control(struct kvm_vcpu *vcpu, struct hv_vp_vtl_control *vtl_control)
 {
 	/* VTL control is a part of VP assist page, which is accessed through pv_eoi */
-	return !kvm_read_guest_offset_cached(vcpu->kvm, &vcpu->arch.pv_eoi.data, vtl_control,
+	return !kvm_read_guest_offset_cached(vcpu->kvm, &vcpu->arch.apic->pv_eoi.data, vtl_control,
 			offsetof(struct hv_vp_assist_page, vtl_control), sizeof(*vtl_control));
 }
 
 static bool hv_write_vtl_control(struct kvm_vcpu *vcpu, struct hv_vp_vtl_control *vtl_control)
 {
 	/* VTL control is a part of VP assist page, which is accessed through pv_eoi */
-	return !kvm_write_guest_offset_cached(vcpu->kvm, &vcpu->arch.pv_eoi.data, vtl_control,
+	return !kvm_write_guest_offset_cached(vcpu->kvm, &vcpu->arch.apic->pv_eoi.data, vtl_control,
 			offsetof(struct hv_vp_assist_page, vtl_control), sizeof(*vtl_control));
 }
 

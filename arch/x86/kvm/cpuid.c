@@ -320,7 +320,7 @@ static void kvm_vcpu_after_set_cpuid(struct kvm_vcpu *vcpu)
 		else
 			apic->lapic_timer.timer_mode_mask = 1 << 17;
 
-		kvm_apic_set_version(vcpu);
+		kvm_apic_set_version(apic);
 	}
 
 	vcpu->arch.guest_supported_xcr0 =

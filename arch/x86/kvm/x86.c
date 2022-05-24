@@ -4221,7 +4221,7 @@ int kvm_get_msr_common(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 		if (!guest_pv_has(vcpu, KVM_FEATURE_PV_EOI))
 			return 1;
 
-		msr_info->data = vcpu->arch.pv_eoi.msr_val;
+		msr_info->data = vcpu->arch.apic->pv_eoi.msr_val;
 		break;
 	case MSR_KVM_POLL_CONTROL:
 		if (!guest_pv_has(vcpu, KVM_FEATURE_POLL_CONTROL))
@@ -10842,7 +10842,7 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 	if (unlikely(vcpu->arch.tsc_always_catchup))
 		kvm_make_request(KVM_REQ_CLOCK_UPDATE, vcpu);
 
-	if (vcpu->arch.apic_attention)
+	if (lapic_in_kernel(vcpu) && vcpu->arch.apic->apic_attention)
 		kvm_lapic_sync_from_vapic(vcpu);
 
 	r = static_call(kvm_x86_handle_exit)(vcpu, exit_fastpath);
@@ -10852,7 +10852,7 @@ cancel_injection:
 	if (req_immediate_exit)
 		kvm_make_request(KVM_REQ_EVENT, vcpu);
 	static_call(kvm_x86_cancel_injection)(vcpu);
-	if (unlikely(vcpu->arch.apic_attention))
+	if (unlikely(lapic_in_kernel(vcpu) && vcpu->arch.apic->apic_attention))
 		kvm_lapic_sync_from_vapic(vcpu);
 out:
 	return r;
@@ -11838,7 +11838,7 @@ int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu)
 		return r;
 
 	if (irqchip_in_kernel(vcpu->kvm)) {
-		r = kvm_create_lapic(vcpu, lapic_timer_advance_ns);
+		r = kvm_vcpu_create_apic(vcpu, lapic_timer_advance_ns);
 		if (r < 0)
 			goto fail_mmu_destroy;
 
@@ -11929,7 +11929,7 @@ fail_free_mce_banks:
 	kfree(vcpu->arch.mci_ctl2_banks);
 	free_page((unsigned long)vcpu->arch.pio_data);
 fail_free_lapic:
-	kvm_free_lapic(vcpu);
+	kvm_vcpu_free_apic(vcpu);
 fail_mmu_destroy:
 	kvm_mmu_destroy(vcpu);
 	return r;
@@ -11972,7 +11972,7 @@ void kvm_arch_vcpu_destroy(struct kvm_vcpu *vcpu)
 	kvm_pmu_destroy(vcpu);
 	kfree(vcpu->arch.mce_banks);
 	kfree(vcpu->arch.mci_ctl2_banks);
-	kvm_free_lapic(vcpu);
+	kvm_vcpu_free_apic(vcpu);
 	idx = srcu_read_lock(&vcpu->kvm->srcu);
 	kvm_mmu_destroy(vcpu);
 	srcu_read_unlock(&vcpu->kvm->srcu, idx);
@@ -12007,7 +12007,7 @@ void kvm_vcpu_reset(struct kvm_vcpu *vcpu, bool init_event)
 	if (is_guest_mode(vcpu))
 		kvm_leave_nested(vcpu);
 
-	kvm_lapic_reset(vcpu, init_event);
+	kvm_lapic_reset(vcpu->arch.apic, init_event);
 
 	WARN_ON_ONCE(is_guest_mode(vcpu) || is_smm(vcpu));
 	vcpu->arch.hflags = 0;
