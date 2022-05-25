@@ -793,10 +793,21 @@ static int __apic_accept_irq(struct kvm_lapic *apic, int delivery_mode,
 			     int vector, int level, int trig_mode,
 			     struct dest_map *dest_map);
 
+/* Hyper-V: select apic based on VTL */
+static struct kvm_lapic *hv_select_apic(struct kvm_vcpu *vcpu, int vtl)
+{
+	BUG_ON(vtl >= HV_NUM_VTLS);
+	return vcpu->arch.vtl_apics[vtl];
+}
+
 int kvm_apic_set_irq(struct kvm_vcpu *vcpu, struct kvm_lapic_irq *irq,
 		     struct dest_map *dest_map)
 {
-	struct kvm_lapic *apic = vcpu->arch.apic;
+	struct kvm_lapic *apic = hv_select_apic(vcpu, irq->vtl);
+
+	/* Targeting an apic which is not enabled in this VTL - discard */
+	if (!apic)
+		return 0;
 
 	return __apic_accept_irq(apic, irq->delivery_mode, irq->vector,
 			irq->level, irq->trig_mode, dest_map);
@@ -822,10 +833,11 @@ static int __pv_send_ipi(unsigned long *ipi_bitmap, struct kvm_apic_map *map,
 	return count;
 }
 
-int kvm_pv_send_ipi(struct kvm *kvm, unsigned long ipi_bitmap_low,
+int kvm_pv_send_ipi(struct kvm_vcpu *src, unsigned long ipi_bitmap_low,
 		    unsigned long ipi_bitmap_high, u32 min,
 		    unsigned long icr, int op_64_bit)
 {
+	struct kvm *kvm = src->kvm;
 	struct kvm_apic_map *map;
 	struct kvm_lapic_irq irq = {0};
 	int cluster_size = op_64_bit ? 64 : 32;
@@ -838,6 +850,7 @@ int kvm_pv_send_ipi(struct kvm *kvm, unsigned long ipi_bitmap_low,
 	irq.delivery_mode = icr & APIC_MODE_MASK;
 	irq.level = (icr & APIC_INT_ASSERT) != 0;
 	irq.trig_mode = icr & APIC_INT_LEVELTRIG;
+	irq.vtl = get_active_vtl(src);
 
 	rcu_read_lock();
 	map = rcu_dereference(kvm->arch.apic_map);
@@ -1389,7 +1402,7 @@ void kvm_bitmap_or_dest_vcpus(struct kvm *kvm, struct kvm_lapic_irq *irq,
 		}
 	} else {
 		kvm_for_each_vcpu(i, vcpu, kvm) {
-			if (!kvm_apic_present(vcpu))
+			if (!kvm_vtl_apic_present(vcpu, irq->vtl))
 				continue;
 			if (!kvm_apic_match_dest(vcpu, NULL,
 						 irq->shorthand,
@@ -1489,6 +1502,7 @@ void kvm_apic_send_ipi(struct kvm_lapic *apic, u32 icr_low, u32 icr_high)
 	irq.trig_mode = icr_low & APIC_INT_LEVELTRIG;
 	irq.shorthand = icr_low & APIC_SHORT_MASK;
 	irq.msi_redir_hint = false;
+	irq.vtl = kvm_lapic_get_vtl(apic);
 	if (apic_x2apic_mode(apic))
 		irq.dest_id = icr_high;
 	else

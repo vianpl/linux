@@ -2655,17 +2655,18 @@ ret_success:
 		((u64)hc->rep_cnt << HV_HYPERCALL_REP_COMP_OFFSET);
 }
 
-static void kvm_hv_send_ipi_to_many(struct kvm *kvm, u32 vector,
+static void kvm_hv_send_ipi_to_many(struct kvm_vcpu *src, u32 vector,
 				    u64 *sparse_banks, u64 valid_bank_mask)
 {
 	struct kvm_lapic_irq irq = {
 		.delivery_mode = APIC_DM_FIXED,
-		.vector = vector
+		.vector = vector,
+		.vtl = get_active_vtl(src),
 	};
 	struct kvm_vcpu *vcpu;
 	unsigned long i;
 
-	kvm_for_each_vcpu(i, vcpu, kvm) {
+	kvm_for_each_vcpu(i, vcpu, src->kvm) {
 		if (sparse_banks &&
 		    !hv_is_vp_in_sparse_set(kvm_hv_get_vpindex(vcpu),
 					    valid_bank_mask, sparse_banks))
@@ -2748,9 +2749,9 @@ check_and_send_ipi:
 		return HV_STATUS_INVALID_HYPERCALL_INPUT;
 
 	if (all_cpus)
-		kvm_hv_send_ipi_to_many(kvm, vector, NULL, 0);
+		kvm_hv_send_ipi_to_many(vcpu, vector, NULL, 0);
 	else
-		kvm_hv_send_ipi_to_many(kvm, vector, sparse_banks, valid_bank_mask);
+		kvm_hv_send_ipi_to_many(vcpu, vector, sparse_banks, valid_bank_mask);
 
 ret_success:
 	return HV_STATUS_SUCCESS;

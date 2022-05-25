@@ -64,7 +64,7 @@ int kvm_irq_delivery_to_apic(struct kvm *kvm, struct kvm_lapic *src,
 	memset(dest_vcpu_bitmap, 0, sizeof(dest_vcpu_bitmap));
 
 	kvm_for_each_vcpu(i, vcpu, kvm) {
-		if (!kvm_apic_present(vcpu))
+		if (!kvm_vtl_apic_present(vcpu, irq->vtl))
 			continue;
 
 		if (!kvm_apic_match_dest(vcpu, src, irq->shorthand,
@@ -119,6 +119,7 @@ void kvm_set_msi_irq(struct kvm *kvm, struct kvm_kernel_irq_routing_entry *e,
 	irq->msi_redir_hint = msg.arch_addr_lo.redirect_hint;
 	irq->level = 1;
 	irq->shorthand = APIC_DEST_NOSHORT;
+	irq->vtl = 0; /* Hyper-V: ExtInts are always VTL0 */
 }
 EXPORT_SYMBOL_GPL(kvm_set_msi_irq);
 
@@ -341,7 +342,7 @@ bool kvm_intr_is_single_vcpu(struct kvm *kvm, struct kvm_lapic_irq *irq,
 		return true;
 
 	kvm_for_each_vcpu(i, vcpu, kvm) {
-		if (!kvm_apic_present(vcpu))
+		if (!kvm_vtl_apic_present(vcpu, irq->vtl))
 			continue;
 
 		if (!kvm_apic_match_dest(vcpu, NULL, irq->shorthand,

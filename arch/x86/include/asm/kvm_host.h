@@ -1576,6 +1576,7 @@ struct kvm_lapic_irq {
 	u32 shorthand;
 	u32 dest_id;
 	bool msi_redir_hint;
+	u8 vtl; /* Hyper-V: target lapic trust level */
 };
 
 static inline u16 kvm_lapic_irq_dest_mode(bool dest_mode_logical)
@@ -2173,7 +2174,7 @@ int kvm_arch_interrupt_allowed(struct kvm_vcpu *vcpu);
 int kvm_cpu_get_interrupt(struct kvm_vcpu *v);
 void kvm_vcpu_reset(struct kvm_vcpu *vcpu, bool init_event);
 
-int kvm_pv_send_ipi(struct kvm *kvm, unsigned long ipi_bitmap_low,
+int kvm_pv_send_ipi(struct kvm_vcpu *src, unsigned long ipi_bitmap_low,
 		    unsigned long ipi_bitmap_high, u32 min,
 		    unsigned long icr, int op_64_bit);
 
