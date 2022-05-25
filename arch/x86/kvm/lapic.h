@@ -5,6 +5,7 @@
 #include <kvm/iodev.h>
 
 #include <linux/kvm_host.h>
+#include "hyperv.h"
 
 #include "hyperv.h"
 #include "smm.h"
@@ -90,12 +91,31 @@ struct kvm_lapic {
 
 	/* Hyper-V: copy of vcpu's apic_base value when we are not the active apic */
 	u64 apic_base;
+
+	/* Hyper-V: apic's VTL number */
+	u8 hv_vtl;
 };
 
 struct dest_map;
 
 struct kvm_lapic *kvm_create_lapic(struct kvm_vcpu *vcpu, int timer_advance_ns);
 void kvm_free_lapic(struct kvm_lapic *lapic);
+
+static inline u8 kvm_lapic_get_vtl(struct kvm_lapic *apic)
+{
+	return apic->hv_vtl;
+}
+
+static inline void kvm_lapic_set_vtl(struct kvm_lapic *apic, u8 vtl)
+{
+	struct kvm_vcpu *vcpu = apic->vcpu;
+
+	BUG_ON(vtl >= HV_NUM_VTLS);
+	BUG_ON(vcpu->arch.vtl_apics[vtl]);
+
+	apic->hv_vtl = vtl;
+	apic->vcpu->arch.vtl_apics[vtl] = apic;
+}
 
 static inline int kvm_vcpu_create_apic(struct kvm_vcpu *vcpu, int timer_advance_ns)
 {
@@ -105,6 +125,7 @@ static inline int kvm_vcpu_create_apic(struct kvm_vcpu *vcpu, int timer_advance_
 
 	vcpu->arch.apic = apic;
 	vcpu->arch.apic_base = apic->apic_base;
+	kvm_lapic_set_vtl(vcpu->arch.apic, 0);
 	return 0;
 }
 
@@ -217,6 +238,14 @@ static inline bool lapic_in_kernel(struct kvm_vcpu *vcpu)
 	return true;
 }
 
+static inline struct kvm_lapic *kvm_get_vtl_lapic(struct kvm_vcpu *vcpu, int vtl)
+{
+	BUG_ON(vtl >= HV_NUM_VTLS);
+	if (!lapic_in_kernel(vcpu))
+		return NULL;
+	return vcpu->arch.vtl_apics[vtl];
+}
+
 extern struct static_key_false_deferred apic_hw_disabled;
 
 static inline bool kvm_apic_hw_enabled(struct kvm_lapic *apic)
@@ -235,14 +264,26 @@ static inline bool kvm_apic_sw_enabled(struct kvm_lapic *apic)
 	return true;
 }
 
+static inline bool kvm_vtl_apic_present(struct kvm_vcpu *vcpu, int vtl)
+{
+	BUG_ON(vtl >= HV_NUM_VTLS);
+	return kvm_get_vtl_lapic(vcpu, vtl) && kvm_apic_hw_enabled(kvm_get_vtl_lapic(vcpu, vtl));
+}
+
 static inline bool kvm_apic_present(struct kvm_vcpu *vcpu)
 {
-	return lapic_in_kernel(vcpu) && kvm_apic_hw_enabled(vcpu->arch.apic);
+	return kvm_vtl_apic_present(vcpu, get_active_vtl(vcpu));
+}
+
+static inline int kvm_vtl_lapic_enabled(struct kvm_vcpu *vcpu, int vtl)
+{
+	BUG_ON(vtl >= HV_NUM_VTLS);
+	return kvm_vtl_apic_present(vcpu, vtl) && kvm_apic_sw_enabled(kvm_get_vtl_lapic(vcpu, vtl));
 }
 
 static inline int kvm_lapic_enabled(struct kvm_vcpu *vcpu)
 {
-	return kvm_apic_present(vcpu) && kvm_apic_sw_enabled(vcpu->arch.apic);
+	return kvm_vtl_lapic_enabled(vcpu, get_active_vtl(vcpu));
 }
 
 static inline int apic_x2apic_mode(struct kvm_lapic *apic)

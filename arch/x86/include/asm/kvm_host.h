@@ -762,6 +762,8 @@ struct kvm_vcpu_arch {
 	u64 efer;
 	u64 apic_base;
 	struct kvm_lapic *apic;    /* kernel irqchip context */
+	/* Hyper-V: all per-VTL apics associated with this vcpu in a list and per-vtl */
+	struct kvm_lapic *vtl_apics[HV_NUM_VTLS];
 	bool load_eoi_exitmap_pending;
 	DECLARE_BITMAP(ioapic_handled_vectors, 256);
 	int32_t apic_arb_prio;
