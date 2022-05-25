@@ -37,6 +37,7 @@ EXPORT_SYMBOL_GPL(context_tracking);
 
 #ifdef CONFIG_CONTEXT_TRACKING_IDLE
 #define TPS(x)  tracepoint_string(x)
+DEFINE_STATIC_KEY_FALSE(context_tracking_torture_key);
 
 /* Record the current task on dyntick-idle entry. */
 static __always_inline void rcu_dynticks_task_enter(void)
@@ -174,6 +175,10 @@ static noinstr void ct_kernel_enter_state(int offset)
 	seq = ct_state_inc(offset);
 	if (seq & CT_WORK_PENDING)
 		ct_enter_work();
+
+	if (static_branch_unlikely(&context_tracking_torture_key))
+		ct_work_torture(seq - offset);
+
 	// RCU is now watching.  Better not be in an extended quiescent state!
 	rcu_dynticks_task_trace_exit();  // After ->dynticks update!
 	WARN_ON_ONCE(IS_ENABLED(CONFIG_RCU_EQS_DEBUG) && !(seq & RCU_DYNTICKS_IDX));

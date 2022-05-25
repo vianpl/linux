@@ -181,6 +181,15 @@ config CONTEXT_TRACKING_USER_FORCE
 	  Say N otherwise, this option brings an overhead that you
 	  don't want in production.
 
+config CONTEXT_TRACKING_WORK_DEFERRAL_TORTURE
+	bool "Context tacking work deferral torture"
+	depends on HAVE_CONTEXT_TRACKING_WORK
+	depends on DEBUG_KERNEL
+	select TORTURE_TEST
+	default n
+	help
+	  Small module that stresses context tracking's work deferral feature.
+
 config NO_HZ
 	bool "Old Idle dynticks config"
 	help

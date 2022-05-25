@@ -52,6 +52,7 @@ struct context_tracking {
 
 #ifdef CONFIG_CONTEXT_TRACKING
 DECLARE_PER_CPU(struct context_tracking, context_tracking);
+DECLARE_STATIC_KEY_FALSE(context_tracking_torture_key);
 
 static __always_inline int __ct_state(void)
 {

@@ -137,4 +137,10 @@ static inline void ct_idle_exit(void) { }
 
 extern bool context_tracking_set_cpu_work(unsigned int cpu, unsigned int work);
 
+#ifdef CONFIG_CONTEXT_TRACKING_WORK_DEFERRAL_TORTURE
+extern void ct_work_torture(int seq);
+#else
+static inline void ct_work_torture(int seq) { }
+#endif /* !CONTEXT_TRACKING_WORK_DEFERRAL_TORTURE */
+
 #endif
