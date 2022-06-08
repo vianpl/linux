@@ -495,7 +495,7 @@ int kvm_set_apic_base(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 	}
 
 	kvm_lapic_set_base(vcpu, msr_info->data);
-	kvm_recalculate_apic_map(vcpu->kvm);
+	kvm_recalculate_apic_map(vcpu->arch.apic);
 	return 0;
 }
 
@@ -9753,6 +9753,7 @@ static void kvm_sched_yield(struct kvm_vcpu *vcpu, unsigned long dest_id)
 {
 	struct kvm_vcpu *target = NULL;
 	struct kvm_apic_map *map;
+	struct kvm *kvm = vcpu->kvm;
 
 	vcpu->stat.directed_yield_attempted++;
 
@@ -9760,7 +9761,7 @@ static void kvm_sched_yield(struct kvm_vcpu *vcpu, unsigned long dest_id)
 		goto no_yield;
 
 	rcu_read_lock();
-	map = rcu_dereference(vcpu->kvm->arch.apic_map);
+	map = rcu_dereference(kvm->arch.vtl_apic_map[get_active_vtl(vcpu)].apic_map);
 
 	if (likely(map) && dest_id <= map->max_apic_id && map->phys_map[dest_id])
 		target = map->phys_map[dest_id]->vcpu;
@@ -12282,7 +12283,7 @@ void kvm_arch_free_vm(struct kvm *kvm)
 
 int kvm_arch_init_vm(struct kvm *kvm, unsigned long type)
 {
-	int ret;
+	int ret, i;
 	unsigned long flags;
 
 	if (type)
@@ -12311,8 +12312,10 @@ int kvm_arch_init_vm(struct kvm *kvm, unsigned long type)
 		&kvm->arch.irq_sources_bitmap);
 
 	raw_spin_lock_init(&kvm->arch.tsc_write_lock);
-	mutex_init(&kvm->arch.apic_map_lock);
+	for (i = 0; i < HV_NUM_VTLS; i++)
+		mutex_init(&kvm->arch.vtl_apic_map[i].apic_map_lock);
 	seqcount_raw_spinlock_init(&kvm->arch.pvclock_sc, &kvm->arch.tsc_write_lock);
+
 	kvm->arch.kvmclock_offset = -get_kvmclock_base_ns();
 
 	raw_spin_lock_irqsave(&kvm->arch.tsc_write_lock, flags);
@@ -12457,6 +12460,8 @@ void kvm_arch_pre_destroy_vm(struct kvm *kvm)
 
 void kvm_arch_destroy_vm(struct kvm *kvm)
 {
+	int i;
+
 	if (current->mm == kvm->mm) {
 		/*
 		 * Free memory regions allocated on behalf of userspace,
@@ -12477,7 +12482,8 @@ void kvm_arch_destroy_vm(struct kvm *kvm)
 	kvm_pic_destroy(kvm);
 	kvm_ioapic_destroy(kvm);
 	kvm_destroy_vcpus(kvm);
-	kvfree(rcu_dereference_check(kvm->arch.apic_map, 1));
+	for (i = 0; i < HV_NUM_VTLS; i++)
+		kvfree(rcu_dereference_check(kvm->arch.vtl_apic_map[i].apic_map, 1));
 	kfree(srcu_dereference_check(kvm->arch.pmu_event_filter, &kvm->srcu, 1));
 	kvm_mmu_uninit_vm(kvm);
 	kvm_page_track_cleanup(kvm);
