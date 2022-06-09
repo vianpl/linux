@@ -874,43 +874,43 @@ int kvm_pv_send_ipi(struct kvm_vcpu *src, unsigned long ipi_bitmap_low,
 	return count;
 }
 
-static int pv_eoi_put_user(struct kvm_vcpu *vcpu, u8 val)
+static int pv_eoi_put_user(struct kvm_lapic *apic, u8 val)
 {
 
-	return kvm_write_guest_cached(vcpu->kvm, &vcpu->arch.apic->pv_eoi.data, &val,
+	return kvm_write_guest_cached(apic->vcpu->kvm, &apic->pv_eoi.data, &val,
 				      sizeof(val));
 }
 
-static int pv_eoi_get_user(struct kvm_vcpu *vcpu, u8 *val)
+static int pv_eoi_get_user(struct kvm_lapic *apic, u8 *val)
 {
 
-	return kvm_read_guest_cached(vcpu->kvm, &vcpu->arch.apic->pv_eoi.data, val,
+	return kvm_read_guest_cached(apic->vcpu->kvm, &apic->pv_eoi.data, val,
 				      sizeof(*val));
 }
 
-static inline bool pv_eoi_enabled(struct kvm_vcpu *vcpu)
+static inline bool pv_eoi_enabled(struct kvm_lapic *apic)
 {
-	return vcpu->arch.apic->pv_eoi.msr_val & KVM_MSR_ENABLED;
+	return apic->pv_eoi.msr_val & KVM_MSR_ENABLED;
 }
 
-static void pv_eoi_set_pending(struct kvm_vcpu *vcpu)
+static void pv_eoi_set_pending(struct kvm_lapic *apic)
 {
-	if (pv_eoi_put_user(vcpu, KVM_PV_EOI_ENABLED) < 0)
+	if (pv_eoi_put_user(apic, KVM_PV_EOI_ENABLED) < 0)
 		return;
 
-	__set_bit(KVM_APIC_PV_EOI_PENDING, &vcpu->arch.apic->apic_attention);
+	__set_bit(KVM_APIC_PV_EOI_PENDING, &apic->apic_attention);
 }
 
-static bool pv_eoi_test_and_clr_pending(struct kvm_vcpu *vcpu)
+static bool pv_eoi_test_and_clr_pending(struct kvm_lapic *apic)
 {
 	u8 val;
 
-	if (pv_eoi_get_user(vcpu, &val) < 0)
+	if (pv_eoi_get_user(apic, &val) < 0)
 		return false;
 
 	val &= KVM_PV_EOI_ENABLED;
 
-	if (val && pv_eoi_put_user(vcpu, KVM_PV_EOI_DISABLED) < 0)
+	if (val && pv_eoi_put_user(apic, KVM_PV_EOI_DISABLED) < 0)
 		return false;
 
 	/*
@@ -918,7 +918,7 @@ static bool pv_eoi_test_and_clr_pending(struct kvm_vcpu *vcpu)
 	 * While this might not be ideal from performance point of view,
 	 * this makes sure pv eoi is only enabled when we know it's safe.
 	 */
-	__clear_bit(KVM_APIC_PV_EOI_PENDING, &vcpu->arch.apic->apic_attention);
+	__clear_bit(KVM_APIC_PV_EOI_PENDING, &apic->apic_attention);
 
 	return val;
 }
@@ -3123,9 +3123,9 @@ static void apic_sync_pv_eoi_from_guest(struct kvm_vcpu *vcpu,
 	 * KVM_APIC_PV_EOI_PENDING is set, KVM_PV_EOI_ENABLED is unset:
 	 * 	-> host enabled PV EOI, guest executed EOI.
 	 */
-	BUG_ON(!pv_eoi_enabled(vcpu));
+	BUG_ON(!pv_eoi_enabled(apic));
 
-	if (pv_eoi_test_and_clr_pending(vcpu))
+	if (pv_eoi_test_and_clr_pending(apic))
 		return;
 	vector = apic_set_eoi(apic);
 	trace_kvm_pv_eoi(apic, vector);
@@ -3157,7 +3157,7 @@ void kvm_lapic_sync_from_vapic(struct kvm_vcpu *vcpu)
 static void apic_sync_pv_eoi_to_guest(struct kvm_vcpu *vcpu,
 					struct kvm_lapic *apic)
 {
-	if (!pv_eoi_enabled(vcpu) ||
+	if (!pv_eoi_enabled(apic) ||
 	    /* IRR set or many bits in ISR: could be nested. */
 	    apic->irr_pending ||
 	    /* Cache not set: could be safe but we don't bother. */
@@ -3171,7 +3171,7 @@ static void apic_sync_pv_eoi_to_guest(struct kvm_vcpu *vcpu,
 		return;
 	}
 
-	pv_eoi_set_pending(apic->vcpu);
+	pv_eoi_set_pending(apic);
 }
 
 void kvm_lapic_sync_to_vapic(struct kvm_vcpu *vcpu)
@@ -3297,10 +3297,10 @@ int kvm_hv_vapic_msr_read(struct kvm_vcpu *vcpu, u32 reg, u64 *data)
 	return kvm_lapic_msr_read(vcpu->arch.apic, reg, data);
 }
 
-int kvm_lapic_set_pv_eoi(struct kvm_vcpu *vcpu, u64 data, unsigned long len)
+int kvm_lapic_set_pv_eoi(struct kvm_lapic *apic, u64 data, unsigned long len)
 {
 	u64 addr = data & ~KVM_MSR_ENABLED;
-	struct gfn_to_hva_cache *ghc = &vcpu->arch.apic->pv_eoi.data;
+	struct gfn_to_hva_cache *ghc = &apic->pv_eoi.data;
 	unsigned long new_len;
 	int ret;
 
@@ -3313,12 +3313,12 @@ int kvm_lapic_set_pv_eoi(struct kvm_vcpu *vcpu, u64 data, unsigned long len)
 		else
 			new_len = len;
 
-		ret = kvm_gfn_to_hva_cache_init(vcpu->kvm, ghc, addr, new_len);
+		ret = kvm_gfn_to_hva_cache_init(apic->vcpu->kvm, ghc, addr, new_len);
 		if (ret)
 			return ret;
 	}
 
-	vcpu->arch.apic->pv_eoi.msr_val = data;
+	apic->vcpu->arch.apic->pv_eoi.msr_val = data;
 
 	return 0;
 }

@@ -951,10 +951,11 @@ static int set_vp_assist_page(struct kvm_vcpu *vcpu, u64 data, u8 target_vtl)
 	u64 gfn;
 	unsigned long addr;
 	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
+	struct kvm_vcpu_hv_vtl *hv_vtl = &hv_vcpu->vtl[target_vtl];
 
 	if (!(data & HV_X64_MSR_VP_ASSIST_PAGE_ENABLE)) {
-		hv_vcpu->vtl[target_vtl].vp_assist_page = data;
-		if (kvm_lapic_set_pv_eoi(vcpu, 0, 0))
+		hv_vtl->vp_assist_page = data;
+		if (kvm_lapic_set_pv_eoi(hv_vtl->apic, 0, 0))
 			return 1;
 	} else {
 		gfn = data >> HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_SHIFT;
@@ -969,9 +970,9 @@ static int set_vp_assist_page(struct kvm_vcpu *vcpu, u64 data, u8 target_vtl)
 		 */
 		if (__put_user(0, (u32 __user *)addr))
 			return 1;
-		hv_vcpu->vtl[target_vtl].vp_assist_page = data;
+		hv_vtl->vp_assist_page = data;
 		kvm_vcpu_mark_page_dirty(vcpu, gfn);
-		if (kvm_lapic_set_pv_eoi(vcpu,
+		if (kvm_lapic_set_pv_eoi(hv_vtl->apic,
 					    gfn_to_gpa(gfn) | KVM_MSR_ENABLED,
 					    sizeof(struct hv_vp_assist_page)))
 			return 1;
