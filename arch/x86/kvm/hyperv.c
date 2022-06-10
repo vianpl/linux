@@ -3624,6 +3624,21 @@ static void kvm_hv_hypercall_write_xmm(struct kvm_hv_hcall *hc)
 	hc->xmm_dirty = false;
 }
 
+static u64 kvm_hv_ext_query_capabilities(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
+{
+	u64 caps = 0; /* No caps */
+
+	if (!hc->fast) {
+		if (unlikely(kvm_write_guest(vcpu->kvm, hc->outgpa, &caps, sizeof(caps)) != 0))
+			return HV_STATUS_INVALID_HYPERCALL_INPUT;
+	} else {
+		kvm_rdx_write(vcpu, caps);
+	}
+
+	trace_kvm_hv_ext_query_capabilities(caps);
+	return HV_STATUS_SUCCESS;
+}
+
 static bool hv_check_hypercall_access(struct kvm_vcpu_hv *hv_vcpu, u16 code)
 {
 	if (!hv_vcpu->enforce_cpuid)
@@ -3822,7 +3837,16 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 		}
 		goto hypercall_userspace_exit;
 	}
-	case HV_EXT_CALL_QUERY_CAPABILITIES ... HV_EXT_CALL_MAX:
+	case HV_EXT_CALL_QUERY_CAPABILITIES: {
+		if (unlikely(hc.rep_cnt)) {
+			ret = HV_STATUS_INVALID_HYPERCALL_INPUT;
+			break;
+		}
+
+		ret = kvm_hv_ext_query_capabilities(vcpu, &hc);
+		break;
+	}
+	case HV_EXT_CALL_GET_BOOT_ZEROED_MEMORY ... HV_EXT_CALL_MAX:
 		if (unlikely(hc.fast)) {
 			ret = HV_STATUS_INVALID_PARAMETER;
 			break;
@@ -3854,7 +3878,6 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 		if (!kvm_hv_vtl_return(vcpu))
 			goto inject_ud;
 		return 1;
-
 	default:
 		ret = HV_STATUS_INVALID_HYPERCALL_CODE;
 		break;

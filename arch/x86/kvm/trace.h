@@ -1808,6 +1808,21 @@ TRACE_EVENT(kvm_hv_vtl_return,
 		  __entry->active_vtl, __entry->prev_vtl, __entry->ctl)
 );
 
+TRACE_EVENT(kvm_hv_ext_query_capabilities,
+	TP_PROTO(u64 caps),
+	TP_ARGS(caps),
+
+	TP_STRUCT__entry(
+		__field(u64, caps)
+	),
+
+	TP_fast_assign(
+		__entry->caps = caps;
+	),
+
+	TP_printk("reported capabilities 0x%llx", __entry->caps)
+);
+
 TRACE_EVENT(kvm_pv_tlb_flush,
 	TP_PROTO(unsigned int vcpu_id, bool need_flush_tlb),
 	TP_ARGS(vcpu_id, need_flush_tlb),
