@@ -1754,10 +1754,10 @@ static int set_efer(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 		if (is_paging(vcpu) &&
 		    (vcpu->arch.efer & EFER_LME) != (efer & EFER_LME))
 			return 1;
-	}
 
-	efer &= ~EFER_LMA;
-	efer |= vcpu->arch.efer & EFER_LMA;
+		efer &= ~EFER_LMA;
+		efer |= vcpu->arch.efer & EFER_LMA;
+	}
 
 	r = static_call(kvm_x86_set_efer)(vcpu, efer);
 	if (r) {
@@ -10818,11 +10818,22 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 			goto out;
 		}
 
+		if (to_hv_vcpu(vcpu)->start_vp) {
+			if (kvm_hv_finish_start_virtual_processor(vcpu)) {
+				vcpu->run->exit_reason = KVM_EXIT_INTERNAL_ERROR;
+				vcpu->run->internal.suberror = KVM_INTERNAL_ERROR_AP_START;
+				vcpu->run->internal.ndata = 0;
+				r = 0;
+				goto out;
+			}
+		}
+
 		r = kvm_check_and_inject_events(vcpu, &req_immediate_exit);
 		if (r < 0) {
 			r = 0;
 			goto out;
 		}
+
 		if (req_int_win)
 			static_call(kvm_x86_enable_irq_window)(vcpu);
 
@@ -13059,7 +13070,10 @@ bool kvm_arch_dy_runnable(struct kvm_vcpu *vcpu)
 		 kvm_test_request(KVM_REQ_EVENT, vcpu))
 		return true;
 
-	return kvm_arch_dy_has_pending_interrupt(vcpu);
+	if (kvm_arch_dy_has_pending_interrupt(vcpu))
+		return true;
+
+	return to_hv_vcpu(vcpu)->start_vp;
 }
 
 bool kvm_arch_vcpu_in_kernel(struct kvm_vcpu *vcpu)

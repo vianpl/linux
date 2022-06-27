@@ -3045,22 +3045,24 @@ static u64 enable_vp_vtl(struct kvm_vcpu *vcpu, u8 vtl, struct hv_init_vp_contex
 
 	/* Create a new apic context. Since we are always creating secondary lapics,
 	 * make sure this vcpu is using one to begin with. */
-	if (lapic_in_kernel(vcpu) && target_vtl->apic == NULL) {
-		target_vtl->apic = kvm_create_lapic(vcpu, lapic_timer_advance_ns);
-		if (!target_vtl->apic)
-			return HV_STATUS_INSUFFICIENT_MEMORY;
+	if (target_vtl->apic == NULL) {
+		if (lapic_in_kernel(vcpu)) {
+			target_vtl->apic = kvm_create_lapic(vcpu, lapic_timer_advance_ns);
+			if (!target_vtl->apic)
+				return HV_STATUS_INSUFFICIENT_MEMORY;
 
-		kvm_lapic_reset(target_vtl->apic, false);
-		kvm_lapic_set_vtl(target_vtl->apic, vtl);
+			kvm_lapic_reset(target_vtl->apic, false);
+			kvm_lapic_set_vtl(target_vtl->apic, vtl);
 
-		/* Windows Server 2019 guest expects VTL1+ apics to be sw-enabled by the fact
-		 * that they never try to write anything to SPIV before attempting to send IPIs.
-		 * So enable a new apic for them. If they ever change their mind, they will set
-		 * their own SPIV value */
-		kvm_lapic_reg_write(target_vtl->apic, APIC_SPIV, 0x1ff);
-	} else {
-		target_vtl->tpr = 0;
-		target_vtl->apic_base = APIC_DEFAULT_PHYS_BASE | MSR_IA32_APICBASE_ENABLE;
+			/* Windows Server 2019 guest expects VTL1+ apics to be sw-enabled by the fact
+			 * that they never try to write anything to SPIV before attempting to send IPIs.
+			 * So enable a new apic for them. If they ever change their mind, they will set
+			 * their own SPIV value */
+			kvm_lapic_reg_write(target_vtl->apic, APIC_SPIV, 0x1ff);
+		} else {
+			target_vtl->tpr = 0;
+			target_vtl->apic_base = APIC_DEFAULT_PHYS_BASE | MSR_IA32_APICBASE_ENABLE;
+		}
 	}
 
 	memcpy(&target_vtl->ctx, ctx, sizeof(*ctx));
@@ -3590,6 +3592,165 @@ static u64 kvm_hv_translate_virtual_address(struct kvm_vcpu* vcpu,
 	return HV_STATUS_SUCCESS;
 }
 
+static struct kvm_vcpu *find_vcpu_by_apic_id(struct kvm *kvm, u32 apic_id)
+{
+	struct kvm_vcpu *vcpu = NULL;
+	unsigned long i;
+
+	kvm_for_each_vcpu(i, vcpu, kvm) {
+		if (vcpu->vcpu_id == apic_id)
+			return vcpu;
+	}
+
+	return NULL;
+}
+
+static u64 kvm_hv_get_vp_index_from_apic_id(struct kvm_vcpu* vcpu,
+					    struct kvm_hv_hcall *hc)
+{
+	struct hv_get_vp_index_from_apic_id_input input;
+	struct kvm_vcpu *target_vcpu;
+	u64 apic_id;
+	u64 vp_index;
+	u16 count;
+
+	BUG_ON(hc->rep && hc->rep_idx >= hc->rep_cnt); /* idx/cnt should've been checked by caller */
+
+	count = hc->rep_cnt - hc->rep_idx;
+	count = !!count;
+
+	if (hc->fast) {
+		input.partition_id = hc->ingpa;
+		input.target_vtl = hc->outgpa & 0xFF;
+		apic_id = sse128_lo(hc->xmm[0]);
+	} else {
+		if (unlikely(kvm_read_guest(vcpu->kvm, hc->ingpa, &input, sizeof(input)) != 0))
+			return HV_STATUS_INVALID_HYPERCALL_INPUT;
+
+		if (unlikely(kvm_read_guest(vcpu->kvm, hc->ingpa + sizeof(input), &apic_id, sizeof(apic_id)) != 0))
+			return HV_STATUS_INVALID_HYPERCALL_INPUT;
+	}
+
+	apic_id &= 0xFFFFFFFF;
+	target_vcpu = find_vcpu_by_apic_id(vcpu->kvm, apic_id);
+	if (!target_vcpu)
+		return HV_STATUS_INVALID_PARAMETER;
+
+	vp_index = to_hv_vcpu(target_vcpu)->vp_index;
+	trace_kvm_hv_get_vp_index_from_apic_id(input.partition_id, input.target_vtl, apic_id, vp_index);
+
+	/* Only self-targeting is supported */
+	if (input.partition_id != HV_PARTITION_ID_SELF)
+		return HV_STATUS_INVALID_PARTITION_ID;
+
+	if (hc->fast) {
+		hc->xmm[1] = sse128(vp_index, 0);
+		hc->xmm_dirty = true;
+	} else {
+		if (unlikely(kvm_write_guest(vcpu->kvm, hc->outgpa, &vp_index, sizeof(vp_index)) != 0))
+			return HV_STATUS_INVALID_HYPERCALL_INPUT;
+	}
+
+	return ((u64)count << HV_HYPERCALL_REP_COMP_OFFSET) | HV_STATUS_SUCCESS;
+}
+
+static u64 kvm_hv_start_virtual_processor(struct kvm_vcpu* active_vcpu,
+					  struct kvm_hv_hcall *hc)
+{
+	u64 ret;
+	u8 highest_enabled_vtl, target_vtl, current_vtl = get_active_vtl(active_vcpu);
+	struct kvm_hv *hv = &active_vcpu->kvm->arch.hyperv;
+	struct hv_enable_vp_vtl input;
+	struct kvm_vcpu *target_vcpu;
+	struct kvm_vcpu_hv *target_vcpu_hv = NULL;
+
+	/* HvStartVirtualProcessor cannot be fast or rep */
+	if (hc->fast || hc->rep)
+		return HV_STATUS_INVALID_HYPERCALL_INPUT;
+
+	if (unlikely(kvm_read_guest(active_vcpu->kvm, hc->ingpa, &input, sizeof(input)) != 0))
+		return HV_STATUS_INVALID_HYPERCALL_INPUT;
+
+	target_vtl = input.target_vtl.as_uint8;
+	trace_kvm_hv_start_virtual_processor(input.partition_id, input.vp_index, target_vtl, current_vtl);
+
+	/* Only self-targeting is supported */
+	if (input.partition_id != HV_PARTITION_ID_SELF)
+		return HV_STATUS_INVALID_PARTITION_ID;
+
+	target_vcpu = get_vcpu_by_vpidx(active_vcpu->kvm, input.vp_index);
+	if (!target_vcpu) {
+		return HV_STATUS_INVALID_VP_INDEX;
+	}
+
+	/* AP must not be in any initialized or runnable states */
+	if (kvm_vcpu_is_reset_bsp(target_vcpu) ||
+	    (target_vcpu->arch.mp_state != KVM_MP_STATE_RUNNABLE &&
+	     target_vcpu->arch.mp_state != KVM_MP_STATE_UNINITIALIZED &&
+	     target_vcpu->arch.mp_state != KVM_MP_STATE_HALTED)) {
+		return HV_STATUS_INVALID_VP_STATE;
+	}
+
+	/* Check that target VTL is sane and can enable target vcpu in target vtl */
+	if (target_vtl > hv->vsm_partition_status.maximum_vtl ||
+	    target_vtl > current_vtl) {
+		pr_err("Current vcpu in VTL%d cannot enable target vcpu in VTL%d\n",
+			target_vtl, current_vtl);
+		return HV_STATUS_INVALID_PARAMETER;
+	}
+
+	/* Is target VTL already enabled for target vcpu? */
+	target_vcpu_hv = to_hv_vcpu(target_vcpu);
+	if (target_vtl > 0 &&
+	    target_vcpu_hv->vsm_vp_status.enabled_vtl_set & (1ul << target_vtl)) {
+		return HV_STATUS_INVALID_PARAMETER;
+	}
+
+	input.vp_context.efer |= EFER_LMA;
+	ret = enable_vp_vtl(target_vcpu, target_vtl, &input.vp_context);
+	if (ret != HV_STATUS_SUCCESS) {
+		return ret;
+	}
+
+	/* Generate an event to finish the work from target vcpu's thread */
+	highest_enabled_vtl = fls(target_vcpu_hv->vsm_vp_status.enabled_vtl_set) - 1;
+	to_hv_vcpu(target_vcpu)->start_vp_target_vtl = highest_enabled_vtl;
+	to_hv_vcpu(target_vcpu)->start_vp = true;
+
+	smp_wmb();
+	kvm_make_request(KVM_REQ_EVENT, target_vcpu);
+	kvm_vcpu_kick(target_vcpu);
+
+	return HV_STATUS_SUCCESS;
+}
+
+int kvm_hv_finish_start_virtual_processor(struct kvm_vcpu *vcpu)
+{
+	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
+	struct kvm_vcpu_hv_vtl *target_vtl;
+
+	smp_rmb();
+
+	BUG_ON(!hv_vcpu->start_vp);
+	hv_vcpu->start_vp = false;
+	target_vtl = &hv_vcpu->vtl[hv_vcpu->start_vp_target_vtl];
+
+	/* Simulate a reset due to an INIT event and load target VTL onto the vcpu */
+	kvm_vcpu_reset(vcpu, true);
+	if (!load_vtl(vcpu, target_vtl)) {
+		pr_err("VCPU%u: Could not load VTL0\n", vcpu->vcpu_id);
+		return -1;
+	}
+
+	vcpu->arch.mp_state = KVM_MP_STATE_RUNNABLE;
+	set_active_vtl(vcpu, hv_vcpu->start_vp_target_vtl);
+
+	if (kvm_x86_ops.clear_hlt)
+		kvm_x86_ops.clear_hlt(vcpu);
+
+	return 0;
+}
+
 void kvm_hv_set_cpuid(struct kvm_vcpu *vcpu, bool hyperv_enabled)
 {
 	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
@@ -3749,6 +3910,7 @@ static bool is_xmm_fast_hypercall(struct kvm_hv_hcall *hc)
 	case HVCALL_GET_VP_REGISTERS:
 	case HVCALL_SET_VP_REGISTERS:
 	case HVCALL_TRANSLATE_VIRTUAL_ADDRESS:
+	case HVCALL_GET_VP_ID_FROM_APIC_ID:
 		return true;
 	}
 
@@ -3884,6 +4046,11 @@ static bool is_hypercall_advertised(struct kvm_vcpu *vcpu, u16 code)
 		break;
 	case HV_EXT_CALL_QUERY_CAPABILITIES:
 		feature_mask = HV_ENABLE_EXTENDED_HYPERCALLS;
+		reg = VCPU_REGS_RBX;
+		break;
+	case HVCALL_GET_VP_ID_FROM_APIC_ID:
+	case HVCALL_START_VP:
+		feature_mask = HV_START_VIRTUAL_PROCESSOR;
 		reg = VCPU_REGS_RBX;
 		break;
 	default:
@@ -4093,6 +4260,12 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 		}
 
 		ret = kvm_hv_translate_virtual_address(vcpu, &hc);
+		break;
+	case HVCALL_GET_VP_ID_FROM_APIC_ID:
+		ret = kvm_hv_get_vp_index_from_apic_id(vcpu, &hc);
+		break;
+	case HVCALL_START_VP:
+		ret = kvm_hv_start_virtual_processor(vcpu, &hc);
 		break;
 	default:
 		ret = HV_STATUS_INVALID_HYPERCALL_CODE;
@@ -4370,6 +4543,7 @@ int kvm_get_hv_cpuid(struct kvm_vcpu *vcpu, struct kvm_cpuid2 *cpuid,
 			ent->ebx |= HV_ENABLE_EXTENDED_HYPERCALLS;
 			ent->ebx |= HV_ACCESS_VP_REGISTERS;
 			ent->ebx |= HV_ACCESS_VSM;
+			ent->ebx |= HV_START_VIRTUAL_PROCESSOR;
 
 			ent->edx |= HV_X64_HYPERCALL_XMM_INPUT_AVAILABLE;
 			ent->edx |= HV_X64_HYPERCALL_XMM_OUTPUT_AVAILABLE;
@@ -4380,6 +4554,7 @@ int kvm_get_hv_cpuid(struct kvm_vcpu *vcpu, struct kvm_cpuid2 *cpuid,
 			ent->edx |= HV_X64_GUEST_DEBUGGING_AVAILABLE;
 			ent->edx |= HV_FEATURE_DEBUG_MSRS_AVAILABLE;
 			ent->edx |= HV_FEATURE_EXT_GVA_RANGES_FLUSH;
+			ent->edx |= HV_X64_CPU_DYNAMIC_PARTITIONING_AVAILABLE;
 
 			/*
 			 * Direct Synthetic timers only make sense with in-kernel

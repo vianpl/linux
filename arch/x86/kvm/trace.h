@@ -60,6 +60,50 @@ TRACE_EVENT(kvm_hypercall,
 		 __entry->a3)
 );
 
+TRACE_EVENT(kvm_hv_get_vp_index_from_apic_id,
+	TP_PROTO(__u64 partition_id, __u8 target_vtl, __u64 apic_id, __u64 vp_index),
+	TP_ARGS(partition_id, target_vtl, apic_id, vp_index),
+
+	TP_STRUCT__entry(
+		__field(	__u64,		partition_id 	)
+		__field(	__u8,		target_vtl	)
+		__field(	__u64,		apic_id		)
+		__field(	__u64,		vp_index	)
+	),
+
+	TP_fast_assign(
+		__entry->partition_id	= partition_id;
+		__entry->target_vtl	= target_vtl;
+		__entry->apic_id	= apic_id;
+		__entry->vp_index	= vp_index;
+	),
+
+	TP_printk("partition id 0x%llx, target vtl %u, apic id %llu, vp index %llu",
+		__entry->partition_id, __entry->target_vtl, __entry->apic_id, __entry->vp_index)
+);
+
+TRACE_EVENT(kvm_hv_start_virtual_processor,
+	TP_PROTO(__u64 partition_id, __u32 vp_index, __u8 target_vtl, __u8 active_vtl),
+	TP_ARGS(partition_id, vp_index, target_vtl, active_vtl),
+
+	TP_STRUCT__entry(
+		__field(	__u64,		partition_id 	)
+		__field(	__u32,		vp_index	)
+		__field(	__u8,		target_vtl	)
+		__field(	__u8,		active_vtl	)
+	),
+
+	TP_fast_assign(
+		__entry->partition_id	= partition_id;
+		__entry->vp_index	= vp_index;
+		__entry->target_vtl	= target_vtl;
+		__entry->active_vtl	= active_vtl;
+	),
+
+	TP_printk("partition id 0x%llx, vp_index %u, target vtl %u, active vtl %u",
+		__entry->partition_id, __entry->vp_index, __entry->target_vtl, __entry->active_vtl)
+);
+
 /*
  * Tracepoint for hypercall.
  */

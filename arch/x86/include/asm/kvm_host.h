@@ -729,6 +729,9 @@ struct kvm_vcpu_hv {
 
 	/* Bitmap of VTLs which have their apics requesting attention */
 	unsigned long apic_pending_vtls;
+
+	bool start_vp;
+	u8 start_vp_target_vtl;
 };
 
 struct kvm_hypervisor_cpuid {

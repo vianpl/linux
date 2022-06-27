@@ -92,6 +92,7 @@
 #define HV_ACCESS_VSM				BIT(16)
 #define HV_ACCESS_VP_REGISTERS			BIT(17)
 #define HV_ENABLE_EXTENDED_HYPERCALLS		BIT(20)
+#define HV_START_VIRTUAL_PROCESSOR		BIT(21)
 #define HV_ISOLATION				BIT(22)
 
 /*
@@ -232,6 +233,7 @@ enum HV_GENERIC_SET_FORMAT {
 #define HV_STATUS_INVALID_PORT_ID		17
 #define HV_STATUS_INVALID_CONNECTION_ID		18
 #define HV_STATUS_INSUFFICIENT_BUFFERS		19
+#define HV_STATUS_INVALID_VP_STATE		21
 #define HV_STATUS_VTL_ALREADY_ENABLED		134
 
 /*
@@ -950,5 +952,11 @@ struct hv_xlate_va_output {
 	u32 reserved:23;
 	u64 gpa;
 };
+
+struct hv_get_vp_index_from_apic_id_input {
+	u64 partition_id;
+	u8 target_vtl;
+	u8 _padding[7];
+} __packed;
 
 #endif
