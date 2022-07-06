@@ -48,6 +48,7 @@ struct context_tracking {
 	long dynticks_nesting;		/* Track process nesting level. */
 	long dynticks_nmi_nesting;	/* Track irq/NMI nesting level. */
 #endif
+	unsigned long long work_stats[CONTEXT_WORK_MAX_OFFSET - 1];
 };
 
 #ifdef CONFIG_CONTEXT_TRACKING

@@ -293,11 +293,15 @@ static int torture_stat_work(void *data)
 		unsigned long nmi_entry_count = 0;
 		unsigned long irq_entry_count = 0;
 		unsigned long vmap_count = 0;
+		unsigned long long work_sync_count = 0;
+		unsigned long long work_tlbi_count = 0;
+		unsigned long long work_cachei_count = 0;
 
 		schedule_timeout_interruptible(dfs->stat_period_s * HZ);
 
 		for_each_online_cpu(cpu) {
 			struct ct_work_percpu_data *pcp = per_cpu_ptr(dfs->percpu, cpu);
+			struct context_tracking *ct = per_cpu_ptr(&context_tracking, cpu);
 
 			nmi_entry_count += pcp->nmi_entry_count;
 			irq_entry_count += pcp->irq_entry_count;
@@ -305,13 +309,18 @@ static int torture_stat_work(void *data)
 			idle_entry_count += pcp->idle_entry_count;
 			guest_entry_count += pcp->guest_entry_count;
 			vmap_count += dfs->vmap_count;
+			work_sync_count += ct->work_stats[0];
+			work_tlbi_count += ct->work_stats[1];
+			work_cachei_count += ct->work_stats[2];
 		}
 
-		pr_alert("ct-torture nmi %lu, irq %lu, ",
+		pr_alert("ct-torture: nmi %lu, irq %lu, ",
 			 nmi_entry_count, irq_entry_count);
 		pr_cont("syscall %lu, idle %lu, guest %lu, vmap %lu\n",
 			syscall_entry_count, idle_entry_count,
 			guest_entry_count, vmap_count);
+		pr_cont("ct-torture: WORK_SYNC %llu, WORK_TLBI %llu, WORK_CACHEI %llu\n",
+			work_sync_count, work_tlbi_count, work_cachei_count);
 
 	} while (!torture_must_stop());
 	torture_kthread_stopping("torture_stat_work");

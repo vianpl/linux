@@ -90,6 +90,7 @@ static noinstr void ct_enter_work(void)
 		 * NMI safe and deal with spurious calls.
 		 */
 		arch_context_tracking_work(i);
+		ct->work_stats[ffs(i) - 1]++;
 
 		work = arch_atomic_fetch_andnot(i, &ct->work) & ~i;
 	}
