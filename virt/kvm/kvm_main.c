@@ -1532,6 +1532,9 @@ static int check_memory_region_flags(const struct kvm_userspace_memory_region *m
 #ifdef __KVM_HAVE_NO_EXEC_MEM
 	valid_flags |= KVM_MEM_NO_EXEC;
 #endif
+#ifdef __KVM_HAVE_NO_ACCESS_MEM
+	valid_flags |= KVM_MEM_NO_ACCESS;
+#endif
 
 	if (mem->flags & ~valid_flags)
 		return -EINVAL;
@@ -2411,11 +2414,19 @@ static bool memslot_is_no_exec(const struct kvm_memory_slot *slot)
 	return slot->flags & KVM_MEM_NO_EXEC;
 }
 
+static bool memslot_is_no_access(const struct kvm_memory_slot *slot)
+{
+	return slot->flags & KVM_MEM_NO_ACCESS;
+}
+
 static unsigned long __gfn_to_hva_many(const struct kvm_memory_slot *slot, gfn_t gfn,
 				       gfn_t *nr_pages, bool write, bool exec)
 {
 	if (!slot || slot->flags & KVM_MEMSLOT_INVALID)
 		return KVM_HVA_ERR_BAD;
+
+	if (memslot_is_no_access(slot))
+		return KVM_HVA_ERR_NA_BAD;
 
 	if (memslot_is_readonly(slot) && write)
 		return KVM_HVA_ERR_RO_BAD;
@@ -2748,6 +2759,14 @@ kvm_pfn_t __gfn_to_pfn_memslot(const struct kvm_memory_slot *slot, gfn_t gfn,
 		if (executable)
 			*executable = false;
 		return KVM_PFN_NOSLOT;
+	}
+
+	if (addr == KVM_HVA_ERR_NA_BAD) {
+		if (writable)
+			*writable = false;
+		if (executable)
+			*executable = false;
+		return KVM_PFN_ERR_NA_FAULT;
 	}
 
 	if (writable)

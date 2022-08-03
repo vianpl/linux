@@ -4497,6 +4497,7 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 	case KVM_CAP_KVMCLOCK_CTRL:
 	case KVM_CAP_READONLY_MEM:
 	case KVM_CAP_NO_EXEC_MEM:
+	case KVM_CAP_NO_ACCESS_MEM:
 	case KVM_CAP_HYPERV_TIME:
 	case KVM_CAP_IOAPIC_POLARITY_IGNORED:
 	case KVM_CAP_TSC_DEADLINE_TIMER:
@@ -12845,6 +12846,11 @@ static void kvm_mmu_slot_apply_flags(struct kvm *kvm,
 	u32 old_flags = old ? old->flags : 0;
 	u32 new_flags = new ? new->flags : 0;
 	bool log_dirty_pages = new_flags & KVM_MEM_LOG_DIRTY_PAGES;
+
+	if (new && (new->flags & KVM_MEM_NO_ACCESS)) {
+		kvm_zap_gfn_range(kvm, new->base_gfn, new->base_gfn + new->npages);
+		return;
+	}
 
 	if (new && (new->flags & KVM_MEM_NO_EXEC))
 		kvm_zap_gfn_range(kvm, new->base_gfn, new->base_gfn + new->npages);

@@ -3307,6 +3307,9 @@ static int kvm_handle_error_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fa
 		return -EINTR;
 	}
 
+	if (fault->pfn == KVM_PFN_ERR_NA_FAULT)
+		return RET_PF_EMULATE;
+
 	/*
 	 * Do not cache the mmio info caused by writing the readonly gfn
 	 * into the spte otherwise read access on readonly gfn also can

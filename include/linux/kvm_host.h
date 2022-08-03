@@ -98,6 +98,7 @@
 #define KVM_PFN_ERR_RO_FAULT	(KVM_PFN_ERR_MASK + 2)
 #define KVM_PFN_ERR_SIGPENDING	(KVM_PFN_ERR_MASK + 3)
 #define KVM_PFN_ERR_NX_FAULT	(KVM_PFN_ERR_MASK + 4)
+#define KVM_PFN_ERR_NA_FAULT	(KVM_PFN_ERR_MASK + 5)
 
 /*
  * error pfns indicate that the gfn is in slot but faild to
@@ -142,6 +143,7 @@ static inline bool is_noslot_pfn(kvm_pfn_t pfn)
 #define KVM_HVA_ERR_BAD		(PAGE_OFFSET)
 #define KVM_HVA_ERR_RO_BAD	(PAGE_OFFSET + PAGE_SIZE)
 #define KVM_HVA_ERR_NX_BAD	(PAGE_OFFSET + PAGE_SIZE * 2)
+#define KVM_HVA_ERR_NA_BAD	(PAGE_OFFSET + PAGE_SIZE * 3)
 
 static inline bool kvm_is_error_hva(unsigned long addr)
 {
@@ -150,7 +152,8 @@ static inline bool kvm_is_error_hva(unsigned long addr)
 
 static inline bool kvm_is_access_violation_hva(unsigned long addr)
 {
-	return addr >= KVM_HVA_ERR_RO_BAD && addr <= KVM_HVA_ERR_NX_BAD;
+	return addr == KVM_HVA_ERR_RO_BAD || addr == KVM_HVA_ERR_NX_BAD
+		|| addr == KVM_HVA_ERR_NA_BAD;
 }
 
 #endif
