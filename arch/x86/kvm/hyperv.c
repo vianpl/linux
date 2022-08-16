@@ -386,7 +386,7 @@ static int set_tsc_reference_page(struct kvm_vcpu *vcpu, u8 vtl, u64 data, bool 
 	hv->vtl[vtl].hv_tsc_page = data;
 	if (data & HV_X64_MSR_TSC_REFERENCE_ENABLE) {
 		as_id = kvm_address_space_id_for_vtl(vtl);
-		hva = kvm_asid_gfn_to_hva_prot(vcpu->kvm, vtl, gpa_to_gfn(data), NULL);
+		hva = kvm_asid_gfn_to_hva_prot(vcpu->kvm, vtl, gpa_to_gfn(data), NULL, NULL);
 		hv->vtl[vtl].hv_tsc_page_hva = hva;
 		set_bit(vtl, &hv->ref_tsc_vtls);
 		if (!host)
@@ -1178,7 +1178,7 @@ static int set_vp_assist_page(struct kvm_vcpu *vcpu, u64 data, u8 target_vtl)
 	} else {
 		gfn = data >> HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_SHIFT;
 		as_id = kvm_address_space_id_for_vtl(target_vtl);
-		addr = kvm_asid_gfn_to_hva_prot(vcpu->kvm, as_id, gfn, NULL);
+		addr = kvm_asid_gfn_to_hva_prot(vcpu->kvm, as_id, gfn, NULL, NULL);
 		if (kvm_is_error_hva(addr))
 			return 1;
 

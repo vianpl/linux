@@ -3251,6 +3251,7 @@ static int direct_map(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 	struct kvm_mmu_page *sp;
 	int ret;
 	gfn_t base_gfn = fault->gfn;
+	unsigned access = ACC_ALL;
 
 	kvm_mmu_hugepage_adjust(vcpu, fault);
 
@@ -3280,7 +3281,10 @@ static int direct_map(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 	if (WARN_ON_ONCE(it.level != fault->goal_level))
 		return -EFAULT;
 
-	ret = mmu_set_spte(vcpu, fault->slot, it.sptep, ACC_ALL,
+	if (!fault->map_executable)
+		access &= ~ACC_EXEC_MASK;
+
+	ret = mmu_set_spte(vcpu, fault->slot, it.sptep, access,
 			   base_gfn, fault->pfn, fault);
 	if (ret == RET_PF_SPURIOUS)
 		return ret;
@@ -3310,6 +3314,9 @@ static int kvm_handle_error_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fa
 	 */
 	if (fault->pfn == KVM_PFN_ERR_RO_FAULT)
 		return RET_PF_EMULATE;
+
+	if (fault->pfn == KVM_PFN_ERR_NX_FAULT)
+		return -EACCES;
 
 	if (fault->pfn == KVM_PFN_ERR_HWPOISON) {
 		kvm_send_hwpoison_signal(fault->slot, fault->gfn);
@@ -4328,6 +4335,7 @@ static int __kvm_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 	async = false;
 	fault->pfn = __gfn_to_pfn_memslot(slot, fault->gfn, false, false, &async,
 					  fault->write, &fault->map_writable,
+					  fault->exec, &fault->map_executable,
 					  &fault->hva);
 	if (!async)
 		return RET_PF_CONTINUE; /* *pfn has correct page already */
@@ -4354,6 +4362,7 @@ static int __kvm_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 	 */
 	fault->pfn = __gfn_to_pfn_memslot(slot, fault->gfn, false, true, NULL,
 					  fault->write, &fault->map_writable,
+					  fault->exec, &fault->map_executable,
 					  &fault->hva);
 	return RET_PF_CONTINUE;
 }

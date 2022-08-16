@@ -102,6 +102,7 @@ struct kvm_userspace_memory_region {
  */
 #define KVM_MEM_LOG_DIRTY_PAGES	(1UL << 0)
 #define KVM_MEM_READONLY	(1UL << 1)
+#define KVM_MEM_NO_EXEC	(1UL << 2)
 #define KVM_MEM_VSM_PROTECTED	(1UL << 13)
 
 /* for KVM_IRQ_LINE */

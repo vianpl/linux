@@ -240,6 +240,7 @@ struct kvm_page_fault {
 	kvm_pfn_t pfn;
 	hva_t hva;
 	bool map_writable;
+	bool map_executable;
 
 	/*
 	 * Indicates the guest is trying to write a gfn that contains one or

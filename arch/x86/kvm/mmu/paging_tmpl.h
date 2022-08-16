@@ -382,7 +382,7 @@ retry_walk:
 			return 0;
 
 		host_addr = kvm_vcpu_gfn_to_hva_prot(vcpu, gpa_to_gfn(real_gpa),
-					    &walker->pte_writable[walker->level - 1]);
+					    &walker->pte_writable[walker->level - 1], NULL);
 		if (unlikely(kvm_is_error_hva(host_addr)))
 			goto error;
 
@@ -796,6 +796,9 @@ static int FNAME(page_fault)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 	r = kvm_faultin_pfn(vcpu, fault, walker.pte_access);
 	if (r != RET_PF_CONTINUE)
 		return r;
+
+	if (!fault->map_executable)
+		walker.pte_access &= ~ACC_EXEC_MASK;
 
 	/*
 	 * Do not change pte_access if the pfn is a mmio page, otherwise
