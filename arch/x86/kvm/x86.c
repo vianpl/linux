@@ -2308,7 +2308,7 @@ static s64 get_kvmclock_base_ns(void)
 }
 #endif
 
-static void kvm_write_wall_clock(struct kvm *kvm, gpa_t wall_clock, int sec_hi_ofs)
+static void kvm_write_wall_clock(struct kvm_vcpu *vcpu, gpa_t wall_clock, int sec_hi_ofs)
 {
 	int version;
 	int r;
@@ -2319,7 +2319,7 @@ static void kvm_write_wall_clock(struct kvm *kvm, gpa_t wall_clock, int sec_hi_o
 	if (!wall_clock)
 		return;
 
-	r = kvm_read_guest(kvm, wall_clock, &version, sizeof(version));
+	r = kvm_vcpu_read_guest(vcpu, wall_clock, &version, sizeof(version));
 	if (r)
 		return;
 
@@ -2328,7 +2328,7 @@ static void kvm_write_wall_clock(struct kvm *kvm, gpa_t wall_clock, int sec_hi_o
 
 	++version;
 
-	if (kvm_write_guest(kvm, wall_clock, &version, sizeof(version)))
+	if (kvm_vcpu_write_guest(vcpu, wall_clock, &version, sizeof(version)))
 		return;
 
 	/*
@@ -2336,22 +2336,22 @@ static void kvm_write_wall_clock(struct kvm *kvm, gpa_t wall_clock, int sec_hi_o
 	 * system time (updated by kvm_guest_time_update below) to the
 	 * wall clock specified here.  We do the reverse here.
 	 */
-	wall_nsec = ktime_get_real_ns() - get_kvmclock_ns(kvm);
+	wall_nsec = ktime_get_real_ns() - get_kvmclock_ns(vcpu->kvm);
 
 	wc.nsec = do_div(wall_nsec, 1000000000);
 	wc.sec = (u32)wall_nsec; /* overflow in 2106 guest time */
 	wc.version = version;
 
-	kvm_write_guest(kvm, wall_clock, &wc, sizeof(wc));
+	kvm_vcpu_write_guest(vcpu, wall_clock, &wc, sizeof(wc));
 
 	if (sec_hi_ofs) {
 		wc_sec_hi = wall_nsec >> 32;
-		kvm_write_guest(kvm, wall_clock + sec_hi_ofs,
+		kvm_vcpu_write_guest(vcpu, wall_clock + sec_hi_ofs,
 				&wc_sec_hi, sizeof(wc_sec_hi));
 	}
 
 	version++;
-	kvm_write_guest(kvm, wall_clock, &version, sizeof(version));
+	kvm_vcpu_write_guest(vcpu, wall_clock, &version, sizeof(version));
 }
 
 static void kvm_write_system_time(struct kvm_vcpu *vcpu, gpa_t system_time,
@@ -2371,7 +2371,7 @@ static void kvm_write_system_time(struct kvm_vcpu *vcpu, gpa_t system_time,
 
 	/* we verify if the enable bit is set... */
 	if (system_time & 1)
-		kvm_gpc_activate(&vcpu->arch.pv_time, system_time & ~1ULL,
+		kvm_vcpu_gpc_activate(vcpu, &vcpu->arch.pv_time, system_time & ~1ULL,
 				 sizeof(struct pvclock_vcpu_time_info));
 	else
 		kvm_gpc_deactivate(&vcpu->arch.pv_time);
@@ -3104,10 +3104,10 @@ static void kvm_setup_guest_pvclock(struct kvm_vcpu *v,
 	unsigned long flags;
 
 	read_lock_irqsave(&gpc->lock, flags);
-	while (!kvm_gpc_check(gpc, offset + sizeof(*guest_hv_clock))) {
+	while (!kvm_vcpu_gpc_check(v, gpc, offset + sizeof(*guest_hv_clock))) {
 		read_unlock_irqrestore(&gpc->lock, flags);
 
-		if (kvm_gpc_refresh(gpc, offset + sizeof(*guest_hv_clock)))
+		if (kvm_vcpu_gpc_refresh(v, gpc, offset + sizeof(*guest_hv_clock)))
 			return;
 
 		read_lock_irqsave(&gpc->lock, flags);
@@ -3238,7 +3238,7 @@ static int kvm_guest_time_update(struct kvm_vcpu *v)
 					offsetof(struct compat_vcpu_info, time));
 	if (vcpu->xen.vcpu_time_info_cache.active)
 		kvm_setup_guest_pvclock(v, &vcpu->xen.vcpu_time_info_cache, 0);
-	kvm_hv_setup_tsc_page(v->kvm, &vcpu->hv_clock);
+	kvm_hv_setup_tsc_page(v, &vcpu->hv_clock);
 	return 0;
 }
 
@@ -3427,8 +3427,8 @@ static int kvm_pv_enable_async_pf(struct kvm_vcpu *vcpu, u64 data)
 		return 0;
 	}
 
-	if (kvm_gfn_to_hva_cache_init(vcpu->kvm, &vcpu->arch.apf.data, gpa,
-					sizeof(u64)))
+	if (kvm_vcpu_gfn_to_hva_cache_init(vcpu, &vcpu->arch.apf.data, gpa,
+					   sizeof(u64)))
 		return 1;
 
 	vcpu->arch.apf.send_user_only = !(data & KVM_ASYNC_PF_SEND_ALWAYS);
@@ -3809,14 +3809,14 @@ int kvm_set_msr_common(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 			return 1;
 
 		vcpu->kvm->arch.wall_clock = data;
-		kvm_write_wall_clock(vcpu->kvm, data, 0);
+		kvm_write_wall_clock(vcpu, data, 0);
 		break;
 	case MSR_KVM_WALL_CLOCK:
 		if (!guest_pv_has(vcpu, KVM_FEATURE_CLOCKSOURCE))
 			return 1;
 
 		vcpu->kvm->arch.wall_clock = data;
-		kvm_write_wall_clock(vcpu->kvm, data, 0);
+		kvm_write_wall_clock(vcpu, data, 0);
 		break;
 	case MSR_KVM_SYSTEM_TIME_NEW:
 		if (!guest_pv_has(vcpu, KVM_FEATURE_CLOCKSOURCE2))
@@ -8731,7 +8731,7 @@ static bool reexecute_instruction(struct kvm_vcpu *vcpu, gpa_t cr2_or_gpa,
 	 * retry instruction -> write #PF -> emulation fail -> retry
 	 * instruction -> ...
 	 */
-	pfn = gfn_to_pfn(vcpu->kvm, gpa_to_gfn(gpa));
+	pfn = kvm_vcpu_gfn_to_pfn(vcpu, gpa_to_gfn(gpa));
 
 	/*
 	 * If the instruction failed on the error pfn, it can not be fixed,
@@ -9833,7 +9833,7 @@ static int kvm_pv_clock_pairing(struct kvm_vcpu *vcpu, gpa_t paddr,
 	memset(&clock_pairing.pad, 0, sizeof(clock_pairing.pad));
 
 	ret = 0;
-	if (kvm_write_guest(vcpu->kvm, paddr, &clock_pairing,
+	if (kvm_vcpu_write_guest(vcpu, paddr, &clock_pairing,
 			    sizeof(struct kvm_clock_pairing)))
 		ret = -KVM_EFAULT;
 
@@ -13220,16 +13220,16 @@ static inline int apf_put_user_notpresent(struct kvm_vcpu *vcpu)
 {
 	u32 reason = KVM_PV_REASON_PAGE_NOT_PRESENT;
 
-	return kvm_write_guest_cached(vcpu->kvm, &vcpu->arch.apf.data, &reason,
-				      sizeof(reason));
+	return kvm_vcpu_write_guest_cached(vcpu, &vcpu->arch.apf.data, &reason,
+					   sizeof(reason));
 }
 
 static inline int apf_put_user_ready(struct kvm_vcpu *vcpu, u32 token)
 {
 	unsigned int offset = offsetof(struct kvm_vcpu_pv_apf_data, token);
 
-	return kvm_write_guest_offset_cached(vcpu->kvm, &vcpu->arch.apf.data,
-					     &token, offset, sizeof(token));
+	return kvm_vcpu_write_guest_offset_cached(vcpu, &vcpu->arch.apf.data,
+						  &token, offset, sizeof(token));
 }
 
 static inline bool apf_pageready_slot_free(struct kvm_vcpu *vcpu)
@@ -13237,8 +13237,8 @@ static inline bool apf_pageready_slot_free(struct kvm_vcpu *vcpu)
 	unsigned int offset = offsetof(struct kvm_vcpu_pv_apf_data, token);
 	u32 val;
 
-	if (kvm_read_guest_offset_cached(vcpu->kvm, &vcpu->arch.apf.data,
-					 &val, offset, sizeof(val)))
+	if (kvm_vcpu_read_guest_offset_cached(vcpu, &vcpu->arch.apf.data,
+					      &val, offset, sizeof(val)))
 		return false;
 
 	return !val;

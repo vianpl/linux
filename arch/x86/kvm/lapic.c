@@ -877,15 +877,13 @@ int kvm_pv_send_ipi(struct kvm_vcpu *src, unsigned long ipi_bitmap_low,
 static int pv_eoi_put_user(struct kvm_lapic *apic, u8 val)
 {
 
-	return kvm_write_guest_cached(apic->vcpu->kvm, &apic->pv_eoi.data, &val,
-				      sizeof(val));
+	return kvm_vcpu_write_guest_cached(apic->vcpu, &apic->pv_eoi.data, &val, sizeof(val));
 }
 
 static int pv_eoi_get_user(struct kvm_lapic *apic, u8 *val)
 {
 
-	return kvm_read_guest_cached(apic->vcpu->kvm, &apic->pv_eoi.data, val,
-				      sizeof(*val));
+	return kvm_vcpu_read_guest_cached(apic->vcpu, &apic->pv_eoi.data, val, sizeof(*val));
 }
 
 static inline bool pv_eoi_enabled(struct kvm_lapic *apic)
@@ -3142,7 +3140,7 @@ void kvm_lapic_sync_from_vapic(struct kvm_vcpu *vcpu)
 	if (!test_bit(KVM_APIC_CHECK_VAPIC, &apic->apic_attention))
 		return;
 
-	if (kvm_read_guest_cached(vcpu->kvm, &apic->vapic_cache, &data, sizeof(u32)))
+	if (kvm_vcpu_read_guest_cached(vcpu, &apic->vapic_cache, &data, sizeof(u32)))
 		return;
 
 	apic_set_tpr(apic, data & 0xff);
@@ -3194,7 +3192,7 @@ void kvm_lapic_sync_to_vapic(struct kvm_vcpu *vcpu)
 		max_isr = 0;
 	data = (tpr & 0xff) | ((max_isr & 0xf0) << 8) | (max_irr << 24);
 
-	kvm_write_guest_cached(vcpu->kvm, &apic->vapic_cache, &data, sizeof(u32));
+	kvm_vcpu_write_guest_cached(vcpu, &apic->vapic_cache, &data, sizeof(u32));
 }
 
 int kvm_lapic_set_vapic_addr(struct kvm_vcpu *vcpu, gpa_t vapic_addr)
@@ -3202,7 +3200,7 @@ int kvm_lapic_set_vapic_addr(struct kvm_vcpu *vcpu, gpa_t vapic_addr)
 	struct kvm_lapic *apic = vcpu->arch.apic;
 
 	if (vapic_addr) {
-		if (kvm_gfn_to_hva_cache_init(vcpu->kvm,
+		if (kvm_vcpu_gfn_to_hva_cache_init(vcpu,
 					&apic->vapic_cache,
 					vapic_addr, sizeof(u32)))
 			return -EINVAL;

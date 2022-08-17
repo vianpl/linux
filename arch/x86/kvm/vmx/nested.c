@@ -5219,7 +5219,7 @@ static int handle_vmxon(struct kvm_vcpu *vcpu)
 	if (!page_address_valid(vcpu, vmptr))
 		return nested_vmx_failInvalid(vcpu);
 
-	if (kvm_read_guest(vcpu->kvm, vmptr, &revision, sizeof(revision)) ||
+	if (kvm_vcpu_read_guest(vcpu, vmptr, &revision, sizeof(revision)) ||
 	    revision != VMCS12_REVISION)
 		return nested_vmx_failInvalid(vcpu);
 

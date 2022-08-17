@@ -1211,7 +1211,7 @@ int kvm_hv_get_assist_page(struct kvm_vcpu *vcpu)
 	if (!hv_vcpu || !kvm_hv_assist_page_enabled(vcpu))
 		return -EFAULT;
 
-	return kvm_read_guest_cached(vcpu->kvm, &vcpu->arch.apic->pv_eoi.data,
+	return kvm_vcpu_read_guest_cached(vcpu, &vcpu->arch.apic->pv_eoi.data,
 				     &hv_vcpu->vp_assist_page, sizeof(struct hv_vp_assist_page));
 }
 EXPORT_SYMBOL_GPL(kvm_hv_get_assist_page);
@@ -1219,14 +1219,14 @@ EXPORT_SYMBOL_GPL(kvm_hv_get_assist_page);
 static bool hv_read_vtl_control(struct kvm_vcpu *vcpu, struct hv_vp_vtl_control *vtl_control)
 {
 	/* VTL control is a part of VP assist page, which is accessed through pv_eoi */
-	return !kvm_read_guest_offset_cached(vcpu->kvm, &vcpu->arch.apic->pv_eoi.data, vtl_control,
+	return !kvm_vcpu_read_guest_offset_cached(vcpu, &vcpu->arch.apic->pv_eoi.data, vtl_control,
 			offsetof(struct hv_vp_assist_page, vtl_control), sizeof(*vtl_control));
 }
 
 static bool hv_write_vtl_control(struct kvm_vcpu *vcpu, struct hv_vp_vtl_control *vtl_control)
 {
 	/* VTL control is a part of VP assist page, which is accessed through pv_eoi */
-	return !kvm_write_guest_offset_cached(vcpu->kvm, &vcpu->arch.apic->pv_eoi.data, vtl_control,
+	return !kvm_vcpu_write_guest_offset_cached(vcpu, &vcpu->arch.apic->pv_eoi.data, vtl_control,
 			offsetof(struct hv_vp_assist_page, vtl_control), sizeof(*vtl_control));
 }
 
@@ -1490,10 +1490,10 @@ static inline bool tsc_page_update_unsafe(struct kvm_hv *hv, u8 vtl)
 		hv->hv_tsc_emulation_control;
 }
 
-void kvm_hv_setup_tsc_page(struct kvm *kvm,
+void kvm_hv_setup_tsc_page(struct kvm_vcpu *vcpu,
 			   struct pvclock_vcpu_time_info *hv_clock)
 {
-	struct kvm_hv *hv = to_kvm_hv(kvm);
+	struct kvm_hv *hv = to_kvm_hv(vcpu->kvm);
 	u32 tsc_seq;
 	u64 hva;
 	u8 vtl, ffs_vtl;
@@ -2490,7 +2490,7 @@ struct kvm_hv_hcall {
 };
 
 
-static int kvm_hv_get_hc_data(struct kvm *kvm, struct kvm_hv_hcall *hc,
+static int kvm_hv_get_hc_data(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc,
 			      u16 orig_cnt, u16 cnt_cap, u64 *data)
 {
 	/*
@@ -2519,24 +2519,24 @@ static int kvm_hv_get_hc_data(struct kvm *kvm, struct kvm_hv_hcall *hc,
 		return 0;
 	}
 
-	return kvm_read_guest(kvm, hc->ingpa + hc->data_offset, data,
+	return kvm_vcpu_read_guest(vcpu, hc->ingpa + hc->data_offset, data,
 			      cnt * sizeof(*data));
 }
 
-static u64 kvm_get_sparse_vp_set(struct kvm *kvm, struct kvm_hv_hcall *hc,
+static u64 kvm_get_sparse_vp_set(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc,
 				 u64 *sparse_banks)
 {
 	if (hc->var_cnt > HV_MAX_SPARSE_VCPU_BANKS)
 		return -EINVAL;
 
 	/* Cap var_cnt to ignore banks that cannot contain a legal VP index. */
-	return kvm_hv_get_hc_data(kvm, hc, hc->var_cnt, KVM_HV_MAX_SPARSE_VCPU_SET_BITS,
+	return kvm_hv_get_hc_data(vcpu, hc, hc->var_cnt, KVM_HV_MAX_SPARSE_VCPU_SET_BITS,
 				  sparse_banks);
 }
 
-static int kvm_hv_get_tlb_flush_entries(struct kvm *kvm, struct kvm_hv_hcall *hc, u64 entries[])
+static int kvm_hv_get_tlb_flush_entries(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc, u64 entries[])
 {
-	return kvm_hv_get_hc_data(kvm, hc, hc->rep_cnt, hc->rep_cnt, entries);
+	return kvm_hv_get_hc_data(vcpu, hc, hc->rep_cnt, hc->rep_cnt, entries);
 }
 
 static void hv_tlb_flush_enqueue(struct kvm_vcpu *vcpu,
@@ -2661,7 +2661,7 @@ static u64 kvm_hv_flush_tlb(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 			flush.processor_mask = sse128_lo(hc->xmm[0]);
 			hc->consumed_xmm_halves = 1;
 		} else {
-			if (unlikely(kvm_read_guest(kvm, hc->ingpa,
+			if (unlikely(kvm_vcpu_read_guest(vcpu, hc->ingpa,
 						    &flush, sizeof(flush))))
 				return HV_STATUS_INVALID_HYPERCALL_INPUT;
 			hc->data_offset = sizeof(flush);
@@ -2691,7 +2691,7 @@ static u64 kvm_hv_flush_tlb(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 			       &hc->xmm[0], sizeof(hc->xmm[0]));
 			hc->consumed_xmm_halves = 2;
 		} else {
-			if (unlikely(kvm_read_guest(kvm, hc->ingpa, &flush_ex,
+			if (unlikely(kvm_vcpu_read_guest(vcpu, hc->ingpa, &flush_ex,
 						    sizeof(flush_ex))))
 				return HV_STATUS_INVALID_HYPERCALL_INPUT;
 			hc->data_offset = sizeof(flush_ex);
@@ -2713,7 +2713,7 @@ static u64 kvm_hv_flush_tlb(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 			if (!hc->var_cnt)
 				goto ret_success;
 
-			if (kvm_get_sparse_vp_set(kvm, hc, sparse_banks))
+			if (kvm_get_sparse_vp_set(vcpu, hc, sparse_banks))
 				return HV_STATUS_INVALID_HYPERCALL_INPUT;
 		}
 
@@ -2735,7 +2735,7 @@ static u64 kvm_hv_flush_tlb(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 	    hc->rep_cnt > ARRAY_SIZE(__tlb_flush_entries)) {
 		tlb_flush_entries = NULL;
 	} else {
-		if (kvm_hv_get_tlb_flush_entries(kvm, hc, __tlb_flush_entries))
+		if (kvm_hv_get_tlb_flush_entries(vcpu, hc, __tlb_flush_entries))
 			return HV_STATUS_INVALID_HYPERCALL_INPUT;
 		tlb_flush_entries = __tlb_flush_entries;
 	}
@@ -2842,7 +2842,6 @@ static u64 kvm_hv_send_ipi(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 {
 	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
 	u64 *sparse_banks = hv_vcpu->sparse_banks;
-	struct kvm *kvm = vcpu->kvm;
 	struct hv_send_ipi_ex send_ipi_ex;
 	struct hv_send_ipi send_ipi;
 	u64 valid_bank_mask;
@@ -2851,7 +2850,7 @@ static u64 kvm_hv_send_ipi(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 
 	if (hc->code == HVCALL_SEND_IPI) {
 		if (!hc->fast) {
-			if (unlikely(kvm_read_guest(kvm, hc->ingpa, &send_ipi,
+			if (unlikely(kvm_vcpu_read_guest(vcpu, hc->ingpa, &send_ipi,
 						    sizeof(send_ipi))))
 				return HV_STATUS_INVALID_HYPERCALL_INPUT;
 			sparse_banks[0] = send_ipi.cpu_mask;
@@ -2869,7 +2868,7 @@ static u64 kvm_hv_send_ipi(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 		trace_kvm_hv_send_ipi(vector, sparse_banks[0]);
 	} else {
 		if (!hc->fast) {
-			if (unlikely(kvm_read_guest(kvm, hc->ingpa, &send_ipi_ex,
+			if (unlikely(kvm_vcpu_read_guest(vcpu, hc->ingpa, &send_ipi_ex,
 						    sizeof(send_ipi_ex))))
 				return HV_STATUS_INVALID_HYPERCALL_INPUT;
 		} else {
@@ -2901,7 +2900,7 @@ static u64 kvm_hv_send_ipi(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 		else
 			hc->consumed_xmm_halves = 1;
 
-		if (kvm_get_sparse_vp_set(kvm, hc, sparse_banks))
+		if (kvm_get_sparse_vp_set(vcpu, hc, sparse_banks))
 			return HV_STATUS_INVALID_HYPERCALL_INPUT;
 	}
 
@@ -2970,17 +2969,17 @@ static u64 kvm_hv_get_set_vp_registers(struct kvm_vcpu *active_vcpu,
 		}
 	} else {
 		u64 ingpa = hc->ingpa;
-		if (unlikely(kvm_read_guest(active_vcpu->kvm, ingpa, &input, sizeof(input)) != 0))
+		if (unlikely(kvm_vcpu_read_guest(active_vcpu, ingpa, &input, sizeof(input)) != 0))
 			return HV_STATUS_INVALID_HYPERCALL_INPUT;
 
 		ingpa += sizeof(input) + hc->rep_idx * sizeof(*names);
-		if (unlikely(kvm_read_guest(active_vcpu->kvm, ingpa, names, nregs * sizeof(*names)) != 0))
+		if (unlikely(kvm_vcpu_read_guest(active_vcpu, ingpa, names, nregs * sizeof(*names)) != 0))
 			return HV_STATUS_INVALID_HYPERCALL_INPUT;
 
 		if (do_set) {
 			/* According to TLFS, values start aligned on 16-byte boundary after names */
 			ingpa = round_up(ingpa + nregs * sizeof(*names), 16) + hc->rep_idx * sizeof(*vals);
-			if (unlikely(kvm_read_guest(active_vcpu->kvm, ingpa, vals, nregs * sizeof(*vals)) != 0))
+			if (unlikely(kvm_vcpu_read_guest(active_vcpu, ingpa, vals, nregs * sizeof(*vals)) != 0))
 				return HV_STATUS_INVALID_HYPERCALL_INPUT;
 		}
 	}
@@ -3050,7 +3049,7 @@ static u64 kvm_hv_get_set_vp_registers(struct kvm_vcpu *active_vcpu,
 			}
 		} else {
 			u64 outgpa = hc->outgpa + hc->rep_idx * sizeof(*vals);
-			if (unlikely(kvm_write_guest(active_vcpu->kvm, outgpa, vals, sizeof(*vals) * nregs) != 0))
+			if (unlikely(kvm_vcpu_write_guest(active_vcpu, outgpa, vals, sizeof(*vals) * nregs) != 0))
 				return HV_STATUS_INVALID_HYPERCALL_INPUT;
 		}
 	}
@@ -3088,7 +3087,7 @@ static u64 kvm_hv_enable_partition_vtl(struct kvm_vcpu *vcpu, struct kvm_hv_hcal
 		pinput64[0] = hc->ingpa;
 		pinput64[1] = hc->outgpa;
 	} else {
-		if (kvm_read_guest(vcpu->kvm, hc->ingpa, &input, sizeof(input)) != 0)
+		if (kvm_vcpu_read_guest(vcpu, hc->ingpa, &input, sizeof(input)) != 0)
 			return HV_STATUS_INVALID_HYPERCALL_INPUT;
 	}
 
@@ -3173,7 +3172,7 @@ static u64 kvm_hv_enable_vp_vtl(struct kvm_vcpu *requestor_vcpu, struct kvm_hv_h
 	if (hc->rep || hc->fast)
 		return HV_STATUS_INVALID_HYPERCALL_INPUT;
 
-	if (unlikely(kvm_read_guest(requestor_vcpu->kvm, hc->ingpa, &input, sizeof(input)) != 0))
+	if (unlikely(kvm_vcpu_read_guest(requestor_vcpu, hc->ingpa, &input, sizeof(input)) != 0))
 		return HV_STATUS_INVALID_HYPERCALL_INPUT;
 
 	trace_kvm_hv_enable_vp_vtl(input.partition_id, input.vp_index, input.target_vtl.target_vtl);
@@ -3619,7 +3618,7 @@ static u64 kvm_hv_translate_virtual_address(struct kvm_vcpu* vcpu,
 		input.control_flags = sse128_lo(hc->xmm[0]);
 		input.gva = sse128_hi(hc->xmm[0]);
 	} else {
-		if (unlikely(kvm_read_guest(vcpu->kvm, hc->ingpa, &input, sizeof(input)) != 0))
+		if (unlikely(kvm_vcpu_read_guest(vcpu, hc->ingpa, &input, sizeof(input)) != 0))
 			return HV_STATUS_INVALID_HYPERCALL_INPUT;
 	}
 
@@ -3668,7 +3667,7 @@ static u64 kvm_hv_translate_virtual_address(struct kvm_vcpu* vcpu,
 		memcpy(&hc->xmm[1], &output, sizeof(output));
 		hc->xmm_dirty = true;
 	} else {
-		if (unlikely(kvm_write_guest(vcpu->kvm, hc->outgpa, &output, sizeof(output)) != 0))
+		if (unlikely(kvm_vcpu_write_guest(vcpu, hc->outgpa, &output, sizeof(output)) != 0))
 			return HV_STATUS_INVALID_HYPERCALL_INPUT;
 	}
 
@@ -3707,10 +3706,10 @@ static u64 kvm_hv_get_vp_index_from_apic_id(struct kvm_vcpu* vcpu,
 		input.target_vtl = hc->outgpa & 0xFF;
 		apic_id = sse128_lo(hc->xmm[0]);
 	} else {
-		if (unlikely(kvm_read_guest(vcpu->kvm, hc->ingpa, &input, sizeof(input)) != 0))
+		if (unlikely(kvm_vcpu_read_guest(vcpu, hc->ingpa, &input, sizeof(input)) != 0))
 			return HV_STATUS_INVALID_HYPERCALL_INPUT;
 
-		if (unlikely(kvm_read_guest(vcpu->kvm, hc->ingpa + sizeof(input), &apic_id, sizeof(apic_id)) != 0))
+		if (unlikely(kvm_vcpu_read_guest(vcpu, hc->ingpa + sizeof(input), &apic_id, sizeof(apic_id)) != 0))
 			return HV_STATUS_INVALID_HYPERCALL_INPUT;
 	}
 
@@ -3730,7 +3729,7 @@ static u64 kvm_hv_get_vp_index_from_apic_id(struct kvm_vcpu* vcpu,
 		hc->xmm[1] = sse128(vp_index, 0);
 		hc->xmm_dirty = true;
 	} else {
-		if (unlikely(kvm_write_guest(vcpu->kvm, hc->outgpa, &vp_index, sizeof(vp_index)) != 0))
+		if (unlikely(kvm_vcpu_write_guest(vcpu, hc->outgpa, &vp_index, sizeof(vp_index)) != 0))
 			return HV_STATUS_INVALID_HYPERCALL_INPUT;
 	}
 
@@ -3751,7 +3750,7 @@ static u64 kvm_hv_start_virtual_processor(struct kvm_vcpu* active_vcpu,
 	if (hc->fast || hc->rep)
 		return HV_STATUS_INVALID_HYPERCALL_INPUT;
 
-	if (unlikely(kvm_read_guest(active_vcpu->kvm, hc->ingpa, &input, sizeof(input)) != 0))
+	if (unlikely(kvm_vcpu_read_guest(active_vcpu, hc->ingpa, &input, sizeof(input)) != 0))
 		return HV_STATUS_INVALID_HYPERCALL_INPUT;
 
 	target_vtl = input.target_vtl.as_uint8;
