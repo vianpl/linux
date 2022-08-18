@@ -1852,6 +1852,29 @@ TRACE_EVENT(kvm_hv_vtl_return,
 		  __entry->active_vtl, __entry->prev_vtl, __entry->ctl)
 );
 
+TRACE_EVENT(kvm_hv_modify_vtl_protection_mask,
+	TP_PROTO(u64 target_partition_id, u32 map_flags, u8 target_vtl, u16 count),
+	TP_ARGS(target_partition_id, map_flags, target_vtl, count),
+
+	TP_STRUCT__entry(
+		__field(u64, target_partition_id)
+		__field(u32, map_flags)
+		__field(u8, target_vtl)
+		__field(u16, count)
+	),
+
+	TP_fast_assign(
+		__entry->target_partition_id = target_partition_id;
+		__entry->map_flags = map_flags;
+		__entry->target_vtl = target_vtl;
+		__entry->count = count;
+	),
+
+	TP_printk("target partition id 0x%llx, map flags 0x%x, target VTL %d, count %d",
+		  __entry->target_partition_id, __entry->map_flags,
+		  __entry->target_vtl, __entry->count)
+);
+
 TRACE_EVENT(kvm_hv_translate_virtual_address,
 	TP_PROTO(u64 partition_id, u32 vp_index, u64 control_flags, u64 gva),
 	TP_ARGS(partition_id, vp_index, control_flags, gva),

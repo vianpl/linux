@@ -198,7 +198,22 @@ struct kvm_hyperv_exit {
 		struct {
 			__u64 input;
 			__u64 result;
-			__u64 params[2];
+            union {
+                __u64 params[2];
+                struct {
+                    __u8 vtl;
+#define KVM_HV_VTL_PROTECTION_READ	0x01
+#define KVM_HV_VTL_PROTECTION_WRITE	0x02
+#define KVM_HV_VTL_PROTECTION_UMX	0x04
+#define KVM_HV_VTL_PROTECTION_KMX	0x08
+                    __u8 mask;
+                    __u8 pad[2];
+                    __u32 len;
+/* This is not a spec limit, but rather something we use to limit stack memory usage */
+#define KVM_HV_VP_REGISTER_LIST_SIZE 16u
+                    __u64 gfns[KVM_HV_VP_REGISTER_LIST_SIZE];
+		        } prot_mask;
+            } params;
 		} hcall;
 		struct {
 			__u32 msr;

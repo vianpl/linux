@@ -2932,9 +2932,6 @@ ret_success:
 	return HV_STATUS_SUCCESS;
 }
 
-/* This is not a spec limit, but rather something we use to limit stack memory usage */
-#define HV_VP_REGISTER_LIST_SIZE 16u
-
 static u64 kvm_hv_get_set_vp_registers(struct kvm_vcpu *active_vcpu,
 				       struct kvm_hv_hcall *hc,
 				       bool do_set)
@@ -2944,8 +2941,8 @@ static u64 kvm_hv_get_set_vp_registers(struct kvm_vcpu *active_vcpu,
 	int status;
 
 	struct hv_get_set_vp_registers input;
-	struct hv_vp_register_val vals[HV_VP_REGISTER_LIST_SIZE];
-	u32 names[HV_VP_REGISTER_LIST_SIZE];
+	struct hv_vp_register_val vals[KVM_HV_VP_REGISTER_LIST_SIZE];
+	u32 names[KVM_HV_VP_REGISTER_LIST_SIZE];
 	u16 xmm_index = 0;
 	u16 nregs;
 	u16 i;
@@ -2953,7 +2950,7 @@ static u64 kvm_hv_get_set_vp_registers(struct kvm_vcpu *active_vcpu,
 	/* Limit register count to how much we can handle per-call */
 	BUG_ON(hc->rep && hc->rep_idx >= hc->rep_cnt); /* idx/cnt should've been checked by caller */
 	nregs = hc->rep_cnt - hc->rep_idx;
-	nregs = nregs > HV_VP_REGISTER_LIST_SIZE ? HV_VP_REGISTER_LIST_SIZE : nregs;
+	nregs = nregs > KVM_HV_VP_REGISTER_LIST_SIZE ? KVM_HV_VP_REGISTER_LIST_SIZE : nregs;
 
 	if (hc->fast) {
 		input.partition_id = hc->ingpa;
@@ -3585,6 +3582,84 @@ static bool kvm_hv_vtl_return(struct kvm_vcpu *vcpu)
 	return do_vtl_switch(vcpu, prev_vtl);
 }
 
+static u64 kvm_hv_modify_vtl_protection_mask(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
+{
+	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
+	struct hv_modify_vtl_protection_mask input;
+	struct kvm_hyperv_exit *exit = &vcpu->run->hyperv;
+	u64 gpa_list[KVM_HV_VP_REGISTER_LIST_SIZE];
+	u16 count, i;
+	u8 target_vtl;
+
+	/* Limit gpa count to how much we can handle per-call */
+	BUG_ON(hc->rep && hc->rep_idx >= hc->rep_cnt); /* idx/cnt should've been checked by caller */
+	count = hc->rep_cnt - hc->rep_idx;
+	count = count > KVM_HV_VP_REGISTER_LIST_SIZE ? KVM_HV_VP_REGISTER_LIST_SIZE : count;
+
+	if (hc->fast) {
+		const size_t max_gpas = sizeof(hc->xmm) / (sizeof(gpa_list[0]));
+		u64* pinput = (u64*)&input;
+		pinput[0] = hc->ingpa;
+		pinput[1] = hc->outgpa;
+
+		/* Make sure we can fit max number of gpas for a fast call, makes things much easier */
+		BUILD_BUG_ON(KVM_HV_VP_REGISTER_LIST_SIZE < max_gpas);
+
+		/* We always return everything for fast calls, so no continuations should be possible */
+		if (hc->rep_idx != 0 || count > max_gpas)
+			return HV_STATUS_INVALID_HYPERCALL_INPUT;
+
+		for (i = 0; i < count; i += 2) {
+			/* Potential off-by-one overflow here is harmless */
+			gpa_list[i + 0] = sse128_lo(hc->xmm[i >> 1]);
+			gpa_list[i + 1] = sse128_hi(hc->xmm[i >> 1]);
+		}
+	} else {
+		u64 ingpa = hc->ingpa;
+		if (unlikely(kvm_vcpu_read_guest(vcpu, ingpa, &input, sizeof(input)) != 0))
+			return HV_STATUS_INVALID_HYPERCALL_INPUT;
+
+		ingpa += sizeof(input) + hc->rep_idx * sizeof(gpa_list[0]);
+		if (unlikely(kvm_vcpu_read_guest(vcpu, ingpa, gpa_list, count * sizeof(*gpa_list)) != 0))
+			return HV_STATUS_INVALID_HYPERCALL_INPUT;
+	}
+
+	trace_kvm_hv_modify_vtl_protection_mask(input.target_partition_id,
+						input.map_flags,
+						input.input_vtl.as_uint8,
+						count);
+
+	/* Handle partition ID (the only supported id is self) */
+	if (input.target_partition_id != HV_PARTITION_ID_SELF)
+		return HV_STATUS_INVALID_PARTITION_ID;
+
+	/* Handle target VTL we should use */
+	if (input.input_vtl.use_target_vtl) {
+		target_vtl = input.input_vtl.target_vtl;
+
+		/* VTL may only set protections for a lower VTL */
+		if (target_vtl >= get_active_vtl(vcpu))
+			return HV_STATUS_ACCESS_DENIED;
+	} else {
+		/* VTL can only apply protections on a lower VTL,
+		 * so assume that if target VTL bit is not set by guest */
+		target_vtl = prev_enabled_vtl(hv_vcpu->vsm_vp_status.enabled_vtl_set, get_active_vtl(vcpu));
+		if (target_vtl == HV_INVALID_VTL)
+			return HV_STATUS_INVALID_PARAMETER;
+	}
+
+	if (target_vtl >= HV_NUM_VTLS)
+		return HV_STATUS_INVALID_PARAMETER;
+
+	exit->u.hcall.input = hc->param;
+	exit->u.hcall.params.prot_mask.vtl = target_vtl;
+	exit->u.hcall.params.prot_mask.mask = (u8)input.map_flags;
+	exit->u.hcall.params.prot_mask.len = count;
+	memcpy(exit->u.hcall.params.prot_mask.gfns, gpa_list,
+	       count * sizeof(exit->u.hcall.params.prot_mask.gfns[0]));
+	return 0;
+}
+
 static bool kvm_hv_xlate_va_validate_input(struct kvm_vcpu* vcpu,
 					   struct hv_xlate_va_input *in,
 					   u8 *vtl, u8 *flags)
@@ -4014,6 +4089,7 @@ static bool is_xmm_fast_hypercall(struct kvm_hv_hcall *hc)
 	case HVCALL_SET_VP_REGISTERS:
 	case HVCALL_TRANSLATE_VIRTUAL_ADDRESS:
 	case HVCALL_GET_VP_ID_FROM_APIC_ID:
+	case HVCALL_MODIFY_VTL_PROTECTION_MASK:
 		return true;
 	}
 
@@ -4144,6 +4220,7 @@ static bool is_hypercall_advertised(struct kvm_vcpu *vcpu, u16 code)
 	case HVCALL_ENABLE_VP_VTL:
 	case HVCALL_VTL_CALL:
 	case HVCALL_VTL_RETURN:
+	case HVCALL_MODIFY_VTL_PROTECTION_MASK:
 		feature_mask = HV_ACCESS_VSM;
 		reg = VCPU_REGS_RBX;
 		break;
@@ -4342,7 +4419,16 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 	case HVCALL_ENABLE_VP_VTL:
 		ret = kvm_hv_enable_vp_vtl(vcpu, &hc);
 		break;
-
+	case HVCALL_MODIFY_VTL_PROTECTION_MASK:
+		ret = kvm_hv_modify_vtl_protection_mask(vcpu, &hc);
+		if (ret == 0) { /* bounced to userspace */
+			vcpu->run->exit_reason = KVM_EXIT_HYPERV;
+			vcpu->run->hyperv.type = KVM_EXIT_HYPERV_HCALL;
+			vcpu->arch.complete_userspace_io =
+					kvm_hv_hypercall_complete_userspace;
+			return 0;
+		}
+                break;
 	/*
 	 * VTL call/return hypercalls have a special calling convention:
 	 * - they don't use typical thunking data and input regs
@@ -4385,8 +4471,8 @@ hypercall_userspace_exit:
 	vcpu->run->exit_reason = KVM_EXIT_HYPERV;
 	vcpu->run->hyperv.type = KVM_EXIT_HYPERV_HCALL;
 	vcpu->run->hyperv.u.hcall.input = hc.param;
-	vcpu->run->hyperv.u.hcall.params[0] = hc.ingpa;
-	vcpu->run->hyperv.u.hcall.params[1] = hc.outgpa;
+	vcpu->run->hyperv.u.hcall.params.params[0] = hc.ingpa;
+	vcpu->run->hyperv.u.hcall.params.params[1] = hc.outgpa;
 	vcpu->arch.complete_userspace_io = kvm_hv_hypercall_complete_userspace;
 	return 0;
 
