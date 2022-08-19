@@ -3215,6 +3215,15 @@ int kvm_gfn_to_hva_cache_init(struct kvm *kvm, struct gfn_to_hva_cache *ghc,
 }
 EXPORT_SYMBOL_GPL(kvm_gfn_to_hva_cache_init);
 
+int kvm_asid_gfn_to_hva_cache_init(struct kvm *kvm, int as_id,
+				   struct gfn_to_hva_cache *ghc,
+				   gpa_t gpa, unsigned long len)
+{
+	struct kvm_memslots *slots = __kvm_memslots(kvm, as_id);
+	return __kvm_gfn_to_hva_cache_init(slots, ghc, gpa, len);
+}
+EXPORT_SYMBOL_GPL(kvm_asid_gfn_to_hva_cache_init);
+
 int kvm_write_guest_offset_cached(struct kvm *kvm, struct gfn_to_hva_cache *ghc,
 				  void *data, unsigned int offset,
 				  unsigned long len)

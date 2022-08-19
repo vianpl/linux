@@ -3313,7 +3313,7 @@ int kvm_lapic_set_pv_eoi(struct kvm_lapic *apic, u64 data, unsigned long len)
 		else
 			new_len = len;
 
-		ret = kvm_gfn_to_hva_cache_init(apic->vcpu->kvm, ghc, addr, new_len);
+		ret = kvm_asid_gfn_to_hva_cache_init(apic->vcpu->kvm, apic->hv_vtl, ghc, addr, new_len);
 		if (ret)
 			return ret;
 	}

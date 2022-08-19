@@ -1190,6 +1190,9 @@ int kvm_write_guest_offset_cached(struct kvm *kvm, struct gfn_to_hva_cache *ghc,
 				  unsigned long len);
 int kvm_gfn_to_hva_cache_init(struct kvm *kvm, struct gfn_to_hva_cache *ghc,
 			      gpa_t gpa, unsigned long len);
+int kvm_asid_gfn_to_hva_cache_init(struct kvm *kvm, int as_id,
+				   struct gfn_to_hva_cache *ghc,
+				   gpa_t gpa, unsigned long len);
 
 #define __kvm_get_guest(kvm, gfn, offset, v)				\
 ({									\

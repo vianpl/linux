@@ -209,10 +209,12 @@ struct kvm_hyperv_exit {
 			__u64 pending_page;
 		} syndbg;
 		struct {
-			__u32 msr;
-			__u8 vtl;
-			__u8 pad[3];
-			__u64 gpa;
+			__u32 msr; /* kernel -> user */
+			__u8 vtl; /* kernel -> user */
+			__u8 error; /* user -> kernel */
+			__u8 is_hypercall; /* kernel -> user */
+			__u8 pad;
+			__u64 gpa; /* kernel -> user */
 		} overlay;
 	} u;
 };
