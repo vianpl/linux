@@ -377,6 +377,29 @@ static int patch_hypercall_page(struct kvm_vcpu *vcpu, u64 data, u8 vtl)
 static int set_vp_assist_page(struct kvm_vcpu *vcpu, u64 data, u8 target_vtl);
 static u64 get_vp_assist_page(struct kvm_vcpu *vcpu, u8 target_vtl);
 
+static int set_tsc_reference_page(struct kvm_vcpu *vcpu, u8 vtl, u64 data, bool host)
+{
+	struct kvm_hv *hv = to_kvm_hv(vcpu->kvm);
+
+	hv->vtl[vtl].hv_tsc_page = data;
+	if (data & HV_X64_MSR_TSC_REFERENCE_ENABLE) {
+		set_bit(vtl, &hv->ref_tsc_vtls);
+		if (!host)
+			hv->vtl[vtl].hv_tsc_page_status = HV_TSC_PAGE_GUEST_CHANGED;
+		else
+			hv->vtl[vtl].hv_tsc_page_status = HV_TSC_PAGE_HOST_CHANGED;
+
+		/* TODO: it might not be necessary to generate KVM_REQ_MASTERCLOCK_UPDATE
+		 *       here and recalculate the same tsc_ref values if we already have it
+		 *       for another vtl */
+		kvm_make_request(KVM_REQ_MASTERCLOCK_UPDATE, vcpu);
+	} else {
+		hv->vtl[vtl].hv_tsc_page_status = HV_TSC_PAGE_UNSET;
+		clear_bit(vtl, &hv->ref_tsc_vtls);
+	}
+	return 0;
+}
+
 static int kvm_hv_overlay_completion(struct kvm_vcpu *vcpu)
 {
 	struct kvm_hyperv_exit *exit = &vcpu->run->hyperv;
@@ -395,6 +418,9 @@ static int kvm_hv_overlay_completion(struct kvm_vcpu *vcpu)
 		break;
 	case HV_X64_MSR_VP_ASSIST_PAGE:
 		r = set_vp_assist_page(vcpu, data, vtl);
+		break;
+	case HV_X64_MSR_REFERENCE_TSC:
+		r = set_tsc_reference_page(vcpu, vtl, data, false);
 		break;
 	default:
 		r = 1;
@@ -1802,19 +1828,9 @@ static int kvm_hv_set_msr_pw(struct kvm_vcpu *vcpu, u8 vtl, u32 msr, u64 data,
 		hv->vtl[vtl].hv_hypercall = data;
 		break;
 	case HV_X64_MSR_REFERENCE_TSC:
-		hv->vtl[vtl].hv_tsc_page = data;
-		if (data & HV_X64_MSR_TSC_REFERENCE_ENABLE) {
-			set_bit(vtl, &hv->ref_tsc_vtls);
-			if (!host)
-				hv->vtl[vtl].hv_tsc_page_status = HV_TSC_PAGE_GUEST_CHANGED;
-			else
-				hv->vtl[vtl].hv_tsc_page_status = HV_TSC_PAGE_HOST_CHANGED;
-
-			kvm_make_request(KVM_REQ_MASTERCLOCK_UPDATE, vcpu);
-		} else {
-			hv->vtl[vtl].hv_tsc_page_status = HV_TSC_PAGE_UNSET;
-			clear_bit(vtl, &hv->ref_tsc_vtls);
-		}
+		if (kvm->arch.hyperv.hv_enable_vsm && !host)
+			return overlay_exit(vcpu, vtl, HV_X64_MSR_REFERENCE_TSC, data, false);
+		set_tsc_reference_page(vcpu, vtl, data, host);
 		break;
 	case HV_X64_MSR_CRASH_P0 ... HV_X64_MSR_CRASH_P4:
 		return kvm_hv_msr_set_crash_data(kvm,
