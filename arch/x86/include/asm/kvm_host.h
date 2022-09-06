@@ -1132,6 +1132,7 @@ struct kvm_hv_vtl {
 	u64 hv_hypercall;
 	u64 hv_tsc_page;
 	enum hv_tsc_page_status hv_tsc_page_status;
+	u64 hv_tsc_page_hva;
 
 	/*
 	 * Higher VTLs can lock tlb flush hypercalls for lower VTLs.
@@ -2207,6 +2208,8 @@ enum {
 #else
 # define kvm_memslots_for_spte_role(kvm, role) __kvm_memslots(kvm, 0)
 #endif
+
+int kvm_address_space_id_for_vtl(u8 vtl);
 
 #define KVM_ARCH_WANT_MMU_NOTIFIER
 

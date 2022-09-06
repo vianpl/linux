@@ -13044,6 +13044,11 @@ static inline bool kvm_vcpu_has_events(struct kvm_vcpu *vcpu)
 	return false;
 }
 
+int kvm_address_space_id_for_vtl(u8 vtl)
+{
+	return 0;
+}
+
 int kvm_arch_vcpu_runnable(struct kvm_vcpu *vcpu)
 {
 	return kvm_vcpu_running(vcpu) || kvm_vcpu_has_events(vcpu);

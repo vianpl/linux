@@ -380,9 +380,14 @@ static u64 get_vp_assist_page(struct kvm_vcpu *vcpu, u8 target_vtl);
 static int set_tsc_reference_page(struct kvm_vcpu *vcpu, u8 vtl, u64 data, bool host)
 {
 	struct kvm_hv *hv = to_kvm_hv(vcpu->kvm);
+	u64 hva;
+	int as_id;
 
 	hv->vtl[vtl].hv_tsc_page = data;
 	if (data & HV_X64_MSR_TSC_REFERENCE_ENABLE) {
+		as_id = kvm_address_space_id_for_vtl(vtl);
+		hva = kvm_asid_gfn_to_hva_prot(vcpu->kvm, vtl, gpa_to_gfn(data), NULL);
+		hv->vtl[vtl].hv_tsc_page_hva = hva;
 		set_bit(vtl, &hv->ref_tsc_vtls);
 		if (!host)
 			hv->vtl[vtl].hv_tsc_page_status = HV_TSC_PAGE_GUEST_CHANGED;
@@ -396,6 +401,7 @@ static int set_tsc_reference_page(struct kvm_vcpu *vcpu, u8 vtl, u64 data, bool 
 	} else {
 		hv->vtl[vtl].hv_tsc_page_status = HV_TSC_PAGE_UNSET;
 		clear_bit(vtl, &hv->ref_tsc_vtls);
+		hv->vtl[vtl].hv_tsc_page_hva = 0;
 	}
 	return 0;
 }
@@ -1148,6 +1154,7 @@ static int set_vp_assist_page(struct kvm_vcpu *vcpu, u64 data, u8 target_vtl)
 	unsigned long addr;
 	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
 	struct kvm_vcpu_hv_vtl *hv_vtl = &hv_vcpu->vtl[target_vtl];
+	int as_id;
 
 	if (!(data & HV_X64_MSR_VP_ASSIST_PAGE_ENABLE)) {
 		hv_vtl->vp_assist_page = data;
@@ -1155,7 +1162,8 @@ static int set_vp_assist_page(struct kvm_vcpu *vcpu, u64 data, u8 target_vtl)
 			return 1;
 	} else {
 		gfn = data >> HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_SHIFT;
-		addr = kvm_vcpu_gfn_to_hva(vcpu, gfn);
+		as_id = kvm_address_space_id_for_vtl(target_vtl);
+		addr = kvm_asid_gfn_to_hva_prot(vcpu->kvm, as_id, gfn, NULL);
 		if (kvm_is_error_hva(addr))
 			return 1;
 
@@ -1487,7 +1495,7 @@ void kvm_hv_setup_tsc_page(struct kvm *kvm,
 {
 	struct kvm_hv *hv = to_kvm_hv(kvm);
 	u32 tsc_seq;
-	u64 gfn;
+	u64 hva;
 	u8 vtl, ffs_vtl;
 
 	BUILD_BUG_ON(sizeof(hv->ref_tsc_vtls) * 8 < HV_NUM_VTLS);
@@ -1509,13 +1517,12 @@ void kvm_hv_setup_tsc_page(struct kvm *kvm,
 	    hv->vtl[ffs_vtl].hv_tsc_page_status == HV_TSC_PAGE_UNSET)
 		goto out_unlock;
 
-	gfn = hv->vtl[ffs_vtl].hv_tsc_page >> HV_X64_MSR_TSC_REFERENCE_ADDRESS_SHIFT;
-	if (unlikely(kvm_read_guest(kvm, gfn_to_gpa(gfn),
-				    &tsc_seq, sizeof(tsc_seq))))
+	hva = hv->vtl[ffs_vtl].hv_tsc_page_hva;
+	if (unlikely(copy_from_user(&tsc_seq, (void *)hva, sizeof(tsc_seq))))
 		goto out_err;
 
 	if (tsc_seq && tsc_page_update_unsafe(hv, ffs_vtl)) {
-		if (kvm_read_guest(kvm, gfn_to_gpa(gfn), &hv->tsc_ref, sizeof(hv->tsc_ref)))
+		if (unlikely(copy_from_user(&hv->tsc_ref, (void *)hva, sizeof(hv->tsc_ref))))
 			goto out_err;
 
 		hv->vtl[ffs_vtl].hv_tsc_page_status = HV_TSC_PAGE_SET;
@@ -1528,9 +1535,8 @@ void kvm_hv_setup_tsc_page(struct kvm *kvm,
 	 */
 	hv->tsc_ref.tsc_sequence = 0;
 	for_each_set_bit(vtl, &hv->ref_tsc_vtls, HV_NUM_VTLS) {
-		gfn = hv->vtl[vtl].hv_tsc_page >> HV_X64_MSR_TSC_REFERENCE_ADDRESS_SHIFT;
-		if (kvm_write_guest(kvm, gfn_to_gpa(gfn),
-				    &hv->tsc_ref, sizeof(hv->tsc_ref.tsc_sequence)))
+		hva = hv->vtl[vtl].hv_tsc_page_hva;
+		if (copy_to_user((void *)hva, &hv->tsc_ref, sizeof(hv->tsc_ref.tsc_sequence)))
 			goto out_err;
 	}
 
@@ -1540,8 +1546,8 @@ void kvm_hv_setup_tsc_page(struct kvm *kvm,
 	/* Ensure sequence is zero before writing the rest of the struct.  */
 	smp_wmb();
 	for_each_set_bit(vtl, &hv->ref_tsc_vtls, HV_NUM_VTLS) {
-		gfn = hv->vtl[vtl].hv_tsc_page >> HV_X64_MSR_TSC_REFERENCE_ADDRESS_SHIFT;
-		if (kvm_write_guest(kvm, gfn_to_gpa(gfn), &hv->tsc_ref, sizeof(hv->tsc_ref)))
+		hva = hv->vtl[vtl].hv_tsc_page_hva;
+		if (copy_to_user((void *)hva, &hv->tsc_ref, sizeof(hv->tsc_ref)))
 			goto out_err;
 	}
 
@@ -1557,9 +1563,8 @@ void kvm_hv_setup_tsc_page(struct kvm *kvm,
 
 	hv->tsc_ref.tsc_sequence = tsc_seq;
 	for_each_set_bit(vtl, &hv->ref_tsc_vtls, HV_NUM_VTLS) {
-		gfn = hv->vtl[vtl].hv_tsc_page >> HV_X64_MSR_TSC_REFERENCE_ADDRESS_SHIFT;
-		if (kvm_write_guest(kvm, gfn_to_gpa(gfn),
-				&hv->tsc_ref, sizeof(hv->tsc_ref.tsc_sequence)))
+		hva = hv->vtl[vtl].hv_tsc_page_hva;
+		if (copy_to_user((void *)hva, &hv->tsc_ref, sizeof(hv->tsc_ref.tsc_sequence)))
 			goto out_err;
 
 		hv->vtl[vtl].hv_tsc_page_status = HV_TSC_PAGE_SET;

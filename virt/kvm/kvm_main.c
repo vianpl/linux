@@ -2473,6 +2473,14 @@ unsigned long kvm_vcpu_gfn_to_hva_prot(struct kvm_vcpu *vcpu, gfn_t gfn, bool *w
 	return gfn_to_hva_memslot_prot(slot, gfn, writable);
 }
 
+unsigned long kvm_asid_gfn_to_hva_prot(struct kvm *kvm, int asid, gfn_t gfn,
+				       bool *writable)
+{
+	struct kvm_memory_slot *slot = __gfn_to_memslot(__kvm_memslots(kvm, asid), gfn);
+
+	return gfn_to_hva_memslot_prot(slot, gfn, writable);
+}
+
 static inline int check_user_page_hwpoison(unsigned long addr)
 {
 	int rc, flags = FOLL_HWPOISON | FOLL_WRITE;
