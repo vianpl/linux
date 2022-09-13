@@ -593,6 +593,11 @@ static inline bool kvm_slot_dirty_track_enabled(const struct kvm_memory_slot *sl
 	return slot->flags & KVM_MEM_LOG_DIRTY_PAGES;
 }
 
+static inline bool is_kvm_memory_slot_vsm_protected(struct kvm_memory_slot const *memslot)
+{
+	return memslot && (memslot->flags & KVM_MEM_VSM_PROTECTED);
+}
+
 static inline unsigned long kvm_dirty_bitmap_bytes(struct kvm_memory_slot *memslot)
 {
 	return ALIGN(memslot->npages, BITS_PER_LONG) / 8;

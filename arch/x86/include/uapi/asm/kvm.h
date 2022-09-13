@@ -50,6 +50,7 @@
 #define __KVM_HAVE_XSAVE
 #define __KVM_HAVE_XCRS
 #define __KVM_HAVE_READONLY_MEM
+#define __KVM_HAVE_VSM_PROTECTED_MEM
 
 /* Architectural interrupt line count. */
 #define KVM_NR_INTERRUPTS 256

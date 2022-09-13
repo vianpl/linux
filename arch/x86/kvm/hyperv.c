@@ -4408,7 +4408,8 @@ static void deliver_gpa_intercept(struct kvm_vcpu *vcpu, u8 target_vtl,
 	if (target_vtl <= get_active_vtl(vcpu))
 		return;
 
-	pr_info("kvm_hv_deliver_intercept vcpu:%d, target_vtl:%d\n", hv_vcpu->vp_index, target_vtl);
+	pr_info("kvm_hv_deliver_intercept vcpu:%d, target_vtl:%d gpa:0x%llx access:0x%x\n",
+		hv_vcpu->vp_index, target_vtl, gpa, access_type_mask);
 
 	msg.header.message_type = HVMSG_GPA_INTERCEPT;
 	msg.header.payload_size = sizeof(*intercept);
@@ -4429,16 +4430,27 @@ static void deliver_gpa_intercept(struct kvm_vcpu *vcpu, u8 target_vtl,
 	intercept->header.rip = kvm_rip_read(vcpu);
 	intercept->header.rflags = kvm_get_rflags(vcpu);
 
-	intercept->cache_type = HV_X64_CACHE_TYPE_WRITEBACK;
-	intercept->instruction_byte_count = vcpu->arch.exit_instruction_len;
-	if (intercept->instruction_byte_count > sizeof(intercept->instruction_bytes))
-		intercept->instruction_byte_count = sizeof(intercept->instruction_bytes);
+	/*
+	 * For exec violations we don't have a way to decode an instruction that issued a fetch
+	 * to a non-X page because CPU points RIP and GPA to the fetch destination in the faulted page.
+	 * Instruction length though is the length of the fetch source.
+	 * Seems like Hyper-V is aware of that and is not trying to access those fields.
+	 */
+	if (access_type_mask == HV_INTERCEPT_ACCESS_EXECUTE) {
+		intercept->instruction_byte_count = 0;
+	} else {
+		intercept->instruction_byte_count = vcpu->arch.exit_instruction_len;
+		if (intercept->instruction_byte_count > sizeof(intercept->instruction_bytes))
+			intercept->instruction_byte_count = sizeof(intercept->instruction_bytes);
+		if (kvm_read_guest_virt(vcpu, kvm_rip_read(vcpu), intercept->instruction_bytes,
+					intercept->instruction_byte_count, &e))
+			goto inject_ud;
+	}
+
 	intercept->memory_access_info.gva_valid = (gva != 0);
 	intercept->gva = gva;
 	intercept->gpa = gpa;
-	if (kvm_read_guest_virt(vcpu, kvm_rip_read(vcpu), intercept->instruction_bytes,
-				intercept->instruction_byte_count, &e))
-		goto inject_ud;
+	intercept->cache_type = HV_X64_CACHE_TYPE_WRITEBACK;
 	kvm_x86_ops.get_segment(vcpu, &kvmseg, VCPU_SREG_DS);
 	store_kvm_segment(&kvmseg, &intercept->ds);
 	kvm_x86_ops.get_segment(vcpu, &kvmseg, VCPU_SREG_SS);

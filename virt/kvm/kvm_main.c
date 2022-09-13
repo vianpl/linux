@@ -1526,6 +1526,9 @@ static int check_memory_region_flags(const struct kvm_userspace_memory_region *m
 #ifdef __KVM_HAVE_READONLY_MEM
 	valid_flags |= KVM_MEM_READONLY;
 #endif
+#ifdef __KVM_HAVE_VSM_PROTECTED_MEM
+	valid_flags |= KVM_MEM_VSM_PROTECTED;
+#endif
 
 	if (mem->flags & ~valid_flags)
 		return -EINVAL;
