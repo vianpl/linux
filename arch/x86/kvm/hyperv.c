@@ -3301,6 +3301,8 @@ static bool store_vtl(struct kvm_vcpu *vcpu, struct kvm_vcpu_hv_vtl* vtl)
 
 	mutex_lock(&vtl->lock);
 
+	kvm_vcpu_x86_get_vcpu_events(vcpu, &vtl->events);
+
 	__store_vtl_sregs(vcpu, vtl);
 
 	kvm_get_dr(vcpu, 7, &vtl->dr7);
@@ -3412,6 +3414,8 @@ static bool load_vtl(struct kvm_vcpu *vcpu, struct kvm_vcpu_hv_vtl *vtl)
 
 	if (lapic_in_kernel(vcpu))
 		kvm_set_effective_apic(vcpu, vtl->apic);
+
+	kvm_vcpu_x86_set_vcpu_events(vcpu, &vtl->events);
 
 	/* Check for pending events at this VTL */
 	if (vtl->pending_event.event_pending) {
