@@ -5151,8 +5151,8 @@ static int kvm_vcpu_ioctl_x86_set_mce(struct kvm_vcpu *vcpu,
 	return 0;
 }
 
-static void kvm_vcpu_ioctl_x86_get_vcpu_events(struct kvm_vcpu *vcpu,
-					       struct kvm_vcpu_events *events)
+void kvm_vcpu_x86_get_vcpu_events(struct kvm_vcpu *vcpu,
+				  struct kvm_vcpu_events *events)
 {
 	struct kvm_queued_exception *ex;
 
@@ -5244,8 +5244,8 @@ static void kvm_vcpu_ioctl_x86_get_vcpu_events(struct kvm_vcpu *vcpu,
 	}
 }
 
-static int kvm_vcpu_ioctl_x86_set_vcpu_events(struct kvm_vcpu *vcpu,
-					      struct kvm_vcpu_events *events)
+int kvm_vcpu_x86_set_vcpu_events(struct kvm_vcpu *vcpu,
+			         struct kvm_vcpu_events *events)
 {
 	if (events->flags & ~(KVM_VCPUEVENT_VALID_NMI_PENDING
 			      | KVM_VCPUEVENT_VALID_SIPI_VECTOR
@@ -5850,7 +5850,7 @@ long kvm_arch_vcpu_ioctl(struct file *filp,
 	case KVM_GET_VCPU_EVENTS: {
 		struct kvm_vcpu_events events;
 
-		kvm_vcpu_ioctl_x86_get_vcpu_events(vcpu, &events);
+		kvm_vcpu_x86_get_vcpu_events(vcpu, &events);
 
 		r = -EFAULT;
 		if (copy_to_user(argp, &events, sizeof(struct kvm_vcpu_events)))
@@ -5865,7 +5865,7 @@ long kvm_arch_vcpu_ioctl(struct file *filp,
 		if (copy_from_user(&events, argp, sizeof(struct kvm_vcpu_events)))
 			break;
 
-		r = kvm_vcpu_ioctl_x86_set_vcpu_events(vcpu, &events);
+		r = kvm_vcpu_x86_set_vcpu_events(vcpu, &events);
 		break;
 	}
 	case KVM_GET_DEBUGREGS: {
@@ -11963,7 +11963,7 @@ static void store_regs(struct kvm_vcpu *vcpu)
 		__get_sregs(vcpu, &vcpu->run->s.regs.sregs);
 
 	if (vcpu->run->kvm_valid_regs & KVM_SYNC_X86_EVENTS)
-		kvm_vcpu_ioctl_x86_get_vcpu_events(
+		kvm_vcpu_x86_get_vcpu_events(
 				vcpu, &vcpu->run->s.regs.events);
 }
 
@@ -11979,7 +11979,7 @@ static int sync_regs(struct kvm_vcpu *vcpu)
 		vcpu->run->kvm_dirty_regs &= ~KVM_SYNC_X86_SREGS;
 	}
 	if (vcpu->run->kvm_dirty_regs & KVM_SYNC_X86_EVENTS) {
-		if (kvm_vcpu_ioctl_x86_set_vcpu_events(
+		if (kvm_vcpu_x86_set_vcpu_events(
 				vcpu, &vcpu->run->s.regs.events))
 			return -EINVAL;
 		vcpu->run->kvm_dirty_regs &= ~KVM_SYNC_X86_EVENTS;
