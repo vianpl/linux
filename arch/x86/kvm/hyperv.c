@@ -3389,6 +3389,14 @@ static bool load_vtl(struct kvm_vcpu *vcpu, struct kvm_vcpu_hv_vtl *vtl)
 
 	mutex_lock(&vtl->lock);
 
+	/* Clear all pending events from the old VTL */
+	vcpu->arch.smi_pending = 0;
+	atomic_set(&vcpu->arch.nmi_queued, 0);
+	vcpu->arch.nmi_pending = 0;
+	vcpu->arch.nmi_injected = false;
+	kvm_clear_interrupt_queue(vcpu);
+	kvm_clear_exception_queue(vcpu);
+
 	ret = __load_vtl_sregs(vcpu, vtl);
 	if (ret)
 		goto unlock_out;
