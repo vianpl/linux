@@ -3471,8 +3471,12 @@ static bool do_vtl_switch(struct kvm_vcpu *vcpu, int vtl)
 static bool set_vtl_entry_reason(struct kvm_vcpu *vcpu, enum hv_vtl_entry_reason reason)
 {
 	if (kvm_hv_assist_page_enabled(vcpu)) {
-		struct hv_vp_vtl_control vtl_control = {0};
-		vtl_control.vtl_entry_reason = reason;
+		struct hv_vp_vtl_control vtl_control = {
+			.vtl_entry_reason = reason,
+			.vtl_ret_x64rax = kvm_rax_read(vcpu),
+			.vtl_ret_x64rcx = kvm_rcx_read(vcpu),
+		};
+
 		if (unlikely(!hv_write_vtl_control(vcpu, &vtl_control))) {
 			return false;
 		}
