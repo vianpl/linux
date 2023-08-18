@@ -7523,7 +7523,6 @@ static fastpath_t vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	kvm_wait_lapic_expire(vcpu);
 	if (vcpu->dump_state_on_run) {
 		dump_ftrace_vmcs(vcpu);
-		dump_ftrace_vcpu_state(vcpu);
 		vcpu->dump_state_on_run = false;
 	}
 
