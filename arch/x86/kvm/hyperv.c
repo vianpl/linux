@@ -4451,10 +4451,12 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 	 * - no return value to report to the guest, instead #UD is injected on error
 	 */
 	case HVCALL_VTL_CALL:
+		vcpu->dump_state_on_run = true;
 		if (!kvm_hv_vtl_call(vcpu))
 			goto inject_ud;
 		return 1;
 	case HVCALL_VTL_RETURN:
+		vcpu->dump_state_on_run = true;
 		if (!kvm_hv_vtl_return(vcpu))
 			goto inject_ud;
 		return 1;
