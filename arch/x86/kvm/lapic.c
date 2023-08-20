@@ -2523,6 +2523,11 @@ void kvm_lapic_set_base(struct kvm_vcpu *vcpu, u64 value)
 	struct kvm_lapic *apic = vcpu->arch.apic;
 	struct kvm_vtl_apic_map *map = lapic_get_map(apic);
 
+
+	trace_printk("APIC_BASE vcpu %d, data %llx, prev %llx\n",
+		     vcpu->vcpu_id, value, old_value);
+	trace_dump_stack(0);
+
 	vcpu->arch.apic_base = value;
 
 	if ((old_value ^ value) & MSR_IA32_APICBASE_ENABLE)
