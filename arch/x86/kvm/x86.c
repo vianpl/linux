@@ -3635,6 +3635,7 @@ int kvm_set_msr_common(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 	if (msr && msr == vcpu->kvm->arch.xen_hvm_config.msr)
 		return kvm_xen_write_hypercall_page(vcpu, data);
 
+	trace_printk("vcpu_id %d, vtl %d, msr 0x%x, data %llx\n", vcpu->vcpu_id, msr_info->vtl, msr, data);
 	switch (msr) {
 	case MSR_AMD64_NB_CFG:
 	case MSR_IA32_UCODE_WRITE:
@@ -4351,6 +4352,8 @@ int kvm_get_msr_common(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 
 		return KVM_MSR_RET_INVALID;
 	}
+	trace_printk("vcpu_id %d, vtl %d, msr 0x%x, data %llx\n", vcpu->vcpu_id, msr_info->vtl, msr_info->index, msr_info->data);
+
 	return 0;
 }
 EXPORT_SYMBOL_GPL(kvm_get_msr_common);
