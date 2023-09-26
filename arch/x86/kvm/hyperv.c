@@ -4028,3 +4028,14 @@ int kvm_vm_ioctl_set_hv_vsm_state(struct kvm *kvm, struct kvm_hv_vsm_state *stat
 	hv->vsm_code_page_offsets32.as_u64 = state->vsm_code_page_offsets32;
 	return 0;
 }
+
+void dump_ftrace_vcpu_hyperv(struct kvm_vcpu *vcpu)
+{
+	struct hv_vp_vtl_control vtl_control;
+
+	trace_printk("*** HyperV VTL state ***\n");
+	if (get_active_vtl(vcpu) && hv_read_vtl_control(vcpu, &vtl_control))
+		trace_printk("entry_reason 0x%x, vina %d, rax %llx, rcx %llx\n",
+			     vtl_control.vtl_entry_reason, vtl_control.vina_asserted,
+			     vtl_control.vtl_ret_x64rax, vtl_control.vtl_ret_x64rcx);
+}
