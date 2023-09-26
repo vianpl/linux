@@ -2904,8 +2904,16 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 	case HVCALL_MODIFY_VTL_PROTECTION_MASK:
 	case HVCALL_ENABLE_PARTITION_VTL:
 	case HVCALL_ENABLE_VP_VTL:
+		goto hypercall_userspace_exit;
 	case HVCALL_VTL_CALL:
 	case HVCALL_VTL_RETURN:
+		vcpu->dump_state_on_run = true;
+		trace_printk("-------------------------------------------VCPU%d---------------------------------\n", vcpu->vcpu_id);
+		trace_printk("Exiting to user-space with code 0x%x\n", hc.code);
+		dump_ftrace_vmcs(vcpu);
+		dump_ftrace_vcpu_state(vcpu);
+		trace_printk("---------------------------------------------------------------------------\n");
+		kvm_get_vcpu_by_id(vcpu->kvm, 0)->dump_state_on_run = true;
 		goto hypercall_userspace_exit;
 	case HVCALL_TRANSLATE_VIRTUAL_ADDRESS:
 		if (unlikely(hc.rep_cnt)) {
@@ -2963,7 +2971,7 @@ static void deliver_gpa_intercept(struct kvm_vcpu *target_vcpu,
 	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(target_vcpu);
 	struct x86_exception e;
 	struct kvm_segment kvmseg;
-
+	int i;
 	msg.header.message_type = HVMSG_GPA_INTERCEPT;
 	msg.header.payload_size = sizeof(*intercept);
 
@@ -3026,6 +3034,60 @@ static void deliver_gpa_intercept(struct kvm_vcpu *target_vcpu,
 	intercept->r13 = kvm_r13_read(intercepted_vcpu);
 	intercept->r14 = kvm_r14_read(intercepted_vcpu);
 	intercept->r15 = kvm_r15_read(intercepted_vcpu);
+
+	trace_printk("  header.vp_index: %x\n", intercept->header.vp_index);
+	trace_printk("  header.instruction_length: %x\n", intercept->header.instruction_length);
+	trace_printk("  header.access_type_mask: %x\n", intercept->header.access_type_mask);
+	trace_printk("  header.exec_state.cpl: %x\n", intercept->header.exec_state.cpl);
+	trace_printk("  header.exec_state.cr0_pe: %x\n", intercept->header.exec_state.cr0_pe);
+	trace_printk("  header.exec_state.cr0_am: %x\n", intercept->header.exec_state.cr0_am);
+	trace_printk("  header.exec_state.efer_lma: %x\n", intercept->header.exec_state.efer_lma);
+	trace_printk("  header.exec_state.debug_active: %x\n",
+		 intercept->header.exec_state.debug_active);
+	trace_printk("  header.exec_state.interruption_pending: %x\n",
+		 intercept->header.exec_state.interruption_pending);
+	trace_printk("  header.cs: (values for cs segment register)\n");
+	trace_printk("    base: %llx\n", (unsigned long long)intercept->header.cs.base);
+	trace_printk("    limit: %x\n", intercept->header.cs.limit);
+	trace_printk("    selector: %x\n", intercept->header.cs.selector);
+	trace_printk("  header.rip: %llx\n", (unsigned long long)intercept->header.rip);
+	trace_printk("  header.rflags: %llx\n", (unsigned long long)intercept->header.rflags);
+	trace_printk("  cache_type: %x\n", intercept->cache_type);
+	trace_printk("  instruction_byte_count: %x\n", intercept->instruction_byte_count);
+	trace_printk("  memory_access_info.gva_valid: %x\n",
+		 intercept->memory_access_info.gva_valid);
+	trace_printk("  _reserved: %x\n", intercept->_reserved);
+	trace_printk("  gva: %llx\n", (unsigned long long)intercept->gva);
+	trace_printk("  gpa: %llx\n", (unsigned long long)intercept->gpa);
+	trace_printk("  instruction_bytes: ");
+	for (i = 0; i < 16; i++) {
+		trace_printk("%02x ", intercept->instruction_bytes[i]);
+	}
+	trace_printk("\n");
+	trace_printk("  ds: (values for ds segment register)\n");
+	trace_printk("    base: %llx\n", (unsigned long long)intercept->ds.base);
+	trace_printk("    limit: %x\n", intercept->ds.limit);
+	trace_printk("    selector: %x\n", intercept->ds.selector);
+	trace_printk("  ss: (values for ss segment register)\n");
+	trace_printk("    base: %llx\n", (unsigned long long)intercept->ss.base);
+	trace_printk("    limit: %x\n", intercept->ss.limit);
+	trace_printk("    selector: %x\n", intercept->ss.selector);
+	trace_printk("  rax: %llx\n", (unsigned long long)intercept->rax);
+	trace_printk("  rcx: %llx\n", (unsigned long long)intercept->rcx);
+	trace_printk("  rdx: %llx\n", (unsigned long long)intercept->rdx);
+	trace_printk("  rbx: %llx\n", (unsigned long long)intercept->rbx);
+	trace_printk("  rsp: %llx\n", (unsigned long long)intercept->rsp);
+	trace_printk("  rbp: %llx\n", (unsigned long long)intercept->rbp);
+	trace_printk("  rsi: %llx\n", (unsigned long long)intercept->rsi);
+	trace_printk("  rdi: %llx\n", (unsigned long long)intercept->rdi);
+	trace_printk("  r8: %llx\n", (unsigned long long)intercept->r8);
+	trace_printk("  r9: %llx\n", (unsigned long long)intercept->r9);
+	trace_printk("  r10: %llx\n", (unsigned long long)intercept->r10);
+	trace_printk("  r11: %llx\n", (unsigned long long)intercept->r11);
+	trace_printk("  r12: %llx\n", (unsigned long long)intercept->r12);
+	trace_printk("  r13: %llx\n", (unsigned long long)intercept->r13);
+	trace_printk("  r14: %llx\n", (unsigned long long)intercept->r14);
+	trace_printk("  r15: %llx\n", (unsigned long long)intercept->r15);
 
 	if (synic_deliver_msg(&hv_vcpu->synic, 0, &msg, true))
 		goto inject_ud;
@@ -3508,4 +3570,25 @@ int kvm_hv_vtl_dev_register(void)
 void kvm_hv_vtl_dev_unregister(void)
 {
 	kvm_unregister_device_ops(KVM_DEV_TYPE_HV_VSM_VTL);
+}
+
+static bool hv_read_vtl_control(struct kvm_vcpu *vcpu, struct hv_vp_vtl_control *vtl_control)
+{
+       /* VTL control is a part of VP assist page, which is accessed through pv_eoi */
+	if (!vcpu->arch.pv_eoi.data.len)
+		return 0;
+
+	return !kvm_read_guest_offset_cached(vcpu->kvm, &vcpu->arch.pv_eoi.data, vtl_control,
+			offsetof(struct hv_vp_assist_page, vtl_control), sizeof(*vtl_control));
+}
+
+void dump_ftrace_vcpu_hyperv(struct kvm_vcpu *vcpu)
+{
+	struct hv_vp_vtl_control vtl_control;
+
+	trace_printk("*** HyperV VTL state ***\n");
+	if (kvm_hv_get_active_vtl(vcpu) && hv_read_vtl_control(vcpu, &vtl_control))
+		trace_printk("entry_reason 0x%x, vina %d, rax %llx, rcx %llx\n",
+			     vtl_control.vtl_entry_reason, vtl_control.vina_asserted,
+			     vtl_control.vtl_ret_x64rax, vtl_control.vtl_ret_x64rcx);
 }

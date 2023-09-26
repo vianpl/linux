@@ -361,4 +361,6 @@ int kvm_hv_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault);
 
 void kvm_hv_deliver_intercept(struct kvm_vcpu *vcpu);
 
+void dump_ftrace_vcpu_hyperv(struct kvm_vcpu *vcpu);
+
 #endif /* __ARCH_X86_KVM_HYPERV_H__ */
