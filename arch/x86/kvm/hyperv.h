@@ -263,6 +263,7 @@ static inline struct kvm_vcpu *kvm_hv_get_vtl_vcpu(struct kvm_vcpu *vcpu, int vt
 {
 	return kvm_get_vcpu_by_id(vcpu->kvm, vtl);
 }
-
 void kvm_hv_deliver_intercept(struct kvm_vcpu *vcpu);
+
+void dump_ftrace_vcpu_hyperv(struct kvm_vcpu *vcpu);
 #endif
