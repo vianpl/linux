@@ -64,6 +64,21 @@ static inline struct kvm_vcpu_hv *to_hv_vcpu(struct kvm_vcpu *vcpu)
 	return vcpu->arch.hyperv;
 }
 
+static inline u8 get_active_vtl(struct kvm_vcpu *vcpu)
+{
+	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
+
+	if (!hv_vcpu)
+		return 0;
+
+	return hv_vcpu->vp_index;
+}
+
+static inline void set_active_vtl(struct kvm_vcpu *vcpu, u8 vtl)
+{
+	to_hv_vcpu(vcpu)->vsm_vp_status.active_vtl = vtl;
+}
+
 static inline struct kvm_vcpu_hv_synic *to_hv_synic(struct kvm_vcpu *vcpu)
 {
 	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
@@ -95,7 +110,7 @@ int kvm_hv_get_msr_common(struct kvm_vcpu *vcpu, u32 msr, u64 *pdata, bool host)
 
 static inline bool kvm_hv_hypercall_enabled(struct kvm_vcpu *vcpu)
 {
-	return vcpu->arch.hyperv_enabled && to_kvm_hv(vcpu->kvm)->hv_guest_os_id;
+	return vcpu->arch.hyperv_enabled && to_kvm_hv(vcpu->kvm)->vtl[get_active_vtl(vcpu)].hv_guest_os_id;
 }
 
 int kvm_hv_hypercall(struct kvm_vcpu *vcpu);
@@ -165,9 +180,9 @@ static inline bool kvm_hv_invtsc_suppressed(struct kvm_vcpu *vcpu)
 
 void kvm_hv_process_stimers(struct kvm_vcpu *vcpu);
 
-void kvm_hv_setup_tsc_page(struct kvm *kvm,
+void kvm_hv_setup_tsc_page(struct kvm_vcpu *vcpu,
 			   struct pvclock_vcpu_time_info *hv_clock);
-void kvm_hv_request_tsc_page_update(struct kvm *kvm);
+void kvm_hv_request_tsc_page_update(struct kvm_vcpu *vcpu);
 
 void kvm_hv_init_vm(struct kvm *kvm);
 void kvm_hv_destroy_vm(struct kvm *kvm);
@@ -237,5 +252,26 @@ static inline int kvm_hv_verify_vp_assist(struct kvm_vcpu *vcpu)
 }
 
 int kvm_hv_vcpu_flush_tlb(struct kvm_vcpu *vcpu);
+
+/**
+ * Perform a VTL interrupt and switch into a higher VTL.
+ *
+ * Given VTL should be higher than the active vcpu VTL, otherwise it is a noop.
+ * This will lead to vcpu loading per-VTL state and switching local apics.
+ * On failure implementation will inject #UD on this vcpu (as per TLFS).
+ * Must be called from vcpu thread, remote switched are not supported.
+ */
+void kvm_hv_deliver_intercept(struct kvm_vcpu *vcpu);
+
+int kvm_vcpu_ioctl_get_hv_vsm_state(struct kvm_vcpu *vcpu,
+				    struct kvm_hv_vcpu_vsm_state *state);
+int kvm_vcpu_ioctl_set_hv_vsm_state(struct kvm_vcpu *vcpu,
+				    struct kvm_hv_vcpu_vsm_state *state);
+int kvm_vm_ioctl_get_hv_vsm_state(struct kvm *kvm, struct kvm_hv_vsm_state *state);
+int kvm_vm_ioctl_set_hv_vsm_state(struct kvm *kvm, struct kvm_hv_vsm_state *state);
+
+int kvm_hv_finish_start_virtual_processor(struct kvm_vcpu *target_vcpu);
+
+void dump_ftrace_vcpu_hyperv(struct kvm_vcpu *vcpu);
 
 #endif

@@ -12,6 +12,7 @@
 #include <linux/types.h>
 #include <linux/compiler.h>
 #include <linux/ioctl.h>
+#include <asm/mshyperv.h>
 #include <asm/kvm.h>
 
 #define KVM_API_VERSION 12
@@ -178,16 +179,21 @@ struct kvm_s390_cmma_log {
 	__u64 values;
 };
 
+/* This is not a spec limit, but rather something we use to limit stack memory usage */
+#define KVM_HV_VP_REGISTER_LIST_SIZE 16u
+
 struct kvm_hyperv_exit {
 #define KVM_EXIT_HYPERV_SYNIC          1
 #define KVM_EXIT_HYPERV_HCALL          2
 #define KVM_EXIT_HYPERV_SYNDBG         3
+#define KVM_EXIT_HYPERV_OVERLAY        4
 	__u32 type;
 	__u32 pad1;
 	union {
 		struct {
 			__u32 msr;
-			__u32 pad2;
+			__u8 vtl;
+			__u8 pad[3];
 			__u64 control;
 			__u64 evt_page;
 			__u64 msg_page;
@@ -196,6 +202,8 @@ struct kvm_hyperv_exit {
 			__u64 input;
 			__u64 result;
 			__u64 params[2];
+			//TODO: Maybe export sse128_t?
+			__u64 xmm[HV_HYPERCALL_MAX_XMM_REGISTERS * 2];
 		} hcall;
 		struct {
 			__u32 msr;
@@ -206,6 +214,14 @@ struct kvm_hyperv_exit {
 			__u64 recv_page;
 			__u64 pending_page;
 		} syndbg;
+		struct {
+			__u32 msr; /* kernel -> user */
+			__u8 vtl; /* kernel -> user */
+			__u8 error; /* user -> kernel */
+			__u8 is_hypercall; /* kernel -> user */
+			__u8 pad;
+			__u64 gpa; /* kernel -> user */
+		} overlay;
 	} u;
 };
 
@@ -274,6 +290,8 @@ struct kvm_xen_exit {
 #define KVM_INTERNAL_ERROR_DELIVERY_EV	3
 /* Encounter unexpected vm-exit reason */
 #define KVM_INTERNAL_ERROR_UNEXPECTED_EXIT_REASON	4
+/* Encounter error in PV AP startup */
+#define KVM_INTERNAL_ERROR_AP_START	5
 
 /* Flags that describe what fields in emulation_failure hold valid data. */
 #define KVM_INTERNAL_ERROR_EMULATION_FLAG_INSTRUCTION_BYTES (1ULL << 0)
@@ -1192,6 +1210,7 @@ struct kvm_ppc_resize_hpt {
 #define KVM_CAP_COUNTER_OFFSET 227
 #define KVM_CAP_ARM_EAGER_SPLIT_CHUNK_SIZE 228
 #define KVM_CAP_ARM_SUPPORTED_BLOCK_SIZES 229
+#define KVM_CAP_HYPERV_VSM 230
 
 #ifdef KVM_CAP_IRQ_ROUTING
 
@@ -2248,5 +2267,14 @@ struct kvm_s390_zpci_op {
 
 /* flags for kvm_s390_zpci_op->u.reg_aen.flags */
 #define KVM_S390_ZPCIOP_REGAEN_HOST    (1 << 0)
+
+/* Get/Set Hyper-V VCPU VTL state. Available with KVM_CAP_HYPERV_VSM */
+#define KVM_HV_VCPU_GET_VSM_STATE _IOR(KVMIO, 0xd2, struct kvm_hv_vcpu_vsm_state)
+#define KVM_HV_VCPU_SET_VSM_STATE _IOW(KVMIO, 0xd3, struct kvm_hv_vcpu_vsm_state)
+
+/* Get/Set Hyper-V VSM state. Available with KVM_CAP_HYPERV_VSM */
+#define KVM_HV_GET_VSM_STATE _IOR(KVMIO, 0xd4, struct kvm_hv_vsm_state)
+#define KVM_HV_SET_VSM_STATE _IOW(KVMIO, 0xd5, struct kvm_hv_vsm_state)
+
 
 #endif /* __LINUX_KVM_H */

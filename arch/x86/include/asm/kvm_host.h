@@ -113,6 +113,7 @@
 	KVM_ARCH_REQ_FLAGS(31, KVM_REQUEST_WAIT | KVM_REQUEST_NO_WAKEUP)
 #define KVM_REQ_HV_TLB_FLUSH \
 	KVM_ARCH_REQ_FLAGS(32, KVM_REQUEST_WAIT | KVM_REQUEST_NO_WAKEUP)
+#define KVM_REQ_HV_INJECT_INTERCEPT	KVM_ARCH_REQ(33)
 
 #define CR0_RESERVED_BITS                                               \
 	(~(unsigned long)(X86_CR0_PE | X86_CR0_MP | X86_CR0_EM | X86_CR0_TS \
@@ -338,7 +339,8 @@ union kvm_mmu_page_role {
 		unsigned ad_disabled:1;
 		unsigned guest_mode:1;
 		unsigned passthrough:1;
-		unsigned :5;
+		unsigned vtl:4;
+		unsigned :1;
 
 		/*
 		 * This is left at the top of the word so that
@@ -616,6 +618,36 @@ struct kvm_vcpu_hv_synic {
 	bool dont_zero_synic_pages;
 };
 
+/* Hyper-V per-VTL vcpu context */
+struct kvm_vcpu_hv_vtl {
+	struct mutex lock;
+
+	struct hv_init_vp_context ctx;
+	u64 msr_kernel_gsbase;
+	u64 msr_gsbase;
+	u64 msr_fsbase;
+	u64 msr_tsc_aux;
+	u64 msr_sysenter_cs;
+	u64 msr_sysenter_esp;
+	u64 msr_sysenter_eip;
+	u64 msr_star;
+	u64 msr_lstar;
+	u64 msr_cstar;
+	u64 msr_sfmask;
+	unsigned long dr7;
+	union hv_x64_pending_exception_event pending_event;
+
+	struct kvm_vcpu_events events;
+
+	/* TPR and APIC_BASE values to switch in case we don't have in-kernel lapic.
+	 * Ignored in case we do have an in-kernel lapic, because lapic device model keeps the values. */
+	u64 tpr;
+	u64 apic_base;
+
+	/* VTL apic context */
+	struct kvm_lapic *apic;
+};
+
 /* The maximum number of entries on the TLB flush fifo. */
 #define KVM_HV_TLB_FLUSH_FIFO_SIZE (16)
 /*
@@ -637,6 +669,14 @@ enum hv_tlb_flush_fifos {
 struct kvm_vcpu_hv_tlb_flush_fifo {
 	spinlock_t write_lock;
 	DECLARE_KFIFO(entries, u64, KVM_HV_TLB_FLUSH_FIFO_SIZE);
+};
+
+struct kvm_vcpu_hv_intercept_info {
+	int type;
+	u64 gpa;
+	u64 gva;
+	u8 target_vtl;
+	u8 access;
 };
 
 /* Hyper-V per vcpu emulation context */
@@ -673,6 +713,14 @@ struct kvm_vcpu_hv {
 		u64 vm_id;
 		u32 vp_id;
 	} nested;
+
+	struct kvm_vcpu_hv_vtl vtl[HV_NUM_VTLS];
+	union hv_register_vsm_vp_status vsm_vp_status;
+
+	struct kvm_vcpu_hv_intercept_info intercept_info;
+
+	bool start_vp;
+	u8 start_vp_target_vtl;
 };
 
 struct kvm_hypervisor_cpuid {
@@ -949,6 +997,8 @@ struct kvm_vcpu_arch {
 	/* set at EPT violation at this point */
 	unsigned long exit_qualification;
 
+	u32 exit_instruction_len;
+
 	/* pv related host specific info */
 	struct {
 		bool pv_unhalted;
@@ -1067,6 +1117,25 @@ enum hv_tsc_page_status {
 	HV_TSC_PAGE_BROKEN,
 };
 
+/* Hyper-V per-VTL partition-wide state */
+struct kvm_hv_vtl {
+	u64 hv_guest_os_id;
+	u64 hv_hypercall;
+	u64 hv_tsc_page;
+	enum hv_tsc_page_status hv_tsc_page_status;
+	u64 hv_tsc_page_hva;
+
+	/*
+	 * Higher VTLs can lock tlb flush hypercalls for lower VTLs.
+	 * To support that, we keep track of every vcpu that has its TLB locked for this VTL.
+	 * According to TLFS, if address space flush hypercall comes in for any of those vcpus
+	 * we should block them in the hypervisor until higher VTL lifts the lock.
+	 * So, we will put those vcpus in a waitqueue.
+	 */
+	DECLARE_BITMAP(tlb_locked_vcpus, KVM_MAX_VCPUS);
+	wait_queue_head_t tlb_lock_waiters;
+};
+
 /* Hyper-V emulation context */
 struct kvm_hv {
 	struct mutex hv_lock;
@@ -1088,6 +1157,15 @@ struct kvm_hv {
 	u64 hv_tsc_emulation_status;
 	u64 hv_invtsc_control;
 
+	union hv_register_vsm_code_page_offsets vsm_code_page_offsets32;
+	union hv_register_vsm_code_page_offsets vsm_code_page_offsets64;
+
+	/* Partition-wide per-VTL state */
+	struct kvm_hv_vtl vtl[HV_NUM_VTLS];
+
+	/* Bitmap of VTLs that have tsc reference page enabled */
+	unsigned long ref_tsc_vtls;
+
 	/* How many vCPUs have VP index != vCPU index */
 	atomic_t num_mismatched_vp_indexes;
 
@@ -1099,6 +1177,9 @@ struct kvm_hv {
 
 	struct hv_partition_assist_pg *hv_pa_pg;
 	struct kvm_hv_syndbg hv_syndbg;
+
+	/* status of KVM_CAP_HYPERV_VSM */
+	bool hv_enable_vsm;
 };
 
 struct msr_bitmap_range {

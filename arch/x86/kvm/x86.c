@@ -1766,10 +1766,10 @@ static int set_efer(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 		if (is_paging(vcpu) &&
 		    (vcpu->arch.efer & EFER_LME) != (efer & EFER_LME))
 			return 1;
-	}
 
-	efer &= ~EFER_LMA;
-	efer |= vcpu->arch.efer & EFER_LMA;
+		efer &= ~EFER_LMA;
+		efer |= vcpu->arch.efer & EFER_LMA;
+	}
 
 	r = static_call(kvm_x86_set_efer)(vcpu, efer);
 	if (r) {
@@ -3017,12 +3017,12 @@ static void kvm_end_pvclock_update(struct kvm *kvm)
 		kvm_clear_request(KVM_REQ_MCLOCK_INPROGRESS, vcpu);
 }
 
-static void kvm_update_masterclock(struct kvm *kvm)
+static void kvm_update_masterclock(struct kvm_vcpu *vcpu)
 {
-	kvm_hv_request_tsc_page_update(kvm);
-	kvm_start_pvclock_update(kvm);
-	pvclock_update_vm_gtod_copy(kvm);
-	kvm_end_pvclock_update(kvm);
+	kvm_hv_request_tsc_page_update(vcpu);
+	kvm_start_pvclock_update(vcpu->kvm);
+	pvclock_update_vm_gtod_copy(vcpu->kvm);
+	kvm_end_pvclock_update(vcpu->kvm);
 }
 
 /*
@@ -3239,7 +3239,7 @@ static int kvm_guest_time_update(struct kvm_vcpu *v)
 					offsetof(struct compat_vcpu_info, time));
 	if (vcpu->xen.vcpu_time_info_cache.active)
 		kvm_setup_guest_pvclock(v, &vcpu->xen.vcpu_time_info_cache, 0);
-	kvm_hv_setup_tsc_page(v->kvm, &vcpu->hv_clock);
+	kvm_hv_setup_tsc_page(v, &vcpu->hv_clock);
 	return 0;
 }
 
@@ -4480,6 +4480,7 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 	case KVM_CAP_HYPERV_CPUID:
 	case KVM_CAP_HYPERV_ENFORCE_CPUID:
 	case KVM_CAP_SYS_HYPERV_CPUID:
+	case KVM_CAP_HYPERV_VSM:
 	case KVM_CAP_PCI_SEGMENT:
 	case KVM_CAP_DEBUGREGS:
 	case KVM_CAP_X86_ROBUST_SINGLESTEP:
@@ -6064,6 +6065,48 @@ long kvm_arch_vcpu_ioctl(struct file *filp,
 	case KVM_SET_DEVICE_ATTR:
 		r = kvm_vcpu_ioctl_device_attr(vcpu, ioctl, argp);
 		break;
+	case KVM_HV_VCPU_GET_VSM_STATE: {
+		struct kvm_hv_vcpu_vsm_state *vsm_state;
+
+		r = -EINVAL;
+		if (!vcpu->kvm->arch.hyperv.hv_enable_vsm)
+			goto out;
+
+		r = -ENOMEM;
+		vsm_state = kzalloc(sizeof(*vsm_state), GFP_USER | __GFP_NOWARN);
+		if (!vsm_state)
+			goto out;
+
+		r = kvm_vcpu_ioctl_get_hv_vsm_state(vcpu, vsm_state);
+		if (r)
+			goto out_get_vsm_state;
+
+		r = -EFAULT;
+		if (copy_to_user(argp, vsm_state, sizeof(*vsm_state)))
+			goto out_get_vsm_state;
+
+		r = 0;
+out_get_vsm_state:
+		kfree(vsm_state);
+		break;
+	}
+	case KVM_HV_VCPU_SET_VSM_STATE: {
+		struct kvm_hv_vcpu_vsm_state *vsm_state;
+
+		r = -EFAULT;
+		if (!vcpu->kvm->arch.hyperv.hv_enable_vsm)
+			goto out;
+
+		vsm_state = memdup_user(argp, sizeof(*vsm_state));
+		if (IS_ERR(vsm_state)) {
+			r = PTR_ERR(vsm_state);
+			goto out;
+		}
+
+		r = kvm_vcpu_ioctl_set_hv_vsm_state(vcpu, vsm_state);
+		kfree(vsm_state);
+		break;
+	}
 	default:
 		r = -EINVAL;
 	}
@@ -6497,6 +6540,10 @@ split_irqchip_unlock:
 		}
 		mutex_unlock(&kvm->lock);
 		break;
+	case KVM_CAP_HYPERV_VSM:
+		kvm->arch.hyperv.hv_enable_vsm = true;
+		r = 0;
+		break;
 	default:
 		r = -EINVAL;
 		break;
@@ -6726,7 +6773,7 @@ static int kvm_vm_ioctl_set_clock(struct kvm *kvm, void __user *argp)
 	if (data.flags & ~KVM_CLOCK_VALID_FLAGS)
 		return -EINVAL;
 
-	kvm_hv_request_tsc_page_update(kvm);
+	kvm_hv_request_tsc_page_update(kvm_get_vcpu_by_id(kvm, 0));
 	kvm_start_pvclock_update(kvm);
 	pvclock_update_vm_gtod_copy(kvm);
 
@@ -7089,6 +7136,47 @@ set_pit2_out:
 			return -EFAULT;
 
 		r = kvm_vm_ioctl_set_msr_filter(kvm, &filter);
+		break;
+	}
+	case KVM_HV_GET_VSM_STATE: {
+		struct kvm_hv_vsm_state *vsm_state;
+
+		r = -EINVAL;
+		if (!kvm->arch.hyperv.hv_enable_vsm)
+			goto out;
+
+		r = -ENOMEM;
+		vsm_state = kzalloc(sizeof(*vsm_state), GFP_USER | __GFP_NOWARN);
+		if (!vsm_state)
+			goto out;
+
+		r = kvm_vm_ioctl_get_hv_vsm_state(kvm, vsm_state);
+		if (r)
+			goto out_get_vsm_state;
+
+		r = -EFAULT;
+		if (copy_to_user(argp, vsm_state, sizeof(*vsm_state)))
+			goto out_get_vsm_state;
+
+		r = 0;
+out_get_vsm_state:
+		kfree(vsm_state);
+		break;
+	}
+	case KVM_HV_SET_VSM_STATE: {
+		struct kvm_hv_vsm_state *vsm_state;
+
+		r = -EINVAL;
+		if (!kvm->arch.hyperv.hv_enable_vsm)
+			goto out;
+
+		vsm_state = memdup_user(argp, sizeof(*vsm_state));
+		if (IS_ERR(vsm_state)) {
+			r = PTR_ERR(vsm_state);
+			goto out;
+		}
+		r = kvm_vm_ioctl_set_hv_vsm_state(kvm, vsm_state);
+		kfree(vsm_state);
 		break;
 	}
 	default:
@@ -10525,7 +10613,7 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 		if (kvm_check_request(KVM_REQ_MIGRATE_TIMER, vcpu))
 			__kvm_migrate_timers(vcpu);
 		if (kvm_check_request(KVM_REQ_MASTERCLOCK_UPDATE, vcpu))
-			kvm_update_masterclock(vcpu->kvm);
+			kvm_update_masterclock(vcpu);
 		if (kvm_check_request(KVM_REQ_GLOBAL_CLOCK_UPDATE, vcpu))
 			kvm_gen_kvmclock_update(vcpu);
 		if (kvm_check_request(KVM_REQ_CLOCK_UPDATE, vcpu)) {
@@ -10648,6 +10736,9 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 
 		if (kvm_check_request(KVM_REQ_UPDATE_CPU_DIRTY_LOGGING, vcpu))
 			static_call(kvm_x86_update_cpu_dirty_logging)(vcpu);
+
+		if (kvm_check_request(KVM_REQ_HV_INJECT_INTERCEPT, vcpu))
+			kvm_hv_deliver_intercept(vcpu);
 	}
 
 	if (kvm_check_request(KVM_REQ_EVENT, vcpu) || req_int_win ||
@@ -10663,11 +10754,22 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 			goto out;
 		}
 
+		if (to_hv_vcpu(vcpu)->start_vp) {
+			if (kvm_hv_finish_start_virtual_processor(vcpu)) {
+				vcpu->run->exit_reason = KVM_EXIT_INTERNAL_ERROR;
+				vcpu->run->internal.suberror = KVM_INTERNAL_ERROR_AP_START;
+				vcpu->run->internal.ndata = 0;
+				r = 0;
+				goto out;
+			}
+		}
+
 		r = kvm_check_and_inject_events(vcpu, &req_immediate_exit);
 		if (r < 0) {
 			r = 0;
 			goto out;
 		}
+
 		if (req_int_win)
 			static_call(kvm_x86_enable_irq_window)(vcpu);
 

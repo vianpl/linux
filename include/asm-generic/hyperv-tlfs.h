@@ -89,7 +89,10 @@
 #define HV_ACCESS_STATS				BIT(8)
 #define HV_DEBUGGING				BIT(11)
 #define HV_CPU_MANAGEMENT			BIT(12)
+#define HV_ACCESS_VSM				BIT(16)
+#define HV_ACCESS_VP_REGISTERS			BIT(17)
 #define HV_ENABLE_EXTENDED_HYPERCALLS		BIT(20)
+#define HV_START_VIRTUAL_PROCESSOR		BIT(21)
 #define HV_ISOLATION				BIT(22)
 
 /*
@@ -146,9 +149,13 @@ union hv_reference_tsc_msr {
 /* Declare the various hypercall operations. */
 #define HVCALL_FLUSH_VIRTUAL_ADDRESS_SPACE	0x0002
 #define HVCALL_FLUSH_VIRTUAL_ADDRESS_LIST	0x0003
-#define HVCALL_ENABLE_VP_VTL			0x000f
 #define HVCALL_NOTIFY_LONG_SPIN_WAIT		0x0008
 #define HVCALL_SEND_IPI				0x000b
+#define HVCALL_MODIFY_VTL_PROTECTION_MASK	0x000c
+#define HVCALL_ENABLE_PARTITION_VTL		0x000d
+#define HVCALL_ENABLE_VP_VTL			0x000f
+#define HVCALL_VTL_CALL				0x0011
+#define HVCALL_VTL_RETURN			0x0012
 #define HVCALL_FLUSH_VIRTUAL_ADDRESS_SPACE_EX	0x0013
 #define HVCALL_FLUSH_VIRTUAL_ADDRESS_LIST_EX	0x0014
 #define HVCALL_SEND_IPI_EX			0x0015
@@ -157,6 +164,7 @@ union hv_reference_tsc_msr {
 #define HVCALL_CREATE_VP			0x004e
 #define HVCALL_GET_VP_REGISTERS			0x0050
 #define HVCALL_SET_VP_REGISTERS			0x0051
+#define HVCALL_TRANSLATE_VIRTUAL_ADDRESS	0x0052
 #define HVCALL_POST_MESSAGE			0x005c
 #define HVCALL_SIGNAL_EVENT			0x005d
 #define HVCALL_POST_DEBUG_DATA			0x0069
@@ -176,6 +184,7 @@ union hv_reference_tsc_msr {
 
 /* Extended hypercalls */
 #define HV_EXT_CALL_QUERY_CAPABILITIES		0x8001
+#define HV_EXT_CALL_GET_BOOT_ZEROED_MEMORY	0x8002
 #define HV_EXT_CALL_MEMORY_HEAT_HINT		0x8003
 
 #define HV_FLUSH_ALL_PROCESSORS			BIT(0)
@@ -220,9 +229,12 @@ enum HV_GENERIC_SET_FORMAT {
 #define HV_STATUS_ACCESS_DENIED			6
 #define HV_STATUS_OPERATION_DENIED		8
 #define HV_STATUS_INSUFFICIENT_MEMORY		11
+#define HV_STATUS_INVALID_PARTITION_ID		13
+#define HV_STATUS_INVALID_VP_INDEX		14
 #define HV_STATUS_INVALID_PORT_ID		17
 #define HV_STATUS_INVALID_CONNECTION_ID		18
 #define HV_STATUS_INSUFFICIENT_BUFFERS		19
+#define HV_STATUS_INVALID_VP_STATE		21
 #define HV_STATUS_VTL_ALREADY_ENABLED		134
 
 /*
@@ -420,17 +432,169 @@ struct hv_vpset {
 /* The number of vCPUs in one sparse bank */
 #define HV_VCPUS_PER_SPARSE_BANK (64)
 
+struct hv_x64_segment_register {
+	u64 base;
+	u32 limit;
+	u16 selector;
+	union {
+		struct {
+			u16 segment_type : 4;
+			u16 non_system_segment : 1;
+			u16 descriptor_privilege_level : 2;
+			u16 present : 1;
+			u16 reserved : 4;
+			u16 available : 1;
+			u16 _long : 1;
+			u16 _default : 1;
+			u16 granularity : 1;
+		} __packed;
+		u16 attributes;
+	};
+} __packed;
+
+struct hv_x64_table_register {
+	u16 pad[3];
+	u16 limit;
+	u64 base;
+} __packed;
+
+struct hv_init_vp_context {
+	u64 rip;
+	u64 rsp;
+	u64 rflags;
+
+	struct hv_x64_segment_register cs;
+	struct hv_x64_segment_register ds;
+	struct hv_x64_segment_register es;
+	struct hv_x64_segment_register fs;
+	struct hv_x64_segment_register gs;
+	struct hv_x64_segment_register ss;
+	struct hv_x64_segment_register tr;
+	struct hv_x64_segment_register ldtr;
+
+	struct hv_x64_table_register idtr;
+	struct hv_x64_table_register gdtr;
+
+	u64 efer;
+	u64 cr0;
+	u64 cr3;
+	u64 cr4;
+	u64 msr_cr_pat;
+} __packed;
+
+union hv_input_vtl {
+	u8 as_uint8;
+	struct {
+		u8 target_vtl: 4;
+		u8 use_target_vtl: 1;
+		u8 reserved_z: 3;
+	};
+} __packed;
+
+struct hv_enable_vp_vtl {
+	u64				partition_id;
+	u32				vp_index;
+	union hv_input_vtl		target_vtl;
+	u8				mbz0;
+	u16				mbz1;
+	struct hv_init_vp_context	vp_context;
+} __packed;
+
+struct hv_get_vp_from_apic_id_in {
+	u64 partition_id;
+	union hv_input_vtl target_vtl;
+	u8 res[7];
+	u32 apic_ids[];
+} __packed;
+
+/* struct hv_intercept_header::access_type_mask */
+#define HV_INTERCEPT_ACCESS_MASK_NONE    0
+#define HV_INTERCEPT_ACCESS_MASK_READ    1
+#define HV_INTERCEPT_ACCESS_MASK_WRITE   2
+#define HV_INTERCEPT_ACCESS_MASK_EXECUTE 4
+
+/* struct hv_intercept_exception::cache_type */
+#define HV_X64_CACHE_TYPE_UNCACHED       0
+#define HV_X64_CACHE_TYPE_WRITECOMBINING 1
+#define HV_X64_CACHE_TYPE_WRITETHROUGH   4
+#define HV_X64_CACHE_TYPE_WRITEPROTECTED 5
+#define HV_X64_CACHE_TYPE_WRITEBACK      6
+
+/* Intecept message header */
+struct hv_intercept_header {
+	__u32 vp_index;
+	__u8 instruction_length;
+#define HV_INTERCEPT_ACCESS_READ    0
+#define HV_INTERCEPT_ACCESS_WRITE   1
+#define HV_INTERCEPT_ACCESS_EXECUTE 2
+	__u8 access_type_mask;
+	union {
+		__u16 as_u16;
+		struct {
+			__u16 cpl:2;
+			__u16 cr0_pe:1;
+			__u16 cr0_am:1;
+			__u16 efer_lma:1;
+			__u16 debug_active:1;
+			__u16 interruption_pending:1;
+			__u16 reserved:9;
+		};
+	} exec_state;
+	struct hv_x64_segment_register cs;
+	__u64 rip;
+	__u64 rflags;
+} __packed;
+
+union hv_x64_memory_access_info {
+	__u8 as_u8;
+	struct {
+		__u8 gva_valid:1;
+		__u8 _reserved:7;
+	};
+};
+
+struct hv_memory_intercept_message {
+	struct hv_intercept_header header;
+	__u32 cache_type;
+	__u8 instruction_byte_count;
+	union hv_x64_memory_access_info memory_access_info;
+	__u16 _reserved;
+	__u64 gva;
+	__u64 gpa;
+	__u8 instruction_bytes[16];
+	struct hv_x64_segment_register ds;
+	struct hv_x64_segment_register ss;
+	__u64 rax;
+	__u64 rcx;
+	__u64 rdx;
+	__u64 rbx;
+	__u64 rsp;
+	__u64 rbp;
+	__u64 rsi;
+	__u64 rdi;
+	__u64 r8;
+	__u64 r9;
+	__u64 r10;
+	__u64 r11;
+	__u64 r12;
+	__u64 r13;
+	__u64 r14;
+	__u64 r15;
+} __packed;
+
 /* HvCallSendSyntheticClusterIpi hypercall */
 struct hv_send_ipi {
 	u32 vector;
-	u32 reserved;
+	union hv_input_vtl in_vtl;
+	u8 reserved[3];
 	u64 cpu_mask;
 } __packed;
 
 /* HvCallSendSyntheticClusterIpiEx hypercall */
 struct hv_send_ipi_ex {
 	u32 vector;
-	u32 reserved;
+	union hv_input_vtl in_vtl;
+	u8 reserved[3];
 	struct hv_vpset vp_set;
 } __packed;
 
@@ -624,55 +788,6 @@ struct hv_retarget_device_interrupt {
 	struct hv_device_interrupt_target int_target;
 } __packed __aligned(8);
 
-
-/* HvGetVpRegisters hypercall input with variable size reg name list*/
-struct hv_get_vp_registers_input {
-	struct {
-		u64 partitionid;
-		u32 vpindex;
-		u8  inputvtl;
-		u8  padding[3];
-	} header;
-	struct input {
-		u32 name0;
-		u32 name1;
-	} element[];
-} __packed;
-
-
-/* HvGetVpRegisters returns an array of these output elements */
-struct hv_get_vp_registers_output {
-	union {
-		struct {
-			u32 a;
-			u32 b;
-			u32 c;
-			u32 d;
-		} as32 __packed;
-		struct {
-			u64 low;
-			u64 high;
-		} as64 __packed;
-	};
-};
-
-/* HvSetVpRegisters hypercall with variable size reg name/value list*/
-struct hv_set_vp_registers_input {
-	struct {
-		u64 partitionid;
-		u32 vpindex;
-		u8  inputvtl;
-		u8  padding[3];
-	} header;
-	struct {
-		u32 name;
-		u32 padding1;
-		u64 padding2;
-		u64 valuelow;
-		u64 valuehigh;
-	} element[];
-} __packed;
-
 enum hv_device_type {
 	HV_DEVICE_TYPE_LOGICAL = 0,
 	HV_DEVICE_TYPE_PCI = 1,
@@ -820,6 +935,188 @@ struct hv_mmio_write_input {
 	u32 size;
 	u32 reserved;
 	u8 data[HV_HYPERCALL_MMIO_MAX_DATA_LENGTH];
+} __packed;
+
+#define HV_NUM_VTLS		2
+#define HV_INVALID_VTL	((u8) -1)
+#define HV_ALL_VTLS		((u8) 0xF)
+
+/* VSM registers */
+#define HV_REGISTER_VP_ASSIST_PAGE		0x00090013
+#define HV_REGISTER_VSM_CODE_PAGE_OFFSETS	0x000D0002
+#define HV_REGISTER_VSM_VP_STATUS		0x000D0003
+#define HV_REGISTER_VSM_PARTITION_STATUS	0x000D0004
+#define HV_REGISTER_VSM_VINA			0x000D0005
+#define HV_REGISTER_VSM_CAPABILITIES		0x000D0006
+#define HV_REGISTER_VSM_VP_STATUS		0x000D0003
+#define HV_REGISTER_VSM_PARTITION_STATUS	0x000D0004
+#define HV_REGISTER_VSM_CAPABILITIES		0x000D0006
+#define HV_REGISTER_VSM_PARTITION_CONFIG	0x000D0007
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL0	0x000D0010
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL1	0x000D0011
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL2	0x000D0012
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL3	0x000D0013
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL4	0x000D0014
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL5	0x000D0015
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL6	0x000D0016
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL7	0x000D0017
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL8	0x000D0018
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL9	0x000D0019
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL10	0x000D001A
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL11	0x000D001B
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL12	0x000D001C
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL13	0x000D001D
+#define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL14	0x000D001E
+
+/*
+ * Advertised partition VSM capabilities
+ */
+union hv_register_vsm_capabilities {
+	u64 as_u64;
+	struct {
+		u64 reserved:46;
+		u64 deny_lower_vtl_startup:1;
+		u64 mbec_vtl_mask:16;
+		u64 dr6_shared:1;
+	} __packed;
+};
+
+/*
+ * Partition VSM status
+ */
+union hv_register_vsm_partition_status {
+	u64 as_u64;
+	struct {
+		u64 enabled_vtl_set:16;
+		u64 maximum_vtl:4;
+		u64 mbec_enabled_vtl_set:16;
+		u64 reserved:28;
+	} __packed;
+};
+
+/*
+ * VP VSM status
+ */
+union hv_register_vsm_vp_status {
+	u64 as_u64;
+	struct {
+		u64 active_vtl:4;
+		u64 active_mbec_enabled:1;
+		u64 reserved0:11;
+		u64 enabled_vtl_set:16;
+		u64 reserved1:32;
+	} __packed;
+};
+
+/*
+ * Partition VSM config
+ */
+union hv_register_vsm_partition_config {
+	u64 as_u64;
+	struct {
+		u64 enable_vtl_protection:1;
+		u64 default_vtl_protection_mask:4;
+		u64 zero_memory_on_reset:1;
+		u64 deny_lower_vtl_startup:1;
+		u64 reserved0:2;
+		u64 intercept_vp_startup:1;
+		u64 reserved1:54;
+	} __packed;
+};
+
+/*
+ * Partition per-VTL VSM configs to configure lower VTLs
+ */
+union hv_register_vsm_vp_secure_vtl_config {
+	u64 as_u64;
+	struct {
+		u64 mbec_enabled:1;
+		u64 tlb_locked:1;
+		u64 reserved0:62;
+	} __packed;
+};
+
+/*
+ * VTL call/return hypercall page offsets register
+ */
+union hv_register_vsm_code_page_offsets {
+	u64 as_u64;
+	struct {
+		u64 vtl_call_offset:12;
+		u64 vtl_return_offset:12;
+		u64 reserved:40;
+	} __packed;
+};
+
+struct hv_get_set_vp_registers {
+	u64 partition_id;
+	u32 vp_index;
+	union hv_input_vtl input_vtl;
+	u8 padding[3];
+} __packed;
+
+struct hv_vp_register_val {
+	u64 low;
+	u64 high;
+} __packed;
+
+union hv_enable_partition_vtl_flags {
+	u8 as_u8;
+	struct {
+		u8 enable_mbec:1;
+		u8 reserved:7;
+	} __packed;
+};
+
+struct hv_enable_partition_vtl {
+	u64 target_partition_id;
+	u8 target_vtl;
+	union hv_enable_partition_vtl_flags flags;
+	u8 reserved[6];
+} __packed;
+
+struct hv_modify_vtl_protection_mask {
+	u64 target_partition_id;
+	u32 map_flags;
+	union hv_input_vtl input_vtl;
+	u8 reserved[3];
+} __packed;
+
+enum hv_vtl_entry_reason {
+	HV_VTL_ENTRY_RESERVED = 0,
+	HV_VTL_ENTRY_VTL_CALL = 1,
+	HV_VTL_ENTRY_INTERRUPT = 2,
+};
+
+#define HV_XLATE_GVA_SUCCESS 0
+#define HV_XLATE_GVA_UNMAPPED 4
+#define HV_CACHE_TYPE_X64_WB 6
+
+#define HV_XLATE_GVA_VAL_READ 1
+#define HV_XLATE_GVA_VAL_WRITE 2
+#define HV_XLATE_GVA_VAL_EXECUTE 4
+#define HV_XLATE_GVA_FLAGS_MASK 0x3F
+
+struct hv_xlate_va_input {
+	u64 partition_id;
+	u32 vp_index;
+	u32 reserved;
+	u64 control_flags;
+	u64 gva;
+};
+
+struct hv_xlate_va_output {
+	u32 result_code;
+	u32 cache_type:8;
+	u32 overlay_page:1;
+	u32 reserved:23;
+	u64 gpa;
+};
+
+struct hv_get_vp_index_from_apic_id_input {
+	u64 partition_id;
+	u8 target_vtl;
+	u8 _padding[7];
 } __packed;
 
 #endif

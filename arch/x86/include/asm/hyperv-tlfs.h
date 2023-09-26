@@ -12,6 +12,12 @@
 #include <linux/types.h>
 #include <asm/page.h>
 /*
+ * Shortcut for guests to target themselves
+ */
+#define HV_PARTITION_ID_SELF	((u64)-1)
+#define HV_VP_INDEX_SELF	((u32)-2)
+
+/*
  * The below CPUID leaves are present if VersionAndFeatures.HypervisorPresent
  * is set by CPUID(HvCpuIdFunctionVersionAndFeatures).
  */
@@ -49,10 +55,11 @@
 /* Support for physical CPU dynamic partitioning events is available*/
 #define HV_X64_CPU_DYNAMIC_PARTITIONING_AVAILABLE	BIT(3)
 /*
- * Support for passing hypercall input parameter block via XMM
+ * Support for passing hypercall input and output parameter block via XMM
  * registers is available
  */
 #define HV_X64_HYPERCALL_XMM_INPUT_AVAILABLE		BIT(4)
+#define HV_X64_HYPERCALL_XMM_OUTPUT_AVAILABLE 		BIT(15)
 /* Support for a virtual guest idle state is available */
 #define HV_X64_GUEST_IDLE_STATE_AVAILABLE		BIT(5)
 /* Frequency MSRs available */
@@ -318,6 +325,35 @@ struct hv_gpa_range_for_visibility {
 	u64 gpa_page_list[HV_MAX_MODIFY_GPA_REP_COUNT];
 } __packed;
 
+/* VSM registers */
+#define HV_X64_REGISTER_PENDING_EVENT0		0x00010004
+#define HV_X64_REGISTER_RSP			0x00020004
+#define HV_X64_REGISTER_RIP			0x00020010
+#define HV_X64_REGISTER_RFLAGS			0x00020011
+#define HV_X64_REGISTER_CR0			0x00040000
+#define HV_X64_REGISTER_CR3			0x00040002
+#define HV_X64_REGISTER_CR4			0x00040003
+#define HV_X64_REGISTER_CR8			0x00040004
+#define HV_X64_REGISTER_DR7			0x00050005
+#define HV_X64_REGISTER_LDTR			0x00060006
+#define HV_X64_REGISTER_TR			0x00060007
+#define HV_X64_REGISTER_IDTR			0x00070000
+#define HV_X64_REGISTER_GDTR			0x00070001
+#define HV_X64_REGISTER_EFER			0x00080001
+#define HV_X64_REGISTER_APIC_BASE		0x00080003
+#define HV_X64_REGISTER_SYSENTER_CS		0x00080005
+#define HV_X64_REGISTER_SYSENTER_EIP		0x00080006
+#define HV_X64_REGISTER_SYSENTER_ESP		0x00080007
+#define HV_X64_REGISTER_STAR			0x00080008
+#define HV_X64_REGISTER_LSTAR			0x00080009
+#define HV_X64_REGISTER_CSTAR			0x0008000A
+#define HV_X64_REGISTER_SFMASK			0x0008000B
+#define HV_X64_REGISTER_TSC_AUX			0x0008007B
+#define HV_X64_REGISTER_CR_INTERCEPT_CONTROL	0x000E0000
+#define HV_X64_REGISTER_CR_INTERCEPT_CR0_MASK	0x000E0001
+#define HV_X64_REGISTER_CR_INTERCEPT_CR4_MASK	0x000E0002
+#define HV_X64_REGISTER_CR_INTERCEPT_IA32_MISC_ENABLE_MASK	0x000E0003
+
 /*
  * Declare the MSR used to setup pages used to communicate with the hypervisor.
  */
@@ -379,6 +415,54 @@ struct hv_tsc_emulation_status {
 #define HV_X64_MSR_TSC_REFERENCE_ENABLE		0x00000001
 #define HV_X64_MSR_TSC_REFERENCE_ADDRESS_SHIFT	12
 
+enum hv_x64_pending_interruption_type {
+	HV_X64_PENDING_INTERRUPT = 0,
+	HV_X64_PENDING_NMI = 2,
+	HV_X64_PENDING_EXCEPTION = 3,
+	HV_X64_PENDING_SOFTWARE_INTERRUPT = 4,
+	HV_X64_PENDING_PRIVILEGED_SOFTWARE_EXCEPTION = 5,
+	HV_X64_PENDING_SOFTWARE_EXCEPTION = 6
+};
+
+union hv_x64_pending_interruption_register {
+	__u64 as_u64;
+	struct {
+		__u32 interruption_pending:1;
+		__u32 interruption_type:3;
+		__u32 deliver_error_code:1;
+		__u32 instruction_length:4;
+		__u32 _reserved:7;
+		__u32 interruption_vector:16;
+		__u32 error_code;
+	};
+};
+
+enum hv_x64_pending_event_type {
+	HV_X64_PENDING_EVENT_EXCEPTION = 0,
+	HV_X64_PENDING_EVENT_MEMORY_INTERCEPT = 1,
+	HV_X64_PENDING_EVENT_NESTED_MEMORY_INTERCEPT = 2,
+	HV_X64_PENDING_EVENT_VIRTUALIZATION_FAULT = 3,
+	HV_X64_PENDING_EVENT_HYPERCALL_OUTPUT = 4,
+	HV_X64_PENDING_EXT_INT = 5,
+	HV_X64_PENDING_EVENT_SHADOW_IPT = 6
+};
+
+union hv_x64_pending_exception_event {
+	__u64 as_u64[2];
+	struct {
+		struct {
+			__u32 event_pending:1;
+			__u32 event_type:3;
+			__u32 _reserved0:4;
+			__u32 deliver_error_code:1;
+			__u32 _reserved1:7;
+			__u32 vector:16;
+		};
+		__u32 error_code;
+		__u64 exception_parameter;
+	};
+};
+
 /* Number of XMM registers used in hypercall input/output */
 #define HV_HYPERCALL_MAX_XMM_REGISTERS		6
 
@@ -393,14 +477,39 @@ struct hv_nested_enlightenments_control {
 	} hypercallControls;
 } __packed;
 
+struct hv_vp_vtl_control {
+	__u32 vtl_entry_reason;
+
+	union {
+		__u8 as_u8;
+		struct {
+			__u8 vina_asserted:1;
+			__u8 reserved0:7;
+		};
+	};
+
+	__u8 reserved1[3];
+
+	union {
+		struct {
+			__u64 vtl_ret_x64rax;
+			__u64 vtl_ret_x64rcx;
+		};
+
+		struct {
+			__u32 vtl_return_x86_eax;
+			__u32 vtl_return_x86_ecx;
+			__u32 vtl_return_x86_edx;
+			__u32 reserved2;
+		};
+	};
+};
+
 /* Define virtual processor assist page structure. */
 struct hv_vp_assist_page {
 	__u32 apic_assist;
 	__u32 reserved1;
-	__u32 vtl_entry_reason;
-	__u32 vtl_reserved;
-	__u64 vtl_ret_x64rax;
-	__u64 vtl_ret_x64rcx;
+	struct hv_vp_vtl_control vtl_control;
 	struct hv_nested_enlightenments_control nested_control;
 	__u8 enlighten_vmentry;
 	__u8 reserved2[7];
@@ -716,80 +825,7 @@ union hv_msi_entry {
 	} __packed;
 };
 
-struct hv_x64_segment_register {
-	u64 base;
-	u32 limit;
-	u16 selector;
-	union {
-		struct {
-			u16 segment_type : 4;
-			u16 non_system_segment : 1;
-			u16 descriptor_privilege_level : 2;
-			u16 present : 1;
-			u16 reserved : 4;
-			u16 available : 1;
-			u16 _long : 1;
-			u16 _default : 1;
-			u16 granularity : 1;
-		} __packed;
-		u16 attributes;
-	};
-} __packed;
 
-struct hv_x64_table_register {
-	u16 pad[3];
-	u16 limit;
-	u64 base;
-} __packed;
-
-struct hv_init_vp_context {
-	u64 rip;
-	u64 rsp;
-	u64 rflags;
-
-	struct hv_x64_segment_register cs;
-	struct hv_x64_segment_register ds;
-	struct hv_x64_segment_register es;
-	struct hv_x64_segment_register fs;
-	struct hv_x64_segment_register gs;
-	struct hv_x64_segment_register ss;
-	struct hv_x64_segment_register tr;
-	struct hv_x64_segment_register ldtr;
-
-	struct hv_x64_table_register idtr;
-	struct hv_x64_table_register gdtr;
-
-	u64 efer;
-	u64 cr0;
-	u64 cr3;
-	u64 cr4;
-	u64 msr_cr_pat;
-} __packed;
-
-union hv_input_vtl {
-	u8 as_uint8;
-	struct {
-		u8 target_vtl: 4;
-		u8 use_target_vtl: 1;
-		u8 reserved_z: 3;
-	};
-} __packed;
-
-struct hv_enable_vp_vtl {
-	u64				partition_id;
-	u32				vp_index;
-	union hv_input_vtl		target_vtl;
-	u8				mbz0;
-	u16				mbz1;
-	struct hv_init_vp_context	vp_context;
-} __packed;
-
-struct hv_get_vp_from_apic_id_in {
-	u64 partition_id;
-	union hv_input_vtl target_vtl;
-	u8 res[7];
-	u32 apic_ids[];
-} __packed;
 
 #include <asm-generic/hyperv-tlfs.h>
 

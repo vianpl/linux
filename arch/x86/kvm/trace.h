@@ -60,6 +60,50 @@ TRACE_EVENT(kvm_hypercall,
 		 __entry->a3)
 );
 
+TRACE_EVENT(kvm_hv_get_vp_index_from_apic_id,
+	TP_PROTO(__u64 partition_id, __u8 target_vtl, __u64 apic_id, __u64 vp_index),
+	TP_ARGS(partition_id, target_vtl, apic_id, vp_index),
+
+	TP_STRUCT__entry(
+		__field(	__u64,		partition_id 	)
+		__field(	__u8,		target_vtl	)
+		__field(	__u64,		apic_id		)
+		__field(	__u64,		vp_index	)
+	),
+
+	TP_fast_assign(
+		__entry->partition_id	= partition_id;
+		__entry->target_vtl	= target_vtl;
+		__entry->apic_id	= apic_id;
+		__entry->vp_index	= vp_index;
+	),
+
+	TP_printk("partition id 0x%llx, target vtl %u, apic id %llu, vp index %llu",
+		__entry->partition_id, __entry->target_vtl, __entry->apic_id, __entry->vp_index)
+);
+
+TRACE_EVENT(kvm_hv_start_virtual_processor,
+	TP_PROTO(__u64 partition_id, __u32 vp_index, __u8 target_vtl, __u8 active_vtl),
+	TP_ARGS(partition_id, vp_index, target_vtl, active_vtl),
+
+	TP_STRUCT__entry(
+		__field(	__u64,		partition_id 	)
+		__field(	__u32,		vp_index	)
+		__field(	__u8,		target_vtl	)
+		__field(	__u8,		active_vtl	)
+	),
+
+	TP_fast_assign(
+		__entry->partition_id	= partition_id;
+		__entry->vp_index	= vp_index;
+		__entry->target_vtl	= target_vtl;
+		__entry->active_vtl	= active_vtl;
+	),
+
+	TP_printk("partition id 0x%llx, vp_index %u, target vtl %u, active vtl %u",
+		__entry->partition_id, __entry->vp_index, __entry->target_vtl, __entry->active_vtl)
+);
+
 /*
  * Tracepoint for hypercall.
  */
@@ -1642,6 +1686,231 @@ TRACE_EVENT(kvm_hv_send_ipi_ex,
 	TP_printk("vector %x format %llx valid_bank_mask 0x%llx",
 		  __entry->vector, __entry->format,
 		  __entry->valid_bank_mask)
+);
+
+TRACE_EVENT(kvm_hv_get_set_vp_registers,
+	TP_PROTO(u64 partition_id, u32 vp_index, u8 input_vtl, u16 vtl, u16 count, bool is_set),
+	TP_ARGS(partition_id, vp_index, input_vtl, vtl, count, is_set),
+
+	TP_STRUCT__entry(
+		__field(u64, partition_id)
+		__field(u32, vp_index)
+		__field(u8, input_vtl)
+		__field(u8, vtl)
+		__field(u16, count)
+		__field(bool, is_set)
+	),
+
+	TP_fast_assign(
+		__entry->partition_id = partition_id;
+		__entry->vp_index = vp_index;
+		__entry->input_vtl = input_vtl;
+		__entry->vtl = vtl;
+		__entry->count = count;
+		__entry->is_set = is_set;
+	),
+
+	TP_printk("%s VP registers: partition id 0x%llx, VP index %d, target VTL %u, active VTL %u, count %d",
+		  (__entry->is_set ? "set" : "get"),
+		  __entry->partition_id, __entry->vp_index,
+		  __entry->input_vtl, __entry->vtl,
+		  __entry->count)
+);
+
+TRACE_EVENT(kvm_hv_enable_partition_vtl,
+	TP_PROTO(u64 target_partition_id, u8 target_vtl, u8 flags),
+	TP_ARGS(target_partition_id, target_vtl, flags),
+
+	TP_STRUCT__entry(
+		__field(u64, target_partition_id)
+		__field(u8, target_vtl)
+		__field(u8, flags)
+	),
+
+	TP_fast_assign(
+		__entry->target_partition_id = target_partition_id;
+		__entry->target_vtl = target_vtl;
+		__entry->flags = flags;
+	),
+
+	TP_printk("target partition id 0x%llx, target VTL %d, flags 0x%hhx",
+		  __entry->target_partition_id, __entry->target_vtl,
+		  __entry->flags)
+);
+
+TRACE_EVENT(kvm_hv_enable_vp_vtl,
+	TP_PROTO(u64 target_partition_id, u32 vp_index, u8 target_vtl),
+	TP_ARGS(target_partition_id, vp_index, target_vtl),
+
+	TP_STRUCT__entry(
+		__field(u64, target_partition_id)
+		__field(u32, vp_index)
+		__field(u8, target_vtl)
+	),
+
+	TP_fast_assign(
+		__entry->target_partition_id = target_partition_id;
+		__entry->vp_index = vp_index;
+		__entry->target_vtl = target_vtl;
+	),
+
+	TP_printk("target partition id 0x%llx, VP index %d, target VTL %d",
+		  __entry->target_partition_id, __entry->vp_index, __entry->target_vtl)
+);
+
+TRACE_EVENT(kvm_hv_set_vsm_partition_config,
+	TP_PROTO(u64 val, u8 target_vtl),
+	TP_ARGS(val, target_vtl),
+
+	TP_STRUCT__entry(
+		__field(u64, val)
+		__field(u8, target_vtl)
+	),
+
+	TP_fast_assign(
+		__entry->val = val;
+		__entry->target_vtl = target_vtl;
+	),
+
+	TP_printk("val 0x%llx, target vtl %d",
+		  __entry->val, __entry->target_vtl)
+);
+
+TRACE_EVENT(kvm_hv_set_vsm_vp_secure_vtl_config,
+	TP_PROTO(u64 val, u32 reg),
+	TP_ARGS(val, reg),
+
+	TP_STRUCT__entry(
+		__field(u64, val)
+		__field(u32, reg)
+	),
+
+	TP_fast_assign(
+		__entry->val = val;
+		__entry->reg = reg;
+	),
+
+	TP_printk("val 0x%llx, reg 0x%x",
+		  __entry->val, __entry->reg)
+);
+
+TRACE_EVENT(kvm_hv_vtl_call,
+	TP_PROTO(u8 active_vtl, u8 next_vtl),
+	TP_ARGS(active_vtl, next_vtl),
+
+	TP_STRUCT__entry(
+		__field(u8, active_vtl)
+		__field(u8, next_vtl)
+	),
+
+	TP_fast_assign(
+		__entry->active_vtl = active_vtl;
+		__entry->next_vtl = next_vtl;
+	),
+
+	TP_printk("active vtl %u, next vtl %u",
+		  __entry->active_vtl, __entry->next_vtl)
+);
+
+TRACE_EVENT(kvm_hv_vtl_interrupt,
+	TP_PROTO(u32 vp_index, u8 active_vtl, u8 next_vtl),
+	TP_ARGS(vp_index, active_vtl, next_vtl),
+
+	TP_STRUCT__entry(
+		__field(u32, vp_index)
+		__field(u8, active_vtl)
+		__field(u8, next_vtl)
+	),
+
+	TP_fast_assign(
+		__entry->vp_index = vp_index;
+		__entry->active_vtl = active_vtl;
+		__entry->next_vtl = next_vtl;
+	),
+
+	TP_printk("vp index %u, active vtl %u, next vtl %u",
+		  __entry->vp_index, __entry->active_vtl, __entry->next_vtl)
+);
+
+TRACE_EVENT(kvm_hv_vtl_return,
+	TP_PROTO(u8 active_vtl, u8 prev_vtl, u64 ctl),
+	TP_ARGS(active_vtl, prev_vtl, ctl),
+
+	TP_STRUCT__entry(
+		__field(u8, active_vtl)
+		__field(u8, prev_vtl)
+		__field(u64, ctl)
+	),
+
+	TP_fast_assign(
+		__entry->active_vtl = active_vtl;
+		__entry->prev_vtl = prev_vtl;
+		__entry->ctl = ctl;
+	),
+
+	TP_printk("active vtl %u, next vtl %u, ctl 0x%llx",
+		  __entry->active_vtl, __entry->prev_vtl, __entry->ctl)
+);
+
+TRACE_EVENT(kvm_hv_modify_vtl_protection_mask,
+	TP_PROTO(u64 target_partition_id, u32 map_flags, u8 target_vtl, u16 count),
+	TP_ARGS(target_partition_id, map_flags, target_vtl, count),
+
+	TP_STRUCT__entry(
+		__field(u64, target_partition_id)
+		__field(u32, map_flags)
+		__field(u8, target_vtl)
+		__field(u16, count)
+	),
+
+	TP_fast_assign(
+		__entry->target_partition_id = target_partition_id;
+		__entry->map_flags = map_flags;
+		__entry->target_vtl = target_vtl;
+		__entry->count = count;
+	),
+
+	TP_printk("target partition id 0x%llx, map flags 0x%x, target VTL %d, count %d",
+		  __entry->target_partition_id, __entry->map_flags,
+		  __entry->target_vtl, __entry->count)
+);
+
+TRACE_EVENT(kvm_hv_translate_virtual_address,
+	TP_PROTO(u64 partition_id, u32 vp_index, u64 control_flags, u64 gva),
+	TP_ARGS(partition_id, vp_index, control_flags, gva),
+
+	TP_STRUCT__entry(
+		__field(u64, partition_id)
+		__field(u32, vp_index)
+		__field(u64, control_flags)
+		__field(u64, gva)
+	),
+
+	TP_fast_assign(
+		__entry->partition_id = partition_id;
+		__entry->vp_index = vp_index;
+		__entry->control_flags = control_flags;
+		__entry->gva = gva;
+	),
+
+	TP_printk("partition id 0x%llx, vp index 0x%x, control flags 0x%llx, gva 0x%llx",
+		  __entry->partition_id, __entry->vp_index,
+		  __entry->control_flags, __entry->gva)
+);
+
+TRACE_EVENT(kvm_hv_ext_query_capabilities,
+	TP_PROTO(u64 caps),
+	TP_ARGS(caps),
+
+	TP_STRUCT__entry(
+		__field(u64, caps)
+	),
+
+	TP_fast_assign(
+		__entry->caps = caps;
+	),
+
+	TP_printk("reported capabilities 0x%llx", __entry->caps)
 );
 
 TRACE_EVENT(kvm_pv_tlb_flush,

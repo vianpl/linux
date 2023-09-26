@@ -123,6 +123,13 @@ struct kvm_lapic_state {
 	char regs[KVM_APIC_REG_SIZE];
 };
 
+/* for KVM_GET_VTL_LAPIC and KVM_SET_VTL_LAPIC */
+struct kvm_vtl_lapic_state {
+	char regs[KVM_APIC_REG_SIZE];
+	__u8 vtl;
+	__u8 padding[3];
+};
+
 struct kvm_segment {
 	__u64 base;
 	__u32 limit;
@@ -189,7 +196,8 @@ struct kvm_msr_entry {
 /* for KVM_GET_MSRS and KVM_SET_MSRS */
 struct kvm_msrs {
 	__u32 nmsrs; /* number of msrs in entries */
-	__u32 pad;
+	__u8 vtl;
+	__u8 pad[3];
 
 	struct kvm_msr_entry entries[];
 };
@@ -561,5 +569,60 @@ struct kvm_pmu_event_filter {
 
 /* x86-specific KVM_EXIT_HYPERCALL flags. */
 #define KVM_EXIT_HYPERCALL_LONG_MODE	BIT(0)
+
+#define KVM_HV_NUM_VTLS 2
+
+struct kvm_hv_reg_128 {
+	__u64 hi;
+	__u64 lo;
+};
+
+struct kvm_hv_vcpu_per_vtl_state {
+	__u64 rip;
+	__u64 rsp;
+	__u64 rflags;
+	__u64 efer;
+	__u64 cr0;
+	__u64 cr3;
+	__u64 cr4;
+	__u64 msr_cr_pat;
+	__u64 msr_kernel_gsbase;
+	__u64 msr_tsc_aux;
+	__u64 msr_sysenter_cs;
+	__u64 msr_sysenter_esp;
+	__u64 msr_sysenter_eip;
+	__u64 msr_star;
+	__u64 msr_lstar;
+	__u64 msr_cstar;
+	__u64 msr_sfmask;
+	struct kvm_hv_reg_128 cs;
+	struct kvm_hv_reg_128 ds;
+	struct kvm_hv_reg_128 es;
+	struct kvm_hv_reg_128 fs;
+	struct kvm_hv_reg_128 gs;
+	struct kvm_hv_reg_128 ss;
+	struct kvm_hv_reg_128 tr;
+	struct kvm_hv_reg_128 ldtr;
+	struct kvm_hv_reg_128 idtr;
+	struct kvm_hv_reg_128 gdtr;
+	struct kvm_hv_reg_128 secure_vtl_config;
+};
+
+/* vCPU VSM state; for KVM_HV_VCPU_GET/SET_VSM_STATE ioctl */
+struct kvm_hv_vcpu_vsm_state {
+	__u64 vp_index;
+	__u64 vsm_vp_status;
+	struct kvm_hv_vcpu_per_vtl_state vtl[KVM_HV_NUM_VTLS];
+};
+
+struct kvm_hv_per_vtl_state {
+	__u64 vsm_partition_config;
+};
+
+/* Partition-wide VSM state; for KVM_HV_GET/SET_VSM_STATE */
+struct kvm_hv_vsm_state {
+	__u64 vsm_code_page_offsets64;
+	__u64 vsm_code_page_offsets32;
+};
 
 #endif /* _ASM_X86_KVM_H */
