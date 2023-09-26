@@ -499,6 +499,14 @@ int kvm_handle_memory_failure(struct kvm_vcpu *vcpu, int r,
 int kvm_handle_invpcid(struct kvm_vcpu *vcpu, unsigned long type, gva_t gva);
 bool kvm_msr_allowed(struct kvm_vcpu *vcpu, u32 index, u32 type);
 
+void kvm_get_sregs(struct kvm_vcpu *vcpu, struct kvm_sregs *sregs);
+int kvm_set_sregs(struct kvm_vcpu *vcpu, struct kvm_sregs *sregs);
+
+void kvm_vcpu_x86_get_vcpu_events(struct kvm_vcpu *vcpu,
+			          struct kvm_vcpu_events *events);
+int kvm_vcpu_x86_set_vcpu_events(struct kvm_vcpu *vcpu,
+			         struct kvm_vcpu_events *events);
+
 /*
  * Internal error codes that are used to indicate that MSR emulation encountered
  * an error that should result in #GP in the guest, unless userspace
