@@ -501,6 +501,7 @@ static void kvm_vcpu_init(struct kvm_vcpu *vcpu, struct kvm *kvm, unsigned id)
 	/* Fill the stats id string for the vcpu */
 	snprintf(vcpu->stats_id, sizeof(vcpu->stats_id), "kvm-%d/vcpu-%d",
 		 task_pid_nr(current), id);
+	vcpu->dump_state_on_run = true;
 }
 
 static void kvm_vcpu_destroy(struct kvm_vcpu *vcpu)

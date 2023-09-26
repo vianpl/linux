@@ -2669,6 +2669,12 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 			break;
 		}
 		goto hypercall_userspace_exit;
+		trace_printk("-------------------------------------------KVM:0x%llx|VCPU%d---------------------------------\n", (long long)vcpu->kvm, vcpu->vcpu_id);
+		trace_printk("Exiting to user-space with code 0x%x\n", hc.code);
+		dump_ftrace_vmcs(vcpu);
+		dump_ftrace_vcpu_state(vcpu);
+		trace_printk("---------------------------------------------------------------------------\n");
+		goto hypercall_userspace_exit;
 	default:
 		ret = HV_STATUS_INVALID_HYPERCALL_CODE;
 		break;
@@ -2914,4 +2920,26 @@ int kvm_get_hv_cpuid(struct kvm_vcpu *vcpu, struct kvm_cpuid2 *cpuid,
 		return -EFAULT;
 
 	return 0;
+}
+
+static bool hv_read_vtl_control(struct kvm_vcpu *vcpu, struct hv_vp_vtl_control *vtl_control)
+{
+       /* VTL control is a part of VP assist page, which is accessed through pv_eoi */
+	if (!vcpu->arch.pv_eoi.data.len ||
+	     vcpu->arch.pv_eoi.data.len < sizeof(struct hv_vp_assist_page))
+		return 0;
+
+	return !kvm_read_guest_offset_cached(vcpu->kvm, &vcpu->arch.pv_eoi.data, vtl_control,
+			offsetof(struct hv_vp_assist_page, vtl_control), sizeof(*vtl_control));
+}
+
+void dump_ftrace_vcpu_hyperv(struct kvm_vcpu *vcpu)
+{
+	struct hv_vp_vtl_control vtl_control;
+
+	trace_printk("*** HyperV VTL state ***\n");
+	if (hv_read_vtl_control(vcpu, &vtl_control))
+		trace_printk("entry_reason 0x%x, vina %d, rax %llx, rcx %llx\n",
+			     vtl_control.vtl_entry_reason, vtl_control.vina_asserted,
+			     vtl_control.vtl_ret_x64rax, vtl_control.vtl_ret_x64rcx);
 }
