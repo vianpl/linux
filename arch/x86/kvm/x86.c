@@ -5333,8 +5333,8 @@ static int kvm_vcpu_ioctl_x86_set_mce(struct kvm_vcpu *vcpu,
 	return 0;
 }
 
-static void kvm_vcpu_ioctl_x86_get_vcpu_events(struct kvm_vcpu *vcpu,
-					       struct kvm_vcpu_events *events)
+void kvm_vcpu_x86_get_vcpu_events(struct kvm_vcpu *vcpu,
+				  struct kvm_vcpu_events *events)
 {
 	struct kvm_queued_exception *ex;
 
@@ -5426,8 +5426,8 @@ static void kvm_vcpu_ioctl_x86_get_vcpu_events(struct kvm_vcpu *vcpu,
 	}
 }
 
-static int kvm_vcpu_ioctl_x86_set_vcpu_events(struct kvm_vcpu *vcpu,
-					      struct kvm_vcpu_events *events)
+int kvm_vcpu_x86_set_vcpu_events(struct kvm_vcpu *vcpu,
+			         struct kvm_vcpu_events *events)
 {
 	if (events->flags & ~(KVM_VCPUEVENT_VALID_NMI_PENDING
 			      | KVM_VCPUEVENT_VALID_SIPI_VECTOR
@@ -6027,7 +6027,7 @@ long kvm_arch_vcpu_ioctl(struct file *filp,
 	case KVM_GET_VCPU_EVENTS: {
 		struct kvm_vcpu_events events;
 
-		kvm_vcpu_ioctl_x86_get_vcpu_events(vcpu, &events);
+		kvm_vcpu_x86_get_vcpu_events(vcpu, &events);
 
 		r = -EFAULT;
 		if (copy_to_user(argp, &events, sizeof(struct kvm_vcpu_events)))
@@ -6043,7 +6043,7 @@ long kvm_arch_vcpu_ioctl(struct file *filp,
 			break;
 
 		kvm_vcpu_srcu_read_lock(vcpu);
-		r = kvm_vcpu_ioctl_x86_set_vcpu_events(vcpu, &events);
+		r = kvm_vcpu_x86_set_vcpu_events(vcpu, &events);
 		kvm_vcpu_srcu_read_unlock(vcpu);
 		break;
 	}
@@ -11805,6 +11805,11 @@ static void __get_sregs(struct kvm_vcpu *vcpu, struct kvm_sregs *sregs)
 			(unsigned long *)sregs->interrupt_bitmap);
 }
 
+void kvm_get_sregs(struct kvm_vcpu *vcpu, struct kvm_sregs *sregs)
+{
+	__get_sregs(vcpu, sregs);
+}
+
 static void __get_sregs2(struct kvm_vcpu *vcpu, struct kvm_sregs2 *sregs2)
 {
 	int i;
@@ -11912,6 +11917,188 @@ int kvm_arch_vcpu_ioctl_set_mpstate(struct kvm_vcpu *vcpu,
 out:
 	vcpu_put(vcpu);
 	return ret;
+}
+
+static void dump_ftrace_vcpu_state_events(struct kvm_vcpu *vcpu)
+{
+	struct kvm_vcpu_events events;
+
+	kvm_vcpu_x86_get_vcpu_events(vcpu, &events);
+	trace_printk("*** vCPU Events ***\n");
+	trace_printk("exception: inj=%u nr=%u err_code=%u pending=%u err_code=%u\n",
+		events.exception.injected, events.exception.nr,
+		events.exception.has_error_code, events.exception.pending,
+		events.exception.error_code);
+	trace_printk("interrupt: inj=%u nr=%u soft=%u shadow=%u\n",
+		     events.interrupt.injected, events.interrupt.nr,
+		     events.interrupt.soft, events.interrupt.shadow);
+	trace_printk("nmi: inj=%u pending=%u masked=%u pad=%u\n",
+		     events.nmi.injected, events.nmi.pending, events.nmi.masked,
+		     events.nmi.pad);
+	trace_printk("sipi_vector: %u\n", events.sipi_vector);
+	trace_printk("flags: 0x%x\n", events.flags);
+	trace_printk("smi: smm=%u pending=%u smm_in_nmi=%u latched_init=%u\n",
+		     events.smi.smm, events.smi.pending,
+		     events.smi.smm_inside_nmi, events.smi.latched_init);
+	trace_printk("triple_fault: pending=%u\n", events.triple_fault.pending);
+	trace_printk("exc_payload: has_payload=%u payload=0x%llx\n",
+		     events.exception_has_payload, events.exception_payload);
+}
+
+static void dump_ftrace_vcpu_mp_state(struct kvm_vcpu *vcpu)
+{
+	trace_printk("*** vCPU MP state ***\n");
+	trace_printk("mp_state=0x%x\n", vcpu->arch.mp_state);
+}
+
+static void dump_ftrace_vcpu_regs(struct kvm_vcpu *vcpu)
+{
+	struct kvm_regs regs;
+
+	__get_regs(vcpu, &regs);
+	trace_printk("*** vCPU Regs ***\n");
+	trace_printk("rax=0x%llx rbx=0x%llx rcx=0x%llx rdx=0x%llx\n", regs.rax,
+		     regs.rbx, regs.rcx, regs.rdx);
+
+	trace_printk("rsi=0x%llx rdi=0x%llx rsp=0x%llx rbp=0x%llx\n", regs.rsi,
+		     regs.rdi, regs.rsp, regs.rbp);
+
+	trace_printk("r8=0x%llx  r9=0x%llx  r10=0x%llx r11=0x%llx\n", regs.r8, regs.r9,
+		     regs.r10, regs.r11);
+
+	trace_printk("r12=0x%llx r13=0x%llx r14=0x%llx r15=0x%llx\n", regs.r12,
+		     regs.r13, regs.r14, regs.r15);
+
+	trace_printk("rip=0x%llx rflags=0x%llx\n", regs.rip, regs.rflags);
+}
+
+static void print_segment(const char *name, const struct kvm_segment seg)
+{
+	trace_printk("%s: base=0x%llx limit=0x%x selector=0x%x type=0x%x present=0x%x dpl=0x%x db=0x%x s=0x%x l=0x%x g=0x%x avl=0x%x unusable=0x%x\n",
+		name, seg.base, seg.limit, seg.selector, seg.type, seg.present,
+		seg.dpl, seg.db, seg.s, seg.l, seg.g, seg.avl, seg.unusable);
+}
+
+static void print_dtable(const char *name, const struct kvm_dtable dtable)
+{
+	trace_printk("%s: base=0x%llx limit=0x%x\n", name, dtable.base, dtable.limit);
+}
+
+static void dump_ftrace_vcpu_sregs2(struct kvm_vcpu *vcpu)
+{
+	struct kvm_sregs2 sregs;
+
+	__get_sregs2(vcpu, &sregs);
+
+	trace_printk("*** vCPU Sregs ***\n");
+	print_segment("cs", sregs.cs);
+	print_segment("ds", sregs.ds);
+	print_segment("es", sregs.es);
+	print_segment("fs", sregs.fs);
+	print_segment("gs", sregs.gs);
+	print_segment("ss", sregs.ss);
+
+	print_segment("tr", sregs.tr);
+	print_segment("ldt", sregs.ldt);
+
+	print_dtable("gdt", sregs.gdt);
+	print_dtable("idt", sregs.idt);
+
+	trace_printk("cr0=0x%llx cr2=0x%llx cr3=0x%llx cr4=0x%llx cr8=0x%llx\n",
+		     sregs.cr0, sregs.cr2, sregs.cr3, sregs.cr4, sregs.cr8);
+
+	trace_printk("efer=0x%llx apic_base=0x%llx flags=0x%llx\n", sregs.efer,
+		     sregs.apic_base, sregs.flags);
+
+	trace_printk("pdptrs: 0x%llx 0x%llx 0x%llx 0x%llx\n", sregs.pdptrs[0],
+		     sregs.pdptrs[1], sregs.pdptrs[2], sregs.pdptrs[3]);
+}
+
+static void dump_ftrace_vcpu_kvm_lapic_state(struct kvm_vcpu *vcpu)
+{
+	struct kvm_lapic_state lapic_state;
+
+	kvm_apic_get_state(vcpu, &lapic_state);
+
+	trace_printk("*** vCPU apic state ***\n");
+	trace_printk("APIC_ID: 0x%x\n", (unsigned char)lapic_state.regs[0x20]);
+	trace_printk("APIC_LVR: 0x%x\n", (unsigned char)lapic_state.regs[0x30]);
+	trace_printk("APIC_TASKPRI: 0x%x\n", (unsigned char)lapic_state.regs[0x80]);
+	trace_printk("APIC_ARBPRI: 0x%x\n", (unsigned char)lapic_state.regs[0x90]);
+	trace_printk("APIC_PROCPRI: 0x%x\n", (unsigned char)lapic_state.regs[0xA0]);
+	trace_printk("APIC_EOI: 0x%x\n", (unsigned char)lapic_state.regs[0xB0]);
+	trace_printk("APIC_RRR: 0x%x\n", (unsigned char)lapic_state.regs[0xC0]);
+	trace_printk("APIC_LDR: 0x%x\n", (unsigned char)lapic_state.regs[0xD0]);
+	trace_printk("APIC_DFR: 0x%x\n", (unsigned char)lapic_state.regs[0xE0]);
+	trace_printk("APIC_SPIV: 0x%x\n", (unsigned char)lapic_state.regs[0xF0]);
+	trace_printk("APIC_ISR: 0x%x 0x%x 0x%x 0x%x 0x%x 0x%x 0x%x 0x%x\n",
+		     (unsigned char)lapic_state.regs[0x100],
+		     (unsigned char)lapic_state.regs[0x101],
+		     (unsigned char)lapic_state.regs[0x102],
+		     (unsigned char)lapic_state.regs[0x103],
+		     (unsigned char)lapic_state.regs[0x104],
+		     (unsigned char)lapic_state.regs[0x105],
+		     (unsigned char)lapic_state.regs[0x106],
+		     (unsigned char)lapic_state.regs[0x107]);
+
+	trace_printk("APIC_TMR: 0x%x 0x%x 0x%x 0x%x 0x%x 0x%x 0x%x 0x%x\n",
+		     (unsigned char)lapic_state.regs[0x180],
+		     (unsigned char)lapic_state.regs[0x181],
+		     (unsigned char)lapic_state.regs[0x182],
+		     (unsigned char)lapic_state.regs[0x183],
+		     (unsigned char)lapic_state.regs[0x184],
+		     (unsigned char)lapic_state.regs[0x185],
+		     (unsigned char)lapic_state.regs[0x186],
+		     (unsigned char)lapic_state.regs[0x187]);
+
+	trace_printk("APIC_IRR: 0x%x 0x%x 0x%x 0x%x 0x%x 0x%x 0x%x 0x%x\n",
+		     (unsigned char)lapic_state.regs[0x200],
+		     (unsigned char)lapic_state.regs[0x201],
+		     (unsigned char)lapic_state.regs[0x202],
+		     (unsigned char)lapic_state.regs[0x203],
+		     (unsigned char)lapic_state.regs[0x204],
+		     (unsigned char)lapic_state.regs[0x205],
+		     (unsigned char)lapic_state.regs[0x206],
+		     (unsigned char)lapic_state.regs[0x207]);
+	trace_printk("APIC_ESR: 0x%x\n", (unsigned char)lapic_state.regs[0x280]);
+	trace_printk("APIC_ICR: 0x%x\n", (unsigned char)lapic_state.regs[0x300]);
+	trace_printk("APIC_ICR2: 0x%x\n", (unsigned char)lapic_state.regs[0x310]);
+	trace_printk("APIC_LVTT: 0x%x\n", (unsigned char)lapic_state.regs[0x320]);
+	trace_printk("APIC_LVTTHMR: 0x%x\n", (unsigned char)lapic_state.regs[0x330]);
+	trace_printk("APIC_LVTPC: 0x%x\n", (unsigned char)lapic_state.regs[0x340]);
+	trace_printk("APIC_LVT0: 0x%x\n", (unsigned char)lapic_state.regs[0x350]);
+	trace_printk("APIC_LVT1: 0x%x\n", (unsigned char)lapic_state.regs[0x360]);
+	trace_printk("APIC_LVTERR: 0x%x\n", (unsigned char)lapic_state.regs[0x370]);
+	trace_printk("APIC_TMICT: 0x%x\n", (unsigned char)lapic_state.regs[0x380]);
+	trace_printk("APIC_TMCCT: 0x%x\n", (unsigned char)lapic_state.regs[0x390]);
+	trace_printk("APIC_TDCR: 0x%x\n", (unsigned char)lapic_state.regs[0x3E0]);
+	trace_printk("APIC_SELF_IPI: 0x%x\n", (unsigned char)lapic_state.regs[0x3F0]);
+}
+
+static void dump_ftrace_vcpu_debugregs(struct kvm_vcpu *vcpu)
+{
+	struct kvm_debugregs debugregs;
+
+	kvm_vcpu_ioctl_x86_get_debugregs(vcpu, &debugregs);
+	trace_printk("*** vCPU Debug Regs ***\n");
+	trace_printk("db[0]=0x%llx db[1]=0x%llx db[2]=0x%llx db[3]=0x%llx\n",
+		     debugregs.db[0], debugregs.db[1], debugregs.db[2],
+		     debugregs.db[3]);
+
+	trace_printk("dr6=0x%llx dr7=0x%llx flags=0x%llx\n", debugregs.dr6,
+		     debugregs.dr7, debugregs.flags);
+
+}
+
+void dump_ftrace_vcpu_state(struct kvm_vcpu *vcpu)
+{
+	dump_ftrace_vcpu_state_events(vcpu);
+	dump_ftrace_vcpu_mp_state(vcpu);
+	dump_ftrace_vcpu_regs(vcpu);
+	dump_ftrace_vcpu_sregs2(vcpu);
+	dump_ftrace_vcpu_kvm_lapic_state(vcpu);
+	dump_ftrace_vcpu_debugregs(vcpu);
+	dump_ftrace_vcpu_hyperv(vcpu);
 }
 
 int kvm_task_switch(struct kvm_vcpu *vcpu, u16 tss_selector, int idt_index,
@@ -12100,6 +12287,11 @@ static int __set_sregs2(struct kvm_vcpu *vcpu, struct kvm_sregs2 *sregs2)
 	return 0;
 }
 
+int kvm_set_sregs(struct kvm_vcpu *vcpu, struct kvm_sregs *sregs)
+{
+	return __set_sregs(vcpu, sregs);
+}
+
 int kvm_arch_vcpu_ioctl_set_sregs(struct kvm_vcpu *vcpu,
 				  struct kvm_sregs *sregs)
 {
@@ -12279,7 +12471,7 @@ static void store_regs(struct kvm_vcpu *vcpu)
 		__get_sregs(vcpu, &vcpu->run->s.regs.sregs);
 
 	if (vcpu->run->kvm_valid_regs & KVM_SYNC_X86_EVENTS)
-		kvm_vcpu_ioctl_x86_get_vcpu_events(
+		kvm_vcpu_x86_get_vcpu_events(
 				vcpu, &vcpu->run->s.regs.events);
 }
 
@@ -12302,7 +12494,7 @@ static int sync_regs(struct kvm_vcpu *vcpu)
 	if (vcpu->run->kvm_dirty_regs & KVM_SYNC_X86_EVENTS) {
 		struct kvm_vcpu_events events = vcpu->run->s.regs.events;
 
-		if (kvm_vcpu_ioctl_x86_set_vcpu_events(vcpu, &events))
+		if (kvm_vcpu_x86_set_vcpu_events(vcpu, &events))
 			return -EINVAL;
 
 		vcpu->run->kvm_dirty_regs &= ~KVM_SYNC_X86_EVENTS;
