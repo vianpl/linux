@@ -238,7 +238,7 @@ static bool kvm_request_needs_ipi(struct kvm_vcpu *vcpu, unsigned req)
 	 * READING_SHADOW_PAGE_TABLES mode.
 	 */
 	if (req & KVM_REQUEST_WAIT)
-		return mode != OUTSIDE_GUEST_MODE;
+		return !(mode == OUTSIDE_GUEST_MODE || mode == POLLING_FOR_EVENTS);
 
 	/*
 	 * Need to kick a running VCPU, but otherwise there is nothing to do.
@@ -478,6 +478,7 @@ static void kvm_vcpu_init(struct kvm_vcpu *vcpu, struct kvm *kvm, unsigned id)
 	/* Fill the stats id string for the vcpu */
 	snprintf(vcpu->stats_id, sizeof(vcpu->stats_id), "kvm-%d/vcpu-%d",
 		 task_pid_nr(current), id);
+	init_waitqueue_head(&vcpu->wqh);
 }
 
 static void kvm_vcpu_destroy(struct kvm_vcpu *vcpu)
@@ -3637,7 +3638,12 @@ void kvm_vcpu_kick(struct kvm_vcpu *vcpu)
 		cpu = READ_ONCE(vcpu->cpu);
 		if (cpu != me && (unsigned)cpu < nr_cpu_ids && cpu_online(cpu))
 			smp_send_reschedule(cpu);
+		goto out;
 	}
+
+	if (READ_ONCE(vcpu->mode) == POLLING_FOR_EVENTS)
+		wake_up_interruptible(&vcpu->wqh);
+
 out:
 	put_cpu();
 }
@@ -3842,6 +3848,39 @@ static int kvm_vcpu_mmap(struct file *file, struct vm_area_struct *vma)
 	return 0;
 }
 
+static __poll_t kvm_vcpu_poll(struct file *file, poll_table *wait)
+{
+	struct kvm_vcpu *vcpu = file->private_data;
+
+	if (!vcpu->poll_mask)
+		return EPOLLERR;
+
+	switch (READ_ONCE(vcpu->mode)) {
+	case OUTSIDE_GUEST_MODE:
+		/*
+		 * Make sure writes to vcpu->request are visible before the
+		 * mode changes.
+		 */
+		smp_store_mb(vcpu->mode, POLLING_FOR_EVENTS);
+		break;
+	case POLLING_FOR_EVENTS:
+		break;
+	default:
+		WARN_ONCE(true, "Trying to poll vCPU %d in mode %d\n",
+			  vcpu->vcpu_id, vcpu->mode);
+		return EPOLLERR;
+	}
+
+	poll_wait(file, &vcpu->wqh, wait);
+
+	if (READ_ONCE(vcpu->requests) & vcpu->poll_mask) {
+		WRITE_ONCE(vcpu->mode, OUTSIDE_GUEST_MODE);
+		return EPOLLIN;
+	}
+
+	return 0;
+}
+
 static int kvm_vcpu_release(struct inode *inode, struct file *filp)
 {
 	struct kvm_vcpu *vcpu = filp->private_data;
@@ -3854,6 +3893,7 @@ static const struct file_operations kvm_vcpu_fops = {
 	.release        = kvm_vcpu_release,
 	.unlocked_ioctl = kvm_vcpu_ioctl,
 	.mmap           = kvm_vcpu_mmap,
+	.poll		= kvm_vcpu_poll,
 	.llseek		= noop_llseek,
 	KVM_COMPAT(kvm_vcpu_compat_ioctl),
 };
@@ -4121,6 +4161,7 @@ static long kvm_vcpu_ioctl(struct file *filp,
 				synchronize_rcu();
 			put_pid(oldpid);
 		}
+		vcpu->poll_mask = 0;
 		r = kvm_arch_vcpu_ioctl_run(vcpu);
 		trace_kvm_userspace_exit(vcpu->run->exit_reason, r);
 		break;

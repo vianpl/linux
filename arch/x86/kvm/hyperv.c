@@ -63,6 +63,10 @@
  */
 #define HV_EXT_CALL_MAX (HV_EXT_CALL_QUERY_CAPABILITIES + 64)
 
+#define HV_VTL_RETURN_POLL_MASK                                 \
+	(BIT_ULL(KVM_REQ_UNBLOCK) | BIT_ULL(KVM_REQ_HV_STIMER) | \
+		BIT_ULL(KVM_REQ_EVENT))
+
 static void stimer_init(struct kvm_vcpu_hv_stimer *stimer, int timer_index);
 static void stimer_cleanup(struct kvm_vcpu_hv_stimer *stimer);
 static void stimer_mark_pending(struct kvm_vcpu_hv_stimer *stimer,
@@ -3498,6 +3502,7 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 		goto hypercall_userspace_exit;
 	case HVCALL_VTL_RETURN:
 		vcpu->dump_state_on_run = true;
+		vcpu->poll_mask = HV_VTL_RETURN_POLL_MASK;
 		goto hypercall_userspace_exit;
 	case HVCALL_TRANSLATE_VIRTUAL_ADDRESS:
 		if (unlikely(hc.rep_cnt)) {

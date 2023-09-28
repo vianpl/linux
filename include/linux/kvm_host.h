@@ -274,6 +274,7 @@ enum {
 	IN_GUEST_MODE,
 	EXITING_GUEST_MODE,
 	READING_SHADOW_PAGE_TABLES,
+	POLLING_FOR_EVENTS,
 };
 
 #define KVM_UNMAPPED_PAGE	((void *) 0x500 + POISON_POINTER_DELTA)
@@ -331,6 +332,7 @@ struct kvm_vcpu {
 #endif
 	int mode;
 	u64 requests;
+	u64 poll_mask;
 	unsigned long guest_debug;
 
 	struct mutex mutex;
@@ -390,6 +392,7 @@ struct kvm_vcpu {
 	 */
 	struct kvm_memory_slot *last_used_slot;
 	u64 last_used_slot_gen;
+	wait_queue_head_t wqh;
 };
 
 /*
