@@ -3251,6 +3251,7 @@ static int direct_map(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 	struct kvm_mmu_page *sp;
 	int ret;
 	gfn_t base_gfn = fault->gfn;
+	unsigned access = ACC_ALL;
 
 	kvm_mmu_hugepage_adjust(vcpu, fault);
 
@@ -3280,7 +3281,10 @@ static int direct_map(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 	if (WARN_ON_ONCE(it.level != fault->goal_level))
 		return -EFAULT;
 
-	ret = mmu_set_spte(vcpu, fault->slot, it.sptep, ACC_ALL,
+	if (!fault->map_executable)
+		access &= ~ACC_EXEC_MASK;
+
+	ret = mmu_set_spte(vcpu, fault->slot, it.sptep, access,
 			   base_gfn, fault->pfn, fault);
 	if (ret == RET_PF_SPURIOUS)
 		return ret;
@@ -3303,6 +3307,9 @@ static int kvm_handle_error_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fa
 		return -EINTR;
 	}
 
+	if (fault->pfn == KVM_PFN_ERR_NA_FAULT)
+		return RET_PF_EMULATE;
+
 	/*
 	 * Do not cache the mmio info caused by writing the readonly gfn
 	 * into the spte otherwise read access on readonly gfn also can
@@ -3310,6 +3317,9 @@ static int kvm_handle_error_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fa
 	 */
 	if (fault->pfn == KVM_PFN_ERR_RO_FAULT)
 		return RET_PF_EMULATE;
+
+	if (fault->pfn == KVM_PFN_ERR_NX_FAULT)
+		return -EACCES;
 
 	if (fault->pfn == KVM_PFN_ERR_HWPOISON) {
 		kvm_send_hwpoison_signal(fault->slot, fault->gfn);
@@ -4328,6 +4338,7 @@ static int __kvm_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 	async = false;
 	fault->pfn = __gfn_to_pfn_memslot(slot, fault->gfn, false, false, &async,
 					  fault->write, &fault->map_writable,
+					  fault->exec, &fault->map_executable,
 					  &fault->hva);
 	if (!async)
 		return RET_PF_CONTINUE; /* *pfn has correct page already */
@@ -4343,6 +4354,10 @@ static int __kvm_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 		}
 	}
 
+	/* Hyper-V: check if this is a VSM-protected region */
+	if (is_kvm_memory_slot_vsm_protected(slot))
+		return RET_PF_NOACCESS;
+
 	/*
 	 * Allow gup to bail on pending non-fatal signals when it's also allowed
 	 * to wait for IO.  Note, gup always bails if it is unable to quickly
@@ -4350,6 +4365,7 @@ static int __kvm_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 	 */
 	fault->pfn = __gfn_to_pfn_memslot(slot, fault->gfn, false, true, NULL,
 					  fault->write, &fault->map_writable,
+					  fault->exec, &fault->map_executable,
 					  &fault->hva);
 	return RET_PF_CONTINUE;
 }
@@ -5736,6 +5752,23 @@ static void kvm_mmu_pte_write(struct kvm_vcpu *vcpu, gpa_t gpa,
 	write_unlock(&vcpu->kvm->mmu_lock);
 }
 
+static void hv_inject_gpa_intercept(struct kvm_vcpu *vcpu, gpa_t gpa, u64 error_code)
+{
+	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
+	if (to_kvm_hv(vcpu->kvm)->hv_enable_vsm) {
+		hv_vcpu->intercept_info.type = HVMSG_GPA_INTERCEPT;
+		hv_vcpu->intercept_info.target_vtl = 1;
+		hv_vcpu->intercept_info.gpa = gpa;
+		hv_vcpu->intercept_info.gva = 0;
+		hv_vcpu->intercept_info.access =
+		        (error_code & PFERR_USER_MASK ? HV_INTERCEPT_ACCESS_READ : 0) |
+		        (error_code & PFERR_WRITE_MASK ? HV_INTERCEPT_ACCESS_WRITE : 0) |
+		        (error_code & PFERR_FETCH_MASK ? HV_INTERCEPT_ACCESS_EXECUTE : 0);
+
+		kvm_make_request(KVM_REQ_HV_INJECT_INTERCEPT, vcpu);
+	}
+}
+
 int noinline kvm_mmu_page_fault(struct kvm_vcpu *vcpu, gpa_t cr2_or_gpa, u64 error_code,
 		       void *insn, int insn_len)
 {
@@ -5762,6 +5795,13 @@ int noinline kvm_mmu_page_fault(struct kvm_vcpu *vcpu, gpa_t cr2_or_gpa, u64 err
 
 	if (r < 0)
 		return r;
+	/*
+	 * Hyper-V: This is a VSM protection fault, reporting it will force a VTL switch.
+	 * Higher VTL guest code will decide what to do next and if current VTL
+	 * ever resumes execution, we will retry the access.
+	 */
+	if (r == RET_PF_NOACCESS)
+		hv_inject_gpa_intercept(vcpu, cr2_or_gpa, error_code);
 	if (r != RET_PF_EMULATE)
 		return 1;
 

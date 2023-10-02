@@ -97,6 +97,8 @@
 #define KVM_PFN_ERR_HWPOISON	(KVM_PFN_ERR_MASK + 1)
 #define KVM_PFN_ERR_RO_FAULT	(KVM_PFN_ERR_MASK + 2)
 #define KVM_PFN_ERR_SIGPENDING	(KVM_PFN_ERR_MASK + 3)
+#define KVM_PFN_ERR_NX_FAULT	(KVM_PFN_ERR_MASK + 4)
+#define KVM_PFN_ERR_NA_FAULT	(KVM_PFN_ERR_MASK + 5)
 
 /*
  * error pfns indicate that the gfn is in slot but faild to
@@ -140,10 +142,18 @@ static inline bool is_noslot_pfn(kvm_pfn_t pfn)
 
 #define KVM_HVA_ERR_BAD		(PAGE_OFFSET)
 #define KVM_HVA_ERR_RO_BAD	(PAGE_OFFSET + PAGE_SIZE)
+#define KVM_HVA_ERR_NX_BAD	(PAGE_OFFSET + PAGE_SIZE * 2)
+#define KVM_HVA_ERR_NA_BAD	(PAGE_OFFSET + PAGE_SIZE * 3)
 
 static inline bool kvm_is_error_hva(unsigned long addr)
 {
 	return addr >= PAGE_OFFSET;
+}
+
+static inline bool kvm_is_access_violation_hva(unsigned long addr)
+{
+	return addr == KVM_HVA_ERR_RO_BAD || addr == KVM_HVA_ERR_NX_BAD
+		|| addr == KVM_HVA_ERR_NA_BAD;
 }
 
 #endif
@@ -595,6 +605,11 @@ struct kvm_memory_slot {
 static inline bool kvm_slot_dirty_track_enabled(const struct kvm_memory_slot *slot)
 {
 	return slot->flags & KVM_MEM_LOG_DIRTY_PAGES;
+}
+
+static inline bool is_kvm_memory_slot_vsm_protected(struct kvm_memory_slot const *memslot)
+{
+	return memslot && (memslot->flags & KVM_MEM_VSM_PROTECTED);
 }
 
 static inline unsigned long kvm_dirty_bitmap_bytes(struct kvm_memory_slot *memslot)
@@ -1153,21 +1168,22 @@ int gfn_to_page_many_atomic(struct kvm_memory_slot *slot, gfn_t gfn,
 
 struct page *gfn_to_page(struct kvm *kvm, gfn_t gfn);
 unsigned long gfn_to_hva(struct kvm *kvm, gfn_t gfn);
-unsigned long gfn_to_hva_prot(struct kvm *kvm, gfn_t gfn, bool *writable);
+unsigned long gfn_to_hva_prot(struct kvm *kvm, gfn_t gfn, bool *writable, bool *executable);
 unsigned long gfn_to_hva_memslot(struct kvm_memory_slot *slot, gfn_t gfn);
 unsigned long gfn_to_hva_memslot_prot(struct kvm_memory_slot *slot, gfn_t gfn,
-				      bool *writable);
+				      bool *writable, bool *executable);
 void kvm_release_page_clean(struct page *page);
 void kvm_release_page_dirty(struct page *page);
 
 kvm_pfn_t gfn_to_pfn(struct kvm *kvm, gfn_t gfn);
 kvm_pfn_t gfn_to_pfn_prot(struct kvm *kvm, gfn_t gfn, bool write_fault,
-		      bool *writable);
+		      bool *writable, bool exec_fault, bool *executable);
 kvm_pfn_t gfn_to_pfn_memslot(const struct kvm_memory_slot *slot, gfn_t gfn);
 kvm_pfn_t gfn_to_pfn_memslot_atomic(const struct kvm_memory_slot *slot, gfn_t gfn);
 kvm_pfn_t __gfn_to_pfn_memslot(const struct kvm_memory_slot *slot, gfn_t gfn,
 			       bool atomic, bool interruptible, bool *async,
-			       bool write_fault, bool *writable, hva_t *hva);
+			       bool write_fault, bool *writable, bool exec_fault,
+				   bool *executable, hva_t *hva);
 
 void kvm_release_pfn_clean(kvm_pfn_t pfn);
 void kvm_release_pfn_dirty(kvm_pfn_t pfn);

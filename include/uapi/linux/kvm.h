@@ -103,6 +103,11 @@ struct kvm_userspace_memory_region {
  */
 #define KVM_MEM_LOG_DIRTY_PAGES	(1UL << 0)
 #define KVM_MEM_READONLY	(1UL << 1)
+#define KVM_MEM_VSM_PROTECTED	(1UL << 2)
+#define KVM_MEM_NO_EXEC		(1UL << 3)
+#define KVM_MEM_NO_ACCESS	(1UL << 4)
+
+#define KVM_MEM_ACCESS_BITS (KVM_MEM_READONLY | KVM_MEM_NO_EXEC | KVM_MEM_NO_ACCESS)
 
 /* for KVM_IRQ_LINE */
 struct kvm_irq_level {
@@ -1211,6 +1216,8 @@ struct kvm_ppc_resize_hpt {
 #define KVM_CAP_ARM_EAGER_SPLIT_CHUNK_SIZE 228
 #define KVM_CAP_ARM_SUPPORTED_BLOCK_SIZES 229
 #define KVM_CAP_HYPERV_VSM 230
+#define KVM_CAP_NO_EXEC_MEM 231
+#define KVM_CAP_NO_ACCESS_MEM 232
 
 #ifdef KVM_CAP_IRQ_ROUTING
 
