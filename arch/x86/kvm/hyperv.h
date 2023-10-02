@@ -263,4 +263,10 @@ static inline bool kvm_hv_vsm_enabled(struct kvm *kvm)
 
 int kvm_vm_ioctl_get_hv_vsm_state(struct kvm *kvm, struct kvm_hv_vsm_state *state);
 
+static inline void kvm_mmu_role_set_hv_bits(struct kvm_vcpu *vcpu,
+					    union kvm_mmu_page_role *role)
+{
+	role->vtl = kvm_hv_get_active_vtl(vcpu);
+}
+
 #endif
