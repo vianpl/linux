@@ -6507,6 +6507,7 @@ split_irqchip_unlock:
 		mutex_unlock(&kvm->lock);
 		break;
 	case KVM_CAP_HYPERV_VSM:
+		kvm_hv_vtl_dev_register();
 		kvm->arch.hyperv.hv_enable_vsm = true;
 		r = 0;
 		break;
@@ -9670,6 +9671,8 @@ void kvm_x86_vendor_exit(void)
 	mutex_lock(&vendor_module_lock);
 	kvm_x86_ops.hardware_enable = NULL;
 	mutex_unlock(&vendor_module_lock);
+
+	kvm_hv_vtl_dev_unregister();
 }
 EXPORT_SYMBOL_GPL(kvm_x86_vendor_exit);
 
