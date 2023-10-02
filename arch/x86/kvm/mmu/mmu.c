@@ -28,6 +28,7 @@
 #include "page_track.h"
 #include "cpuid.h"
 #include "spte.h"
+#include "hyperv.h"
 
 #include <linux/kvm_host.h>
 #include <linux/types.h>
@@ -5250,6 +5251,7 @@ static union kvm_cpu_role kvm_calc_cpu_role(struct kvm_vcpu *vcpu,
 	role.base.smm = is_smm(vcpu);
 	role.base.guest_mode = is_guest_mode(vcpu);
 	role.ext.valid = 1;
+	kvm_mmu_role_set_hv_bits(vcpu, &role.base);
 
 	if (!____is_cr0_pg(regs)) {
 		role.base.direct = 1;
@@ -5324,6 +5326,7 @@ kvm_calc_tdp_mmu_root_page_role(struct kvm_vcpu *vcpu,
 	role.level = kvm_mmu_get_tdp_level(vcpu);
 	role.direct = true;
 	role.has_4_byte_gpte = false;
+	kvm_mmu_role_set_hv_bits(vcpu, &role);
 
 	return role;
 }
