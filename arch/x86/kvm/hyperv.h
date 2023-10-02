@@ -269,4 +269,7 @@ static inline void kvm_mmu_role_set_hv_bits(struct kvm_vcpu *vcpu,
 	role->vtl = kvm_hv_get_active_vtl(vcpu);
 }
 
+int kvm_hv_vtl_dev_register(void);
+void kvm_hv_vtl_dev_unregister(void);
+
 #endif
