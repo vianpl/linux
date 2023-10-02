@@ -5248,6 +5248,7 @@ kvm_calc_tdp_mmu_root_page_role(struct kvm_vcpu *vcpu,
 	role.level = kvm_mmu_get_tdp_level(vcpu);
 	role.direct = true;
 	role.has_4_byte_gpte = false;
+	kvm_tdp_mmu_role_set_hv_bits(vcpu, &role);
 
 	return role;
 }

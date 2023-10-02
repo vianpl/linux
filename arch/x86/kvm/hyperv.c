@@ -67,6 +67,11 @@
 	(BIT_ULL(KVM_REQ_UNBLOCK) | BIT_ULL(KVM_REQ_HV_STIMER) | \
 		BIT_ULL(KVM_REQ_EVENT))
 
+void kvm_tdp_mmu_role_set_hv_bits(struct kvm_vcpu *vcpu, union kvm_mmu_page_role *role)
+{
+	role->vtl = to_kvm_hv(vcpu->kvm)->hv_enable_vsm ? get_active_vtl(vcpu) : 0;
+}
+
 static void stimer_init(struct kvm_vcpu_hv_stimer *stimer, int timer_index);
 static void stimer_cleanup(struct kvm_vcpu_hv_stimer *stimer);
 static void stimer_mark_pending(struct kvm_vcpu_hv_stimer *stimer,
