@@ -274,4 +274,7 @@ int kvm_hv_finish_start_virtual_processor(struct kvm_vcpu *target_vcpu);
 
 void dump_ftrace_vcpu_hyperv(struct kvm_vcpu *vcpu);
 
+int kvm_hv_vtl_dev_register(void);
+void kvm_hv_vtl_dev_unregister(void);
+
 #endif
