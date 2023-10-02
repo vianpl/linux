@@ -4304,8 +4304,8 @@ static inline u8 kvm_max_level_for_order(int order)
 static void kvm_mmu_prepare_memory_fault_exit(struct kvm_vcpu *vcpu,
 					      struct kvm_page_fault *fault)
 {
-	kvm_prepare_memory_fault_exit(vcpu, fault->gfn << PAGE_SHIFT,
-				      PAGE_SIZE, fault->write, fault->exec,
+	kvm_prepare_memory_fault_exit(vcpu, fault->gfn << PAGE_SHIFT, PAGE_SIZE,
+				      fault->write, fault->exec, fault->user,
 				      fault->is_private);
 }
 
