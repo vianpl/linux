@@ -9,6 +9,10 @@
 
 #include <linux/kvm_host.h>
 
+#define KVM_HV_VTL_ATTRS                                         \
+	KVM_MEMORY_ATTRIBUTE_READ | KVM_MEMORY_ATTRIBUTE_WRITE | \
+		KVM_MEMORY_ATTRIBUTE_EXECUTE
+
 struct kvm_hv_vtl_dev {
 	int vtl;
 	struct xarray mem_attrs;
@@ -41,12 +45,69 @@ static void kvm_hv_vtl_release(struct kvm_device *dev)
 
 static int kvm_hv_vtl_create(struct kvm_device *dev, u32 type);
 
+static int kvm_hv_vtl_set_mem_attributes(struct kvm_hv_vtl_dev *vtl_dev,
+					 struct kvm_memory_attributes *attrs)
+{
+	u64 supported_attrs = KVM_HV_VTL_ATTRS;
+	gfn_t start, end;
+	unsigned long i;
+	void *entry;
+
+	/* flags is currently not used. */
+	if (attrs->flags)
+		return -EINVAL;
+	if (attrs->attributes & ~supported_attrs)
+		return -EINVAL;
+	if (attrs->size == 0 || attrs->address + attrs->size < attrs->address)
+		return -EINVAL;
+	if (!PAGE_ALIGNED(attrs->address) || !PAGE_ALIGNED(attrs->size))
+		return -EINVAL;
+
+	start = attrs->address >> PAGE_SHIFT;
+	end = (attrs->address + attrs->size - 1 + PAGE_SIZE) >> PAGE_SHIFT;
+
+	entry = attrs->attributes ? xa_mk_value(attrs->attributes) : NULL;
+
+	for (i = start; i < end; i++)
+		if (xa_err(xa_store(&vtl_dev->mem_attrs, i, entry,
+				    GFP_KERNEL_ACCOUNT)))
+			break;
+
+	attrs->address = i << PAGE_SHIFT;
+	attrs->size = (end - i) << PAGE_SHIFT;
+
+	return 0;
+}
+
+static long kvm_hv_vtl_ioctl(struct kvm_device *dev, unsigned int ioctl,
+			     unsigned long arg)
+{
+	switch (ioctl) {
+	case KVM_SET_MEMORY_ATTRIBUTES: {
+		struct kvm_hv_vtl_dev *vtl_dev = dev->private;
+		struct kvm_memory_attributes attrs;
+		int r;
+
+		if (copy_from_user(&attrs, (void __user *)arg, sizeof(attrs)))
+			return -EFAULT;
+
+		r = kvm_hv_vtl_set_mem_attributes(vtl_dev, &attrs);
+		if (!r && copy_to_user((void __user *)arg, &attrs, sizeof(attrs)))
+			return -EFAULT;
+		break;
+	}
+	default:
+		return -ENOTTY;
+	}
+
+	return 0;
+}
+
 static struct kvm_device_ops kvm_hv_vtl_ops = {
 	.name = "kvm-hv-vtl",
 	.create = kvm_hv_vtl_create,
 	.release = kvm_hv_vtl_release,
-	/* .ioctl = kvm_hv_vtl_ioctl, */
-	/* .set_attr = kvm_hv_vtl_set_attr, */
+	.ioctl = kvm_hv_vtl_ioctl,
 	.get_attr = kvm_hv_vtl_get_attr,
 };
 
