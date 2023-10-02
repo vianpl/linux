@@ -2110,7 +2110,7 @@ struct kvm_hv_hcall {
 };
 
 
-static int kvm_hv_get_hc_data(struct kvm *kvm, struct kvm_hv_hcall *hc,
+static int kvm_hv_get_hc_data(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc,
 			      u16 orig_cnt, u16 cnt_cap, u64 *data)
 {
 	/*
@@ -2139,24 +2139,24 @@ static int kvm_hv_get_hc_data(struct kvm *kvm, struct kvm_hv_hcall *hc,
 		return 0;
 	}
 
-	return kvm_read_guest(kvm, hc->ingpa + hc->data_offset, data,
+	return kvm_vcpu_read_guest(vcpu, hc->ingpa + hc->data_offset, data,
 			      cnt * sizeof(*data));
 }
 
-static u64 kvm_get_sparse_vp_set(struct kvm *kvm, struct kvm_hv_hcall *hc,
+static u64 kvm_get_sparse_vp_set(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc,
 				 u64 *sparse_banks)
 {
 	if (hc->var_cnt > HV_MAX_SPARSE_VCPU_BANKS)
 		return -EINVAL;
 
 	/* Cap var_cnt to ignore banks that cannot contain a legal VP index. */
-	return kvm_hv_get_hc_data(kvm, hc, hc->var_cnt, KVM_HV_MAX_SPARSE_VCPU_SET_BITS,
+	return kvm_hv_get_hc_data(vcpu, hc, hc->var_cnt, KVM_HV_MAX_SPARSE_VCPU_SET_BITS,
 				  sparse_banks);
 }
 
-static int kvm_hv_get_tlb_flush_entries(struct kvm *kvm, struct kvm_hv_hcall *hc, u64 entries[])
+static int kvm_hv_get_tlb_flush_entries(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc, u64 entries[])
 {
-	return kvm_hv_get_hc_data(kvm, hc, hc->rep_cnt, hc->rep_cnt, entries);
+	return kvm_hv_get_hc_data(vcpu, hc, hc->rep_cnt, hc->rep_cnt, entries);
 }
 
 static void hv_tlb_flush_enqueue(struct kvm_vcpu *vcpu,
@@ -2279,7 +2279,7 @@ static u64 kvm_hv_flush_tlb(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 			flush.processor_mask = sse128_lo(hc->xmm[0]);
 			hc->consumed_xmm_halves = 1;
 		} else {
-			if (unlikely(kvm_read_guest(kvm, hc->ingpa,
+			if (unlikely(kvm_vcpu_read_guest(vcpu, hc->ingpa,
 						    &flush, sizeof(flush))))
 				return HV_STATUS_INVALID_HYPERCALL_INPUT;
 			hc->data_offset = sizeof(flush);
@@ -2309,7 +2309,7 @@ static u64 kvm_hv_flush_tlb(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 			       &hc->xmm[0], sizeof(hc->xmm[0]));
 			hc->consumed_xmm_halves = 2;
 		} else {
-			if (unlikely(kvm_read_guest(kvm, hc->ingpa, &flush_ex,
+			if (unlikely(kvm_vcpu_read_guest(vcpu, hc->ingpa, &flush_ex,
 						    sizeof(flush_ex))))
 				return HV_STATUS_INVALID_HYPERCALL_INPUT;
 			hc->data_offset = sizeof(flush_ex);
@@ -2331,7 +2331,7 @@ static u64 kvm_hv_flush_tlb(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 			if (!hc->var_cnt)
 				goto ret_success;
 
-			if (kvm_get_sparse_vp_set(kvm, hc, sparse_banks))
+			if (kvm_get_sparse_vp_set(vcpu, hc, sparse_banks))
 				return HV_STATUS_INVALID_HYPERCALL_INPUT;
 		}
 
@@ -2353,7 +2353,7 @@ static u64 kvm_hv_flush_tlb(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 	    hc->rep_cnt > ARRAY_SIZE(__tlb_flush_entries)) {
 		tlb_flush_entries = NULL;
 	} else {
-		if (kvm_hv_get_tlb_flush_entries(kvm, hc, __tlb_flush_entries))
+		if (kvm_hv_get_tlb_flush_entries(vcpu, hc, __tlb_flush_entries))
 			return HV_STATUS_INVALID_HYPERCALL_INPUT;
 		tlb_flush_entries = __tlb_flush_entries;
 	}

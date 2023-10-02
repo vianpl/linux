@@ -3217,11 +3217,28 @@ int kvm_gfn_to_hva_cache_init(struct kvm *kvm, struct gfn_to_hva_cache *ghc,
 }
 EXPORT_SYMBOL_GPL(kvm_gfn_to_hva_cache_init);
 
-int kvm_write_guest_offset_cached(struct kvm *kvm, struct gfn_to_hva_cache *ghc,
-				  void *data, unsigned int offset,
-				  unsigned long len)
+int kvm_asid_gfn_to_hva_cache_init(struct kvm *kvm, int as_id,
+				   struct gfn_to_hva_cache *ghc,
+				   gpa_t gpa, unsigned long len)
 {
-	struct kvm_memslots *slots = kvm_memslots(kvm);
+	struct kvm_memslots *slots = __kvm_memslots(kvm, as_id);
+	return __kvm_gfn_to_hva_cache_init(slots, ghc, gpa, len);
+}
+EXPORT_SYMBOL_GPL(kvm_asid_gfn_to_hva_cache_init);
+
+int kvm_vcpu_gfn_to_hva_cache_init(struct kvm_vcpu *vcpu, struct gfn_to_hva_cache *ghc,
+				   gpa_t gpa, unsigned long len)
+{
+	struct kvm_memslots *slots = kvm_vcpu_memslots(vcpu);
+	return __kvm_gfn_to_hva_cache_init(slots, ghc, gpa, len);
+}
+EXPORT_SYMBOL_GPL(kvm_vcpu_gfn_to_hva_cache_init);
+
+static int __kvm_write_guest_offset_cached(struct kvm *kvm, struct kvm_memslots *slots,
+					   struct gfn_to_hva_cache *ghc,
+					   void *data, unsigned int offset,
+					   unsigned long len)
+{
 	int r;
 	gpa_t gpa = ghc->gpa + offset;
 
@@ -3236,8 +3253,9 @@ int kvm_write_guest_offset_cached(struct kvm *kvm, struct gfn_to_hva_cache *ghc,
 	if (kvm_is_error_hva(ghc->hva))
 		return -EFAULT;
 
+	/* cross-page writes should use (slower) kvm_write_guest */
 	if (unlikely(!ghc->memslot))
-		return kvm_write_guest(kvm, gpa, data, len);
+		return -ENOENT;
 
 	r = __copy_to_user((void __user *)ghc->hva + offset, data, len);
 	if (r)
@@ -3246,7 +3264,36 @@ int kvm_write_guest_offset_cached(struct kvm *kvm, struct gfn_to_hva_cache *ghc,
 
 	return 0;
 }
+
+int kvm_write_guest_offset_cached(struct kvm *kvm, struct gfn_to_hva_cache *ghc,
+				  void *data, unsigned int offset,
+				  unsigned long len)
+{
+	int r;
+	struct kvm_memslots *slots = kvm_memslots(kvm);
+
+	r = __kvm_write_guest_offset_cached(kvm, slots, ghc, data, offset, len);
+	if (unlikely(r == -ENOENT))
+		return kvm_write_guest(kvm, ghc->gpa + offset, data, len);
+
+	return r;
+}
 EXPORT_SYMBOL_GPL(kvm_write_guest_offset_cached);
+
+int kvm_vcpu_write_guest_offset_cached(struct kvm_vcpu *vcpu, struct gfn_to_hva_cache *ghc,
+				       void *data, unsigned int offset,
+				       unsigned long len)
+{
+	int r;
+	struct kvm_memslots *slots = kvm_vcpu_memslots(vcpu);
+
+	r = __kvm_write_guest_offset_cached(vcpu->kvm, slots, ghc, data, offset, len);
+	if (unlikely(r == -ENOENT))
+		return kvm_vcpu_write_guest(vcpu, ghc->gpa + offset, data, len);
+
+	return r;
+}
+EXPORT_SYMBOL_GPL(kvm_vcpu_write_guest_offset_cached);
 
 int kvm_write_guest_cached(struct kvm *kvm, struct gfn_to_hva_cache *ghc,
 			   void *data, unsigned long len)
@@ -3255,16 +3302,19 @@ int kvm_write_guest_cached(struct kvm *kvm, struct gfn_to_hva_cache *ghc,
 }
 EXPORT_SYMBOL_GPL(kvm_write_guest_cached);
 
-int kvm_read_guest_offset_cached(struct kvm *kvm, struct gfn_to_hva_cache *ghc,
-				 void *data, unsigned int offset,
-				 unsigned long len)
+int kvm_vcpu_write_guest_cached(struct kvm_vcpu *vcpu, struct gfn_to_hva_cache *ghc,
+				void *data, unsigned long len)
 {
-	struct kvm_memslots *slots = kvm_memslots(kvm);
-	int r;
-	gpa_t gpa = ghc->gpa + offset;
+	return kvm_vcpu_write_guest_offset_cached(vcpu, ghc, data, 0, len);
+}
+EXPORT_SYMBOL_GPL(kvm_vcpu_write_guest_cached);
 
-	if (WARN_ON_ONCE(len + offset > ghc->len))
-		return -EINVAL;
+static int __kvm_read_guest_offset_cached(struct kvm_memslots *slots,
+				          struct gfn_to_hva_cache *ghc,
+				          void *data, unsigned int offset,
+				          unsigned long len)
+{
+	int r;
 
 	if (slots->generation != ghc->generation) {
 		if (__kvm_gfn_to_hva_cache_init(slots, ghc, ghc->gpa, ghc->len))
@@ -3274,8 +3324,9 @@ int kvm_read_guest_offset_cached(struct kvm *kvm, struct gfn_to_hva_cache *ghc,
 	if (kvm_is_error_hva(ghc->hva))
 		return -EFAULT;
 
+	/* cross-page reads should use (slower) kvm_read_guest */
 	if (unlikely(!ghc->memslot))
-		return kvm_read_guest(kvm, gpa, data, len);
+		return -ENOENT;
 
 	r = __copy_from_user(data, (void __user *)ghc->hva + offset, len);
 	if (r)
@@ -3283,7 +3334,42 @@ int kvm_read_guest_offset_cached(struct kvm *kvm, struct gfn_to_hva_cache *ghc,
 
 	return 0;
 }
+
+int kvm_read_guest_offset_cached(struct kvm *kvm, struct gfn_to_hva_cache *ghc,
+				 void *data, unsigned int offset,
+				 unsigned long len)
+{
+	int r;
+	struct kvm_memslots *slots = kvm_memslots(kvm);
+
+	if (WARN_ON(current->mm != kvm->mm))
+		return -EFAULT;
+
+	r = __kvm_read_guest_offset_cached(slots, ghc, data, offset, len);
+	if (unlikely(r == -ENOENT))
+		return kvm_read_guest(kvm, ghc->gpa + offset, data, len);
+
+	return r;
+}
 EXPORT_SYMBOL_GPL(kvm_read_guest_offset_cached);
+
+int kvm_vcpu_read_guest_offset_cached(struct kvm_vcpu *vcpu, struct gfn_to_hva_cache *ghc,
+				      void *data, unsigned int offset,
+				      unsigned long len)
+{
+	int r;
+	struct kvm_memslots *slots = kvm_vcpu_memslots(vcpu);
+
+	if (WARN_ON(current->mm != vcpu->kvm->mm))
+		return -EFAULT;
+
+	r = __kvm_read_guest_offset_cached(slots, ghc, data, offset, len);
+	if (unlikely(r == -ENOENT))
+		return kvm_vcpu_read_guest(vcpu, ghc->gpa + offset, data, len);
+
+	return r;
+}
+EXPORT_SYMBOL_GPL(kvm_vcpu_read_guest_offset_cached);
 
 int kvm_read_guest_cached(struct kvm *kvm, struct gfn_to_hva_cache *ghc,
 			  void *data, unsigned long len)
@@ -3291,6 +3377,21 @@ int kvm_read_guest_cached(struct kvm *kvm, struct gfn_to_hva_cache *ghc,
 	return kvm_read_guest_offset_cached(kvm, ghc, data, 0, len);
 }
 EXPORT_SYMBOL_GPL(kvm_read_guest_cached);
+
+int kvm_vcpu_read_guest_cached(struct kvm_vcpu *vcpu, struct gfn_to_hva_cache *ghc,
+			       void *data, unsigned long len)
+{
+	return kvm_vcpu_read_guest_offset_cached(vcpu, ghc, data, 0, len);
+}
+EXPORT_SYMBOL_GPL(kvm_vcpu_read_guest_cached);
+
+int kvm_clear_guest_page(struct kvm *kvm, gfn_t gfn, int offset, int len)
+{
+	const void *zero_page = (const void *) __va(page_to_phys(ZERO_PAGE(0)));
+
+	return kvm_write_guest_page(kvm, gfn, zero_page, offset, len);
+}
+EXPORT_SYMBOL_GPL(kvm_clear_guest_page);
 
 int kvm_clear_guest(struct kvm *kvm, gpa_t gpa, unsigned long len)
 {

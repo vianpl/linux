@@ -2181,16 +2181,17 @@ enum {
 
 #define HF_GUEST_MASK		(1 << 0) /* VCPU is in guest-mode */
 
+# define __KVM_VCPU_MULTIPLE_ADDRESS_SPACE
+# define KVM_ADDRESS_SPACE_NUM		(HV_NUM_VTLS + 1)
+int kvm_arch_vcpu_memslots_id(struct kvm_vcpu *vcpu);
+struct kvm_memslots *kvm_memslots_for_spte_role(struct kvm *kvm, union kvm_mmu_page_role role);
+
+int kvm_address_space_id_for_vtl(u8 vtl);
+
 #ifdef CONFIG_KVM_SMM
 #define HF_SMM_MASK		(1 << 1)
 #define HF_SMM_INSIDE_NMI_MASK	(1 << 2)
-
-# define __KVM_VCPU_MULTIPLE_ADDRESS_SPACE
-# define KVM_ADDRESS_SPACE_NUM 2
-# define kvm_arch_vcpu_memslots_id(vcpu) ((vcpu)->arch.hflags & HF_SMM_MASK ? 1 : 0)
-# define kvm_memslots_for_spte_role(kvm, role) __kvm_memslots(kvm, (role).smm)
-#else
-# define kvm_memslots_for_spte_role(kvm, role) __kvm_memslots(kvm, 0)
+# define KVM_SMM_ADDRESS_SPACE_ID	(KVM_ADDRESS_SPACE_NUM - 1)
 #endif
 
 #define KVM_ARCH_WANT_MMU_NOTIFIER
