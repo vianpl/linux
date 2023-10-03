@@ -1558,6 +1558,7 @@ struct kvm_vcpu_stat {
 	u64 pf_fast;
 	u64 pf_mmio_spte_created;
 	u64 pf_guest;
+	u64 pf_user;
 	u64 tlb_flush;
 	u64 invlpg;
 

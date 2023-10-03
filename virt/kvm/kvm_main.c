@@ -933,6 +933,89 @@ static int kvm_init_mmu_notifier(struct kvm *kvm)
 
 #endif /* CONFIG_MMU_NOTIFIER && KVM_ARCH_WANT_MMU_NOTIFIER */
 
+static void kvm_mem_attrs_changed(struct kvm *kvm, struct xarray *prots,
+				  unsigned long attrs, gfn_t start, gfn_t end)
+{
+	struct kvm_gfn_range gfn_range;
+	struct kvm_memory_slot *slot;
+	struct kvm_memslots *slots;
+	struct kvm_memslot_iter iter;
+	int i;
+	int r = 0;
+
+	gfn_range.pte = __pte(0);
+	gfn_range.may_block = true;
+
+	for (i = 0; i < KVM_ADDRESS_SPACE_NUM; i++) {
+		slots = __kvm_memslots(kvm, i);
+
+		kvm_for_each_memslot_in_gfn_range(&iter, slots, start, end) {
+			slot = iter.slot;
+			gfn_range.start = max(start, slot->base_gfn);
+			gfn_range.end = min(end, slot->base_gfn + slot->npages);
+			if (gfn_range.start >= gfn_range.end)
+				continue;
+			gfn_range.slot = slot;
+
+			r |= kvm_unmap_gfn_range(kvm, &gfn_range);
+
+			kvm_arch_set_memory_attributes(kvm, slot, prots, attrs,
+						       gfn_range.start,
+						       gfn_range.end);
+		}
+	}
+
+	if (r)
+		kvm_flush_remote_tlbs(kvm);
+}
+
+int kvm_set_mem_attributes(struct kvm *kvm, struct xarray *prots,
+			   struct kvm_memory_attributes *attrs,
+			   u64 supported_attrs)
+{
+	gfn_t start, end;
+	unsigned long i;
+	void *entry;
+	int idx;
+
+	/* flags is currently not used. */
+	if (attrs->flags)
+		return -EINVAL;
+	if (attrs->attributes & ~supported_attrs)
+		return -EINVAL;
+	if (attrs->size == 0 || attrs->address + attrs->size < attrs->address)
+		return -EINVAL;
+	if (!PAGE_ALIGNED(attrs->address) || !PAGE_ALIGNED(attrs->size))
+		return -EINVAL;
+
+	start = attrs->address >> PAGE_SHIFT;
+	end = (attrs->address + attrs->size - 1 + PAGE_SIZE) >> PAGE_SHIFT;
+
+	entry = attrs->attributes ? xa_mk_value(attrs->attributes) : NULL;
+
+	KVM_MMU_LOCK(kvm);
+	kvm_mmu_invalidate_begin(kvm);
+	kvm_mmu_invalidate_range_add(kvm, start, end);
+	KVM_MMU_UNLOCK(kvm);
+
+	for (i = start; i < end; i++)
+		if (xa_err(xa_store(prots, i, entry, GFP_KERNEL_ACCOUNT)))
+			break;
+
+	attrs->address = i << PAGE_SHIFT;
+	attrs->size = (end - i) << PAGE_SHIFT;
+
+	idx = srcu_read_lock(&kvm->srcu);
+	KVM_MMU_LOCK(kvm);
+	if (i > start)
+		kvm_mem_attrs_changed(kvm, prots, attrs->attributes, start, i);
+	kvm_mmu_invalidate_end(kvm);
+	KVM_MMU_UNLOCK(kvm);
+	srcu_read_unlock(&kvm->srcu, idx);
+
+	return 0;
+}
+
 #ifdef CONFIG_HAVE_KVM_PM_NOTIFIER
 static int kvm_pm_notifier_call(struct notifier_block *bl,
 				unsigned long state,

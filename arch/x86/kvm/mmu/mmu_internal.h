@@ -262,6 +262,7 @@ int kvm_tdp_page_fault(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault);
  * RET_PF_INVALID: the spte is invalid, let the real page fault path update it.
  * RET_PF_FIXED: The faulting entry has been fixed.
  * RET_PF_SPURIOUS: The faulting entry was already fixed, e.g. by another vCPU.
+ * RET_PF_USER: need to exit to userspace to handle this fault.
  *
  * Any names added to this enum should be exported to userspace for use in
  * tracepoints via TRACE_DEFINE_ENUM() in mmutrace.h
@@ -278,7 +279,7 @@ enum {
 	RET_PF_INVALID,
 	RET_PF_FIXED,
 	RET_PF_SPURIOUS,
-	RET_PF_NOACCESS,
+	RET_PF_USER,
 };
 
 static inline int kvm_mmu_do_page_fault(struct kvm_vcpu *vcpu, gpa_t cr2_or_gpa,
@@ -337,6 +338,8 @@ static inline int kvm_mmu_do_page_fault(struct kvm_vcpu *vcpu, gpa_t cr2_or_gpa,
 		vcpu->stat.pf_emulate++;
 	else if (r == RET_PF_SPURIOUS)
 		vcpu->stat.pf_spurious++;
+	else if (r == RET_PF_USER)
+		vcpu->stat.pf_user++;
 	return r;
 }
 

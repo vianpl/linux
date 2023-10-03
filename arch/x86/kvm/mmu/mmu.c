@@ -128,6 +128,12 @@ module_param(dbg, bool, 0644);
 #define PTE_LIST_EXT 14
 
 /*
+ * Use a bit in disallow_lpage to indicate private/shared pages mixed at the
+ * level. The remaining bits are used as a reference count.
+ */
+#define KVM_LPAGE_MIXED_FLAG			(1U << 31)
+
+/*
  * struct pte_list_desc is the core data structure used to implement a custom
  * list for tracking a set of related SPTEs, e.g. all the SPTEs that map a
  * given GFN when used in the context of rmaps.  Using a custom list allows KVM
@@ -807,12 +813,16 @@ static void update_gfn_disallow_lpage_count(const struct kvm_memory_slot *slot,
 					    gfn_t gfn, int count)
 {
 	struct kvm_lpage_info *linfo;
+	int old;
 	int i;
 
 	for (i = PG_LEVEL_2M; i <= KVM_MAX_HUGEPAGE_LEVEL; ++i) {
 		linfo = lpage_info_slot(gfn, slot, i);
+
+		old = linfo->disallow_lpage;
 		linfo->disallow_lpage += count;
-		WARN_ON(linfo->disallow_lpage < 0);
+
+		WARN_ON_ONCE((old ^ linfo->disallow_lpage) & KVM_LPAGE_MIXED_FLAG);
 	}
 }
 
@@ -4307,6 +4317,7 @@ static int __kvm_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 {
 	struct kvm_memory_slot *slot = fault->slot;
 	bool async;
+	int r;
 
 	/*
 	 * Retry the page fault if the gfn hit a memslot that is being deleted
@@ -4335,6 +4346,13 @@ static int __kvm_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 			return RET_PF_EMULATE;
 	}
 
+	/* TODO: Use static key? */
+	if (kvm_hv_vsm_enabled(vcpu->kvm)) {
+		r = kvm_hv_faultin_pfn(vcpu, fault);
+		if (r != RET_PF_CONTINUE)
+			return r;
+	}
+
 	async = false;
 	fault->pfn = __gfn_to_pfn_memslot(slot, fault->gfn, false, false, &async,
 					  fault->write, &fault->map_writable,
@@ -4353,10 +4371,6 @@ static int __kvm_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 			return RET_PF_RETRY;
 		}
 	}
-
-	/* Hyper-V: check if this is a VSM-protected region */
-	if (is_kvm_memory_slot_vsm_protected(slot))
-		return RET_PF_NOACCESS;
 
 	/*
 	 * Allow gup to bail on pending non-fatal signals when it's also allowed
@@ -5753,23 +5767,6 @@ static void kvm_mmu_pte_write(struct kvm_vcpu *vcpu, gpa_t gpa,
 	write_unlock(&vcpu->kvm->mmu_lock);
 }
 
-static void hv_inject_gpa_intercept(struct kvm_vcpu *vcpu, gpa_t gpa, u64 error_code)
-{
-	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
-	if (to_kvm_hv(vcpu->kvm)->hv_enable_vsm) {
-		hv_vcpu->intercept_info.type = HVMSG_GPA_INTERCEPT;
-		hv_vcpu->intercept_info.target_vtl = 1;
-		hv_vcpu->intercept_info.gpa = gpa;
-		hv_vcpu->intercept_info.gva = 0;
-		hv_vcpu->intercept_info.access =
-		        (error_code & PFERR_USER_MASK ? HV_INTERCEPT_ACCESS_READ : 0) |
-		        (error_code & PFERR_WRITE_MASK ? HV_INTERCEPT_ACCESS_WRITE : 0) |
-		        (error_code & PFERR_FETCH_MASK ? HV_INTERCEPT_ACCESS_EXECUTE : 0);
-
-		kvm_make_request(KVM_REQ_HV_INJECT_INTERCEPT, vcpu);
-	}
-}
-
 int noinline kvm_mmu_page_fault(struct kvm_vcpu *vcpu, gpa_t cr2_or_gpa, u64 error_code,
 		       void *insn, int insn_len)
 {
@@ -5794,15 +5791,12 @@ int noinline kvm_mmu_page_fault(struct kvm_vcpu *vcpu, gpa_t cr2_or_gpa, u64 err
 			return -EIO;
 	}
 
+	if (r == RET_PF_USER)
+		return 0;
+
 	if (r < 0)
 		return r;
-	/*
-	 * Hyper-V: This is a VSM protection fault, reporting it will force a VTL switch.
-	 * Higher VTL guest code will decide what to do next and if current VTL
-	 * ever resumes execution, we will retry the access.
-	 */
-	if (r == RET_PF_NOACCESS)
-		hv_inject_gpa_intercept(vcpu, cr2_or_gpa, error_code);
+
 	if (r != RET_PF_EMULATE)
 		return 1;
 
@@ -7263,4 +7257,129 @@ void kvm_mmu_pre_destroy_vm(struct kvm *kvm)
 {
 	if (kvm->arch.nx_huge_page_recovery_thread)
 		kthread_stop(kvm->arch.nx_huge_page_recovery_thread);
+}
+
+
+static bool linfo_is_mixed(struct kvm_lpage_info *linfo)
+{
+	return linfo->disallow_lpage & KVM_LPAGE_MIXED_FLAG;
+}
+
+static void linfo_set_mixed(gfn_t gfn, struct kvm_memory_slot *slot,
+			    int level, bool mixed)
+{
+	struct kvm_lpage_info *linfo = lpage_info_slot(gfn, slot, level);
+
+	if (mixed)
+		linfo->disallow_lpage |= KVM_LPAGE_MIXED_FLAG;
+	else
+		linfo->disallow_lpage &= ~KVM_LPAGE_MIXED_FLAG;
+}
+
+static unsigned long kvm_get_memory_attributes(struct xarray *prots, gfn_t gfn)
+{
+	void *entry;
+
+	entry = xa_load(prots, gfn);
+	if (xa_is_value(entry))
+		return xa_to_value(entry);
+
+	return KVM_MEMORY_ATTRIBUTE_NOT_PRESENT;
+}
+
+static bool mem_attrs_mixed_2m(struct kvm *kvm, struct xarray *prots,
+			       unsigned long attrs, gfn_t start, gfn_t end)
+{
+	XA_STATE(xas, prots, start);
+	gfn_t gfn = start;
+	void *entry;
+	bool mixed = false;
+
+	rcu_read_lock();
+	entry = xas_load(&xas);
+	while (gfn < end) {
+		if (xas_retry(&xas, entry))
+			continue;
+
+		if (KVM_BUG_ON(gfn != xas.xa_index, kvm) ||
+		    attrs != kvm_get_memory_attributes(prots, gfn)) {
+			mixed = true;
+			break;
+		}
+
+		entry = xas_next(&xas);
+		gfn++;
+	}
+
+	rcu_read_unlock();
+	return mixed;
+}
+
+static bool has_mixed_attrs(struct kvm *kvm, struct kvm_memory_slot *slot,
+			    struct xarray *prots, int level,
+			    unsigned long attrs, gfn_t start, gfn_t end)
+{
+	unsigned long gfn;
+
+	if (level == PG_LEVEL_2M)
+		return mem_attrs_mixed_2m(kvm, prots, attrs, start, end);
+
+	for (gfn = start; gfn < end; gfn += KVM_PAGES_PER_HPAGE(level - 1)) {
+		if (linfo_is_mixed(lpage_info_slot(gfn, slot, level - 1)) ||
+		    attrs != kvm_get_memory_attributes(prots, gfn))
+			return true;
+	}
+
+	return false;
+}
+
+static void kvm_update_lpage_mixed(struct kvm *kvm,
+				   struct kvm_memory_slot *slot,
+				   struct xarray *prots, unsigned long attrs,
+				   gfn_t start, gfn_t end)
+{
+	unsigned long pages, mask;
+	gfn_t gfn, gfn_end, first, last;
+	int level;
+	bool mixed;
+
+	/*
+	 * The sequence matters here: we set the higher level basing on the
+	 * lower level's scanning result.
+	 */
+	for (level = PG_LEVEL_2M; level <= KVM_MAX_HUGEPAGE_LEVEL; level++) {
+		pages = KVM_PAGES_PER_HPAGE(level);
+		mask = ~(pages - 1);
+		first = start & mask;
+		last = (end - 1) & mask;
+
+		/*
+		 * We only need to scan the head and tail page, for middle pages
+		 * we know they will not be mixed.
+		 */
+		gfn = max(first, slot->base_gfn);
+		gfn_end = min(first + pages, slot->base_gfn + slot->npages);
+		mixed = has_mixed_attrs(kvm, slot, prots, level, attrs, gfn, gfn_end);
+		linfo_set_mixed(gfn, slot, level, mixed);
+
+		if (first == last)
+			continue;
+
+		for (gfn = first + pages; gfn < last; gfn += pages)
+			linfo_set_mixed(gfn, slot, level, false);
+
+		gfn = last;
+		gfn_end = min(last + pages, slot->base_gfn + slot->npages);
+		mixed = has_mixed_attrs(kvm, slot, prots, level, attrs, gfn, gfn_end);
+		linfo_set_mixed(gfn, slot, level, mixed);
+	}
+}
+
+void kvm_arch_set_memory_attributes(struct kvm *kvm,
+				    struct kvm_memory_slot *slot,
+				    struct xarray *prots,
+				    unsigned long attrs,
+				    gfn_t start, gfn_t end)
+{
+	kvm_update_lpage_mixed(kvm, slot, prots, attrs, start, end);
 }

@@ -1410,6 +1410,10 @@ void kvm_mmu_invalidate_begin(struct kvm *kvm);
 void kvm_mmu_invalidate_range_add(struct kvm *kvm, gfn_t start, gfn_t end);
 void kvm_mmu_invalidate_end(struct kvm *kvm);
 
+int kvm_set_mem_attributes(struct kvm *kvm, struct xarray *prots,
+				  struct kvm_memory_attributes *attrs,
+				  u64 supported_attrs);
+
 long kvm_arch_dev_ioctl(struct file *filp,
 			unsigned int ioctl, unsigned long arg);
 long kvm_arch_vcpu_ioctl(struct file *filp,
@@ -2334,4 +2338,9 @@ static inline void kvm_account_pgtable_pages(void *virt, int nr)
 /* Max number of entries allowed for each kvm dirty ring */
 #define  KVM_DIRTY_RING_MAX_ENTRIES  65536
 
+void kvm_arch_set_memory_attributes(struct kvm *kvm,
+				    struct kvm_memory_slot *slot,
+				    struct xarray *prots,
+				    unsigned long attrs,
+				    gfn_t start, gfn_t end);
 #endif

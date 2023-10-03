@@ -536,6 +536,12 @@ struct kvm_run {
 		} notify;
 		/* KVM_EXIT_MEMORY_FAULT */
 		struct {
+#define KVM_MEMORY_EXIT_FLAG_NR		(1 << 0)
+#define KVM_MEMORY_EXIT_FLAG_NW		(1 << 1)
+#define KVM_MEMORY_EXIT_FLAG_NX		(1 << 2)
+#define KVM_MEMORY_EXIT_NO_ACCESS                            \
+	(KVM_MEMORY_EXIT_FLAG_NR | KVM_MEMORY_EXIT_FLAG_NW | \
+	 KVM_MEMORY_EXIT_FLAG_NX)
 			__u64 flags;
 			__u64 gpa;
 			__u64 size;
@@ -2308,5 +2314,6 @@ struct kvm_memory_attributes {
 #define KVM_MEMORY_ATTRIBUTE_WRITE             (1ULL << 1)
 #define KVM_MEMORY_ATTRIBUTE_EXECUTE           (1ULL << 2)
 #define KVM_MEMORY_ATTRIBUTE_PRIVATE           (1ULL << 3)
+#define KVM_MEMORY_ATTRIBUTE_NOT_PRESENT       (-1ULL)
 
 #endif /* __LINUX_KVM_H */
