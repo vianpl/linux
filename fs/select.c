@@ -935,8 +935,9 @@ static int do_poll(struct poll_list *list, struct poll_wqueues *wait,
 		pt->_qproc = NULL;
 		if (!count) {
 			count = wait->error;
-			if (signal_pending(current))
+			if (signal_pending(current)) {
 				count = -ERESTARTNOHAND;
+			}
 		}
 		if (count || timed_out)
 			break;

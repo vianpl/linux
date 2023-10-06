@@ -672,10 +672,10 @@ struct kvm_vcpu_hv_tlb_flush_fifo {
 };
 
 struct kvm_vcpu_hv_intercept_info {
+	struct kvm_vcpu *vcpu;
 	int type;
 	u64 gpa;
 	u64 gva;
-	u8 target_vtl;
 	u8 access;
 };
 

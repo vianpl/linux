@@ -1688,6 +1688,33 @@ TRACE_EVENT(kvm_hv_send_ipi_ex,
 		  __entry->valid_bank_mask)
 );
 
+TRACE_EVENT(kvm_hv_faultin_pfn,
+	TP_PROTO(u32 vcpu_id, u64 gfn, bool write, bool exec, bool user, u64 flags),
+	TP_ARGS(vcpu_id, gfn, write, exec, user, flags),
+
+	TP_STRUCT__entry(
+		__field(u32, vcpu_id)
+		__field(u64, gfn)
+		__field(bool, write)
+		__field(bool, exec)
+		__field(bool, user)
+		__field(u64, flags)
+	),
+
+	TP_fast_assign(
+		__entry->vcpu_id = vcpu_id;
+		__entry->gfn = gfn;
+		__entry->write = write;
+		__entry->exec = exec;
+		__entry->user = user;
+		__entry->flags = flags;
+	),
+
+	TP_printk("vcpu%d gfn %llx write %d exec %d user %d flags %llx",
+		  __entry->vcpu_id, __entry->gfn, __entry->write,
+		  __entry->exec, __entry->user, __entry->flags)
+);
+
 TRACE_EVENT(kvm_hv_get_set_vp_registers,
 	TP_PROTO(u64 partition_id, u32 vp_index, u8 input_vtl, u16 vtl, u16 count, bool is_set),
 	TP_ARGS(partition_id, vp_index, input_vtl, vtl, count, is_set),
