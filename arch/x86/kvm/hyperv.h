@@ -283,4 +283,9 @@ static inline bool kvm_hv_vsm_enabled(struct kvm *kvm)
 }
 
 int kvm_hv_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault);
+
+static inline struct kvm_vcpu *kvm_hv_get_vtl_vcpu(struct kvm_vcpu *vcpu, int vtl)
+{
+	return kvm_get_vcpu_by_id(vcpu->kvm, vtl);
+}
 #endif

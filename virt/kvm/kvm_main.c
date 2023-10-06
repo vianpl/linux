@@ -975,7 +975,6 @@ int kvm_set_mem_attributes(struct kvm *kvm, struct xarray *prots,
 {
 	gfn_t start, end;
 	unsigned long i;
-	void *entry;
 	int idx;
 
 	/* flags is currently not used. */
@@ -988,10 +987,11 @@ int kvm_set_mem_attributes(struct kvm *kvm, struct xarray *prots,
 	if (!PAGE_ALIGNED(attrs->address) || !PAGE_ALIGNED(attrs->size))
 		return -EINVAL;
 
+	trace_kvm_set_mem_attributes(attrs->address, attrs->size,
+				     attrs->attributes, attrs->flags);
+
 	start = attrs->address >> PAGE_SHIFT;
 	end = (attrs->address + attrs->size - 1 + PAGE_SIZE) >> PAGE_SHIFT;
-
-	entry = attrs->attributes ? xa_mk_value(attrs->attributes) : NULL;
 
 	KVM_MMU_LOCK(kvm);
 	kvm_mmu_invalidate_begin(kvm);
@@ -999,7 +999,8 @@ int kvm_set_mem_attributes(struct kvm *kvm, struct xarray *prots,
 	KVM_MMU_UNLOCK(kvm);
 
 	for (i = start; i < end; i++)
-		if (xa_err(xa_store(prots, i, entry, GFP_KERNEL_ACCOUNT)))
+		if (xa_err(xa_store(prots, i, xa_mk_value(attrs->attributes),
+				    GFP_KERNEL_ACCOUNT)))
 			break;
 
 	attrs->address = i << PAGE_SHIFT;
@@ -4112,7 +4113,7 @@ static __poll_t kvm_vcpu_poll(struct file *file, poll_table *wait)
 		 * Make sure writes to vcpu->request are visible before the
 		 * mode changes.
 		 */
-		smp_store_mb(vcpu->mode, POLLING_FOR_EVENTS);
+		WRITE_ONCE(vcpu->mode, POLLING_FOR_EVENTS);
 		break;
 	case POLLING_FOR_EVENTS:
 		break;
@@ -4124,7 +4125,10 @@ static __poll_t kvm_vcpu_poll(struct file *file, poll_table *wait)
 
 	poll_wait(file, &vcpu->wqh, wait);
 
+	smp_mb();
+	trace_printk("requests %llx, mask %llx\n", READ_ONCE(vcpu->requests), vcpu->poll_mask);
 	if (READ_ONCE(vcpu->requests) & vcpu->poll_mask) {
+		trace_printk("OUT requests %llx\n", READ_ONCE(vcpu->requests));
 		WRITE_ONCE(vcpu->mode, OUTSIDE_GUEST_MODE);
 		return EPOLLIN;
 	}

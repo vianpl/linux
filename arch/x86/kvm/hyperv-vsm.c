@@ -10,9 +10,10 @@
 
 #include "mmu/mmu_internal.h"
 #include "hyperv.h"
+#include "trace.h"
 #include "mmu.h"
 
-#define KVM_HV_VTL_ATTRS                                         \
+#define KVM_HV_VTL_ATTRS					  \
 	(KVM_MEMORY_ATTRIBUTE_READ | KVM_MEMORY_ATTRIBUTE_WRITE | \
 		KVM_MEMORY_ATTRIBUTE_EXECUTE)
 
@@ -23,35 +24,33 @@ struct kvm_hv_vtl_dev {
 
 static struct xarray *kvm_hv_vsm_get_memprots(struct kvm_vcpu *vcpu);
 
-static int kvm_hv_faultin_exit(struct kvm_vcpu *vcpu,
-			       struct kvm_page_fault *fault,
-			       unsigned long prot)
+static void kvm_hv_inject_gpa_intercept(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 {
-	u64 flags;
+	struct kvm_vcpu *target_vcpu =
+		kvm_hv_get_vtl_vcpu(vcpu, get_active_vtl(vcpu) + 1);
+	struct kvm_vcpu_hv_intercept_info *intercept =
+		&target_vcpu->arch.hyperv->intercept_info;
 
-	if (!prot)
-		flags = KVM_MEMORY_EXIT_NO_ACCESS;
-	else if (fault->write & !(prot & KVM_MEMORY_ATTRIBUTE_WRITE))
-		flags = KVM_MEMORY_EXIT_FLAG_NW;
-	else if (fault->exec & !(prot & KVM_MEMORY_ATTRIBUTE_EXECUTE))
-		flags = KVM_MEMORY_EXIT_FLAG_NX;
-	else {
-		fault->map_executable = prot & KVM_MEMORY_ATTRIBUTE_EXECUTE;
-		fault->map_writable = prot & KVM_MEMORY_ATTRIBUTE_WRITE;
-		return RET_PF_CONTINUE;
+	if (to_kvm_hv(vcpu->kvm)->hv_enable_vsm) {
+		intercept->type = HVMSG_GPA_INTERCEPT;
+		intercept->gpa = fault->gfn << PAGE_SHIFT;
+		intercept->gva = 0;
+		intercept->access =
+			(fault->user ? HV_INTERCEPT_ACCESS_READ : 0) |
+			(fault->write ? HV_INTERCEPT_ACCESS_WRITE : 0) |
+			(fault->exec ? HV_INTERCEPT_ACCESS_EXECUTE : 0);
+		intercept->vcpu = vcpu;
+
+		kvm_make_request(KVM_REQ_HV_INJECT_INTERCEPT, target_vcpu);
+		kvm_vcpu_kick(target_vcpu);
 	}
-
-	vcpu->run->exit_reason = KVM_EXIT_MEMORY_FAULT;
-	vcpu->run->memory.gpa = fault->gfn << PAGE_SHIFT;
-	vcpu->run->memory.size = PAGE_SIZE;
-	vcpu->run->memory.flags = flags;
-
-	return RET_PF_USER;
 }
 
 int kvm_hv_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 {
 	struct xarray *prots = kvm_hv_vsm_get_memprots(vcpu);
+	unsigned long prot;
+	u64 flags = 0;
 	void *entry;
 
 	if (!prots)
@@ -61,7 +60,31 @@ int kvm_hv_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 	if (!xa_is_value(entry))
 		return RET_PF_CONTINUE;
 
-	return kvm_hv_faultin_exit(vcpu, fault, xa_to_value(entry));
+	prot = xa_to_value(entry);
+	if (!prot)
+		flags = KVM_MEMORY_EXIT_NO_ACCESS;
+	else if (fault->write & !(prot & KVM_MEMORY_ATTRIBUTE_WRITE))
+		flags = KVM_MEMORY_EXIT_FLAG_NW;
+	else if (fault->exec & !(prot & KVM_MEMORY_ATTRIBUTE_EXECUTE))
+		flags = KVM_MEMORY_EXIT_FLAG_NX;
+
+	trace_kvm_hv_faultin_pfn(vcpu->vcpu_id, fault->gfn, fault->write,
+				 fault->exec, fault->user, flags);
+
+	if (!flags) {
+		fault->map_executable = prot & KVM_MEMORY_ATTRIBUTE_EXECUTE;
+		fault->map_writable = prot & KVM_MEMORY_ATTRIBUTE_WRITE;
+		return RET_PF_CONTINUE;
+	}
+
+	kvm_hv_inject_gpa_intercept(vcpu, fault);
+
+	vcpu->run->exit_reason = KVM_EXIT_MEMORY_FAULT;
+	vcpu->run->memory.gpa = fault->gfn << PAGE_SHIFT;
+	vcpu->run->memory.size = PAGE_SIZE;
+	vcpu->run->memory.flags = flags;
+
+	return RET_PF_USER;
 }
 
 static int kvm_hv_vtl_get_attr(struct kvm_device *dev,

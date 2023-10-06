@@ -65,7 +65,7 @@
 
 #define HV_VTL_RETURN_POLL_MASK                                 \
 	(BIT_ULL(KVM_REQ_UNBLOCK) | BIT_ULL(KVM_REQ_HV_STIMER) | \
-		BIT_ULL(KVM_REQ_EVENT))
+		BIT_ULL(KVM_REQ_EVENT) | BIT_ULL(KVM_REQ_HV_INJECT_INTERCEPT))
 
 void kvm_tdp_mmu_role_set_hv_bits(struct kvm_vcpu *vcpu, union kvm_mmu_page_role *role)
 {
@@ -1138,7 +1138,6 @@ static int set_vp_assist_page(struct kvm_vcpu *vcpu, u64 data)
 	unsigned long addr;
 	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
 
-	trace_printk("vpu_id %d, gpa %llx\n", vcpu->vcpu_id, data);
 	if (!(data & HV_X64_MSR_VP_ASSIST_PAGE_ENABLE)) {
 		hv_vcpu->hv_vapic = data;
 		if (kvm_lapic_set_pv_eoi(vcpu, 0, 0))
@@ -3554,40 +3553,39 @@ inject_ud:
 	return 1;
 }
 
-static void deliver_gpa_intercept(struct kvm_vcpu *vcpu, u8 target_vtl,
-				  u64 gpa, u64 gva, u8 access_type_mask)
+static void deliver_gpa_intercept(struct kvm_vcpu *curr_vcpu,
+				  struct kvm_vcpu *prev_vcpu, u64 gpa, u64 gva,
+				  u8 access_type_mask)
 {
-	ulong cr0;
 	struct hv_message msg = { 0 };
 	struct hv_memory_intercept_message *intercept = (struct hv_memory_intercept_message *)msg.u.payload;
-	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
-	struct x86_exception e;
+	struct kvm_vcpu_hv *curr_hv_vcpu = to_hv_vcpu(curr_vcpu);
+	struct kvm_vcpu_hv *prev_hv_vcpu = to_hv_vcpu(prev_vcpu);
 	struct kvm_segment kvmseg;
-
-	if (target_vtl <= get_active_vtl(vcpu))
-		return;
+	struct x86_exception e;
+	ulong cr0;
 
 	pr_info("kvm_hv_deliver_intercept vcpu:%d, target_vtl:%d gpa:0x%llx access:0x%x\n",
-		hv_vcpu->vp_index, target_vtl, gpa, access_type_mask);
+		curr_hv_vcpu->vp_index, gpa, access_type_mask);
 
 	msg.header.message_type = HVMSG_GPA_INTERCEPT;
 	msg.header.payload_size = sizeof(*intercept);
 
-	intercept->header.vp_index = hv_vcpu->vp_index;
-	intercept->header.instruction_length = vcpu->arch.exit_instruction_len;
+	intercept->header.vp_index = prev_hv_vcpu->vp_index;
+	intercept->header.instruction_length = prev_vcpu->arch.exit_instruction_len;
 	intercept->header.access_type_mask = access_type_mask;
-	kvm_x86_ops.get_segment(vcpu, &kvmseg, VCPU_SREG_CS);
+	kvm_x86_ops.get_segment(prev_vcpu, &kvmseg, VCPU_SREG_CS);
 	store_kvm_segment(&kvmseg, &intercept->header.cs);
 
-	cr0 = kvm_read_cr0(vcpu);
+	cr0 = kvm_read_cr0(prev_vcpu);
 	intercept->header.exec_state.cr0_pe = (cr0 & X86_CR0_PE);
 	intercept->header.exec_state.cr0_am = (cr0 & X86_CR0_AM);
-	intercept->header.exec_state.cpl = kvm_x86_ops.get_cpl(vcpu);
-	intercept->header.exec_state.efer_lma = is_long_mode(vcpu);
+	intercept->header.exec_state.cpl = kvm_x86_ops.get_cpl(prev_vcpu);
+	intercept->header.exec_state.efer_lma = is_long_mode(prev_vcpu);
 	intercept->header.exec_state.debug_active = 0;
 	intercept->header.exec_state.interruption_pending = 0;
-	intercept->header.rip = kvm_rip_read(vcpu);
-	intercept->header.rflags = kvm_get_rflags(vcpu);
+	intercept->header.rip = kvm_rip_read(prev_vcpu);
+	intercept->header.rflags = kvm_get_rflags(prev_vcpu);
 
 	/*
 	 * For exec violations we don't have a way to decode an instruction that issued a fetch
@@ -3598,10 +3596,11 @@ static void deliver_gpa_intercept(struct kvm_vcpu *vcpu, u8 target_vtl,
 	if (access_type_mask == HV_INTERCEPT_ACCESS_EXECUTE) {
 		intercept->instruction_byte_count = 0;
 	} else {
-		intercept->instruction_byte_count = vcpu->arch.exit_instruction_len;
+		intercept->instruction_byte_count = prev_vcpu->arch.exit_instruction_len;
 		if (intercept->instruction_byte_count > sizeof(intercept->instruction_bytes))
 			intercept->instruction_byte_count = sizeof(intercept->instruction_bytes);
-		if (kvm_read_guest_virt(vcpu, kvm_rip_read(vcpu), intercept->instruction_bytes,
+		if (kvm_read_guest_virt(prev_vcpu, kvm_rip_read(prev_vcpu),
+					intercept->instruction_bytes,
 					intercept->instruction_byte_count, &e))
 			goto inject_ud;
 	}
@@ -3610,38 +3609,34 @@ static void deliver_gpa_intercept(struct kvm_vcpu *vcpu, u8 target_vtl,
 	intercept->gva = gva;
 	intercept->gpa = gpa;
 	intercept->cache_type = HV_X64_CACHE_TYPE_WRITEBACK;
-	kvm_x86_ops.get_segment(vcpu, &kvmseg, VCPU_SREG_DS);
+	kvm_x86_ops.get_segment(prev_vcpu, &kvmseg, VCPU_SREG_DS);
 	store_kvm_segment(&kvmseg, &intercept->ds);
-	kvm_x86_ops.get_segment(vcpu, &kvmseg, VCPU_SREG_SS);
+	kvm_x86_ops.get_segment(prev_vcpu, &kvmseg, VCPU_SREG_SS);
 	store_kvm_segment(&kvmseg, &intercept->ss);
-	intercept->rax = kvm_rax_read(vcpu);
-	intercept->rcx = kvm_rcx_read(vcpu);
-	intercept->rdx = kvm_rdx_read(vcpu);
-	intercept->rbx = kvm_rbx_read(vcpu);
-	intercept->rsp = kvm_rsp_read(vcpu);
-	intercept->rbp = kvm_rbp_read(vcpu);
-	intercept->rsi = kvm_rsi_read(vcpu);
-	intercept->rdi = kvm_rdi_read(vcpu);
-	intercept->r8 = kvm_r8_read(vcpu);
-	intercept->r9 = kvm_r9_read(vcpu);
-	intercept->r10 = kvm_r10_read(vcpu);
-	intercept->r11 = kvm_r11_read(vcpu);
-	intercept->r12 = kvm_r12_read(vcpu);
-	intercept->r13 = kvm_r13_read(vcpu);
-	intercept->r14 = kvm_r14_read(vcpu);
-	intercept->r15 = kvm_r15_read(vcpu);
+	intercept->rax = kvm_rax_read(prev_vcpu);
+	intercept->rcx = kvm_rcx_read(prev_vcpu);
+	intercept->rdx = kvm_rdx_read(prev_vcpu);
+	intercept->rbx = kvm_rbx_read(prev_vcpu);
+	intercept->rsp = kvm_rsp_read(prev_vcpu);
+	intercept->rbp = kvm_rbp_read(prev_vcpu);
+	intercept->rsi = kvm_rsi_read(prev_vcpu);
+	intercept->rdi = kvm_rdi_read(prev_vcpu);
+	intercept->r8 = kvm_r8_read(prev_vcpu);
+	intercept->r9 = kvm_r9_read(prev_vcpu);
+	intercept->r10 = kvm_r10_read(prev_vcpu);
+	intercept->r11 = kvm_r11_read(prev_vcpu);
+	intercept->r12 = kvm_r12_read(prev_vcpu);
+	intercept->r13 = kvm_r13_read(prev_vcpu);
+	intercept->r14 = kvm_r14_read(prev_vcpu);
+	intercept->r15 = kvm_r15_read(prev_vcpu);
 
-	/* switch to target VTL */
-	/* if (kvm_hv_vtl_interrupt(vcpu, target_vtl)) */
-		/* return; */
-
-	if (synic_deliver_msg(&hv_vcpu->synic, 0, &msg, true))
+	if (synic_deliver_msg(&curr_hv_vcpu->synic, 0, &msg, true))
 		goto inject_ud;
 
 	return;
 
 inject_ud:
-	kvm_queue_exception(vcpu, UD_VECTOR);
+	kvm_queue_exception(curr_vcpu, UD_VECTOR);
 }
 
 void kvm_hv_deliver_intercept(struct kvm_vcpu *vcpu)
@@ -3650,7 +3645,8 @@ void kvm_hv_deliver_intercept(struct kvm_vcpu *vcpu)
 
 	switch (info->type) {
 	case HVMSG_GPA_INTERCEPT:
-		deliver_gpa_intercept(vcpu, info->target_vtl, info->gpa, info->gva, info->access);
+		deliver_gpa_intercept(vcpu, info->vcpu, info->gpa, info->gva,
+				      info->access);
 		break;
 	default:
 		pr_warn("Unknown exception\n");
