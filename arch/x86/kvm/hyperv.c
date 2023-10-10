@@ -62,6 +62,10 @@
  */
 #define HV_EXT_CALL_MAX (HV_EXT_CALL_QUERY_CAPABILITIES + 64)
 
+#define HV_VTL_RETURN_POLL_MASK                                 \
+	(BIT_ULL(KVM_REQ_UNBLOCK) | BIT_ULL(KVM_REQ_HV_STIMER) | \
+		BIT_ULL(KVM_REQ_EVENT))
+
 static void stimer_mark_pending(struct kvm_vcpu_hv_stimer *stimer,
 				bool vcpu_kick);
 
@@ -2907,6 +2911,7 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 	case HVCALL_ENABLE_VP_VTL:
 	case HVCALL_VTL_CALL:
 	case HVCALL_VTL_RETURN:
+		vcpu->poll_mask = HV_VTL_RETURN_POLL_MASK;
 		goto hypercall_userspace_exit;
 	default:
 		ret = HV_STATUS_INVALID_HYPERCALL_CODE;
