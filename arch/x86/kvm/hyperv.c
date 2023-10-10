@@ -365,6 +365,8 @@ static int patch_hypercall_page(struct kvm_vcpu *vcpu, u64 data)
 	return 0;
 }
 
+static int set_vp_assist_page(struct kvm_vcpu *vcpu, u64 data);
+
 static int kvm_hv_overlay_completion(struct kvm_vcpu *vcpu)
 {
 	struct kvm_hyperv_exit *exit = &vcpu->run->hyperv;
@@ -379,6 +381,9 @@ static int kvm_hv_overlay_completion(struct kvm_vcpu *vcpu)
 		break;
 	case HV_X64_MSR_HYPERCALL:
 		r = patch_hypercall_page(vcpu, data);
+		break;
+	case HV_X64_MSR_VP_ASSIST_PAGE:
+		r = set_vp_assist_page(vcpu, data);
 		break;
 	default:
 		r = 1;
@@ -1063,6 +1068,42 @@ void kvm_hv_vcpu_uninit(struct kvm_vcpu *vcpu)
 	vcpu->arch.hyperv = NULL;
 }
 
+/* Write to VP assist page register */
+static int set_vp_assist_page(struct kvm_vcpu *vcpu, u64 data)
+{
+	u64 gfn;
+	unsigned long addr;
+	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
+
+	trace_printk("vpu_id %d, gpa %llx\n", vcpu->vcpu_id, data);
+	if (!(data & HV_X64_MSR_VP_ASSIST_PAGE_ENABLE)) {
+		hv_vcpu->hv_vapic = data;
+		if (kvm_lapic_set_pv_eoi(vcpu, 0, 0))
+			return 1;
+		return 0;
+	}
+
+	gfn = data >> HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_SHIFT;
+	addr = kvm_vcpu_gfn_to_hva(vcpu, gfn);
+	if (kvm_is_error_hva(addr))
+		return 1;
+
+	/*
+	 * Clear apic_assist portion of struct hv_vp_assist_page
+	 * only, there can be valuable data in the rest which needs
+	 * to be preserved e.g. on migration.
+	 */
+	if (__put_user(0, (u32 __user *)addr))
+		return 1;
+	hv_vcpu->hv_vapic = data;
+	kvm_vcpu_mark_page_dirty(vcpu, gfn);
+	if (kvm_lapic_set_pv_eoi(vcpu, gfn_to_gpa(gfn) | KVM_MSR_ENABLED,
+				 sizeof(struct hv_vp_assist_page)))
+		return 1;
+	return 0;
+
+}
+
 bool kvm_hv_assist_page_enabled(struct kvm_vcpu *vcpu)
 {
 	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
@@ -1634,36 +1675,10 @@ static int kvm_hv_set_msr(struct kvm_vcpu *vcpu, u32 msr, u64 data, bool host)
 		hv_vcpu->vp_index = new_vp_index;
 		break;
 	}
-	case HV_X64_MSR_VP_ASSIST_PAGE: {
-		u64 gfn;
-		unsigned long addr;
-
-		if (!(data & HV_X64_MSR_VP_ASSIST_PAGE_ENABLE)) {
-			hv_vcpu->hv_vapic = data;
-			if (kvm_lapic_set_pv_eoi(vcpu, 0, 0))
-				return 1;
-			break;
-		}
-		gfn = data >> HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_SHIFT;
-		addr = kvm_vcpu_gfn_to_hva(vcpu, gfn);
-		if (kvm_is_error_hva(addr))
-			return 1;
-
-		/*
-		 * Clear apic_assist portion of struct hv_vp_assist_page
-		 * only, there can be valuable data in the rest which needs
-		 * to be preserved e.g. on migration.
-		 */
-		if (__put_user(0, (u32 __user *)addr))
-			return 1;
-		hv_vcpu->hv_vapic = data;
-		kvm_vcpu_mark_page_dirty(vcpu, gfn);
-		if (kvm_lapic_set_pv_eoi(vcpu,
-					    gfn_to_gpa(gfn) | KVM_MSR_ENABLED,
-					    sizeof(struct hv_vp_assist_page)))
-			return 1;
-		break;
-	}
+	case HV_X64_MSR_VP_ASSIST_PAGE:
+		if (vcpu->kvm->arch.hyperv.hv_enable_vsm && !host)
+			return overlay_exit(vcpu, HV_X64_MSR_VP_ASSIST_PAGE, data, false);
+		return set_vp_assist_page(vcpu, data);
 	case HV_X64_MSR_EOI:
 		return kvm_hv_vapic_msr_write(vcpu, APIC_EOI, data);
 	case HV_X64_MSR_ICR:
