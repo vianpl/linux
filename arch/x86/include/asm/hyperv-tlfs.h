@@ -49,7 +49,7 @@
 /* Support for physical CPU dynamic partitioning events is available*/
 #define HV_X64_CPU_DYNAMIC_PARTITIONING_AVAILABLE	BIT(3)
 /*
- * Support for passing hypercall input parameter block via XMM
+ * Support for passing hypercall input and output parameter block via XMM
  * registers is available
  */
 #define HV_X64_HYPERCALL_XMM_INPUT_AVAILABLE		BIT(4)
@@ -386,9 +386,6 @@ struct hv_tsc_emulation_status {
 
 #define HV_X64_MSR_TSC_REFERENCE_ENABLE		0x00000001
 #define HV_X64_MSR_TSC_REFERENCE_ADDRESS_SHIFT	12
-
-/* Number of XMM registers used in hypercall input/output */
-#define HV_HYPERCALL_MAX_XMM_REGISTERS		6
 
 struct hv_nested_enlightenments_control {
 	struct {
