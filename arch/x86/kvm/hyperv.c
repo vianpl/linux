@@ -3361,6 +3361,9 @@ int kvm_hv_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 	if (!attrs)
 		return RET_PF_CONTINUE;
 
+	trace_kvm_hv_faultin_pfn(vcpu->vcpu_id, fault->gfn, fault->write,
+				 fault->exec, fault->user, attrs);
+
 	if (kvm_hv_vsm_access_valid(fault, attrs)) {
 		fault->map_executable =
 			!!(attrs & KVM_MEMORY_ATTRIBUTE_EXECUTE);
