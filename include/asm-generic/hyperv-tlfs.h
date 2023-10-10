@@ -182,6 +182,7 @@ union hv_reference_tsc_msr {
 
 /* Extended hypercalls */
 #define HV_EXT_CALL_QUERY_CAPABILITIES		0x8001
+#define HV_EXT_CALL_GET_BOOT_ZEROED_MEMORY	0x8002
 #define HV_EXT_CALL_MEMORY_HEAT_HINT		0x8003
 
 #define HV_FLUSH_ALL_PROCESSORS			BIT(0)
