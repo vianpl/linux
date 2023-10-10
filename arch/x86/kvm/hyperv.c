@@ -2557,6 +2557,21 @@ static void kvm_hv_hypercall_read_xmm(struct kvm_hv_hcall *hc)
 	kvm_fpu_put();
 }
 
+static u64 kvm_hv_ext_query_capabilities(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
+{
+	u64 caps = 0; /* No caps */
+
+	if (!hc->fast) {
+		if (unlikely(kvm_write_guest(vcpu->kvm, hc->outgpa, &caps, sizeof(caps)) != 0))
+			return HV_STATUS_INVALID_HYPERCALL_INPUT;
+	} else {
+		kvm_rdx_write(vcpu, caps);
+	}
+
+	trace_kvm_hv_ext_query_capabilities(caps);
+	return HV_STATUS_SUCCESS;
+}
+
 static bool kvm_hv_xlate_va_validate_input(struct kvm_vcpu* vcpu,
 					   struct hv_xlate_va_input *in,
 					   u8 *vtl, u8 *flags)
@@ -2736,6 +2751,10 @@ static bool is_hypercall_advertised(struct kvm_vcpu *vcpu, u16 code)
 		feature_mask = HV_ACCESS_VSM;
 		reg = VCPU_REGS_RBX;
 		break;
+	case HV_EXT_CALL_QUERY_CAPABILITIES:
+		feature_mask = HV_ENABLE_EXTENDED_HYPERCALLS;
+		reg = VCPU_REGS_RBX;
+		break;
 	default:
 		/* everything else is advertised by default */
 		return true;
@@ -2893,7 +2912,16 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 		}
 		goto hypercall_userspace_exit;
 	}
-	case HV_EXT_CALL_QUERY_CAPABILITIES ... HV_EXT_CALL_MAX:
+	case HV_EXT_CALL_QUERY_CAPABILITIES: {
+		if (unlikely(hc.rep_cnt)) {
+			ret = HV_STATUS_INVALID_HYPERCALL_INPUT;
+			break;
+		}
+
+		ret = kvm_hv_ext_query_capabilities(vcpu, &hc);
+		break;
+	}
+	case HV_EXT_CALL_GET_BOOT_ZEROED_MEMORY ... HV_EXT_CALL_MAX:
 		if (unlikely(hc.fast)) {
 			ret = HV_STATUS_INVALID_PARAMETER;
 			break;
