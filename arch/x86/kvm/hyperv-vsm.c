@@ -5,6 +5,7 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
+#include "mmu/mmu_internal.h"
 #include "hyperv.h"
 
 #include <linux/kvm_host.h>
@@ -17,6 +18,44 @@ struct kvm_hv_vtl_dev {
 	int vtl;
 	struct xarray mem_attrs;
 };
+
+static struct xarray *kvm_hv_vsm_get_memprots(struct kvm_vcpu *vcpu);
+
+int kvm_hv_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
+{
+	struct xarray *prots = kvm_hv_vsm_get_memprots(vcpu);
+	unsigned long prot;
+	u64 flags = 0;
+	void *entry;
+
+	if (!prots)
+		return RET_PF_CONTINUE;
+
+	entry = xa_load(prots, fault->gfn);
+	if (!xa_is_value(entry))
+		return RET_PF_CONTINUE;
+
+	prot = xa_to_value(entry);
+	if (!prot)
+		flags = KVM_MEMORY_EXIT_NO_ACCESS;
+	else if (fault->write & !(prot & KVM_MEMORY_ATTRIBUTE_WRITE))
+		flags = KVM_MEMORY_EXIT_FLAG_NW;
+	else if (fault->exec & !(prot & KVM_MEMORY_ATTRIBUTE_EXECUTE))
+		flags = KVM_MEMORY_EXIT_FLAG_NX;
+
+	if (!flags) {
+		fault->map_executable = prot & KVM_MEMORY_ATTRIBUTE_EXECUTE;
+		fault->map_writable = prot & KVM_MEMORY_ATTRIBUTE_WRITE;
+		return RET_PF_CONTINUE;
+	}
+
+	vcpu->run->exit_reason = KVM_EXIT_MEMORY_FAULT;
+	vcpu->run->memory.gpa = fault->gfn << PAGE_SHIFT;
+	vcpu->run->memory.size = PAGE_SIZE;
+	vcpu->run->memory.flags = flags;
+
+	return RET_PF_USER;
+}
 
 static int kvm_hv_vtl_get_attr(struct kvm_device *dev,
 			       struct kvm_device_attr *attr)
@@ -71,6 +110,8 @@ static long kvm_hv_vtl_ioctl(struct kvm_device *dev, unsigned int ioctl,
 	return 0;
 }
 
+static int kvm_hv_vtl_create(struct kvm_device *dev, u32 type);
+
 static struct kvm_device_ops kvm_hv_vtl_ops = {
 	.name = "kvm-hv-vtl",
 	.create = kvm_hv_vtl_create,
@@ -78,6 +119,21 @@ static struct kvm_device_ops kvm_hv_vtl_ops = {
 	.ioctl = kvm_hv_vtl_ioctl,
 	.get_attr = kvm_hv_vtl_get_attr,
 };
+
+static struct xarray *kvm_hv_vsm_get_memprots(struct kvm_vcpu *vcpu)
+{
+	struct kvm_hv_vtl_dev *vtl_dev;
+	struct kvm_device *tmp;
+
+	list_for_each_entry(tmp, &vcpu->kvm->devices, vm_node)
+		if (tmp->ops == &kvm_hv_vtl_ops) {
+			vtl_dev = tmp->private;
+			if (vtl_dev->vtl == get_active_vtl(vcpu))
+				return &vtl_dev->mem_attrs;
+		}
+
+	return NULL;
+}
 
 static int kvm_hv_vtl_create(struct kvm_device *dev, u32 type)
 {
