@@ -497,12 +497,14 @@ static void kvm_vcpu_init(struct kvm_vcpu *vcpu, struct kvm *kvm, unsigned id)
 	kvm_vcpu_set_dy_eligible(vcpu, false);
 	vcpu->preempted = false;
 	vcpu->ready = false;
+	vcpu->kicked = false;
 	preempt_notifier_init(&vcpu->preempt_notifier, &kvm_preempt_ops);
 	vcpu->last_used_slot = NULL;
 
 	/* Fill the stats id string for the vcpu */
 	snprintf(vcpu->stats_id, sizeof(vcpu->stats_id), "kvm-%d/vcpu-%d",
 		 task_pid_nr(current), id);
+	init_waitqueue_head(&vcpu->wqh);
 }
 
 static void kvm_vcpu_destroy(struct kvm_vcpu *vcpu)
@@ -3970,6 +3972,10 @@ void kvm_vcpu_kick(struct kvm_vcpu *vcpu)
 		if (cpu != me && (unsigned)cpu < nr_cpu_ids && cpu_online(cpu))
 			smp_send_reschedule(cpu);
 	}
+
+	if (!cmpxchg(&vcpu->kicked, false, true))
+		wake_up_interruptible(&vcpu->wqh);
+
 out:
 	put_cpu();
 }
@@ -4174,6 +4180,29 @@ static int kvm_vcpu_mmap(struct file *file, struct vm_area_struct *vma)
 	return 0;
 }
 
+static __poll_t kvm_vcpu_poll(struct file *file, poll_table *wait)
+{
+	struct kvm_vcpu *vcpu = file->private_data;
+
+	poll_wait(file, &vcpu->wqh, wait);
+
+	/*
+	 * Make sure we read vcpu->kicked after adding the vcpu into
+	 * the waitqueue list. Otherwise we might have the following race:
+	 *
+	 *   READ_ONCE(vcpu->kicked)
+	 *					cmpxchg(&vcpu->kicked, false, true))
+	 *					wake_up_interruptible(&vcpu->wqh)
+	 *   list_add_tail(wait, &vcpu->wqh)
+	 */
+	smp_mb();
+	if (READ_ONCE(vcpu->kicked)) {
+		return EPOLLIN;
+	}
+
+	return 0;
+}
+
 static int kvm_vcpu_release(struct inode *inode, struct file *filp)
 {
 	struct kvm_vcpu *vcpu = filp->private_data;
@@ -4186,6 +4215,7 @@ static const struct file_operations kvm_vcpu_fops = {
 	.release        = kvm_vcpu_release,
 	.unlocked_ioctl = kvm_vcpu_ioctl,
 	.mmap           = kvm_vcpu_mmap,
+	.poll		= kvm_vcpu_poll,
 	.llseek		= noop_llseek,
 	KVM_COMPAT(kvm_vcpu_compat_ioctl),
 };

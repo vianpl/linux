@@ -336,6 +336,7 @@ struct kvm_vcpu {
 #endif
 	int mode;
 	u64 requests;
+	bool kicked;
 	unsigned long guest_debug;
 
 	struct mutex mutex;
@@ -395,6 +396,7 @@ struct kvm_vcpu {
 	 */
 	struct kvm_memory_slot *last_used_slot;
 	u64 last_used_slot_gen;
+	wait_queue_head_t wqh;
 };
 
 /*
