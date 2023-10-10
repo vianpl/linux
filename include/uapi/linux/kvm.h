@@ -2262,4 +2262,8 @@ struct kvm_s390_zpci_op {
 /* flags for kvm_s390_zpci_op->u.reg_aen.flags */
 #define KVM_S390_ZPCIOP_REGAEN_HOST    (1 << 0)
 
+/* Get/Set Hyper-V VSM state. Available with KVM_CAP_HYPERV_VSM */
+#define KVM_HV_GET_VSM_STATE _IOR(KVMIO, 0xd4, struct kvm_hv_vsm_state)
+#define KVM_HV_SET_VSM_STATE _IOW(KVMIO, 0xd5, struct kvm_hv_vsm_state)
+
 #endif /* __LINUX_KVM_H */
