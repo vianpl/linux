@@ -2324,13 +2324,16 @@ static u64 kvm_hv_send_ipi(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 	struct kvm *kvm = vcpu->kvm;
 	struct hv_send_ipi_ex send_ipi_ex;
 	struct hv_send_ipi send_ipi;
+	union hv_input_vtl *in_vtl;
 	u64 valid_bank_mask;
 	u32 vector;
 	bool all_cpus;
+	u8 vtl;
 
 	if (hc->code == HVCALL_SEND_IPI) {
+		in_vtl = &send_ipi.in_vtl;
 		if (!hc->fast) {
-			if (unlikely(kvm_read_guest(kvm, hc->ingpa, &send_ipi,
+			if (unlikely(kvm_vcpu_read_guest(vcpu, hc->ingpa, &send_ipi,
 						    sizeof(send_ipi))))
 				return HV_STATUS_INVALID_HYPERCALL_INPUT;
 			sparse_banks[0] = send_ipi.cpu_mask;
@@ -2347,8 +2350,9 @@ static u64 kvm_hv_send_ipi(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 
 		trace_kvm_hv_send_ipi(vector, sparse_banks[0]);
 	} else {
+		in_vtl = &send_ipi_ex.in_vtl;
 		if (!hc->fast) {
-			if (unlikely(kvm_read_guest(kvm, hc->ingpa, &send_ipi_ex,
+			if (unlikely(kvm_vcpu_read_guest(vcpu, hc->ingpa, &send_ipi_ex,
 						    sizeof(send_ipi_ex))))
 				return HV_STATUS_INVALID_HYPERCALL_INPUT;
 		} else {
@@ -2387,6 +2391,12 @@ static u64 kvm_hv_send_ipi(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 check_and_send_ipi:
 	if ((vector < HV_IPI_LOW_VECTOR) || (vector > HV_IPI_HIGH_VECTOR))
 		return HV_STATUS_INVALID_HYPERCALL_INPUT;
+
+	vtl = in_vtl->use_target_vtl ? in_vtl->target_vtl : get_active_vtl(vcpu);
+	if (vtl != get_active_vtl(vcpu)) {
+		trace_printk("TODO!!! cross VTL IPIs\n");
+		pr_info("TODO!!! cross VTL IPIs\n");
+	}
 
 	if (all_cpus)
 		kvm_hv_send_ipi_to_many(kvm, vector, NULL, 0);
