@@ -1119,6 +1119,9 @@ struct kvm_hv {
 
 	struct hv_partition_assist_pg *hv_pa_pg;
 	struct kvm_hv_syndbg hv_syndbg;
+
+	/* status of KVM_CAP_HYPERV_VSM */
+	bool hv_enable_vsm;
 };
 
 struct msr_bitmap_range {
