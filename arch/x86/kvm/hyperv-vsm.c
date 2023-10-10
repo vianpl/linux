@@ -7,6 +7,7 @@
 
 #include "mmu/mmu_internal.h"
 #include "hyperv.h"
+#include "trace.h"
 
 #include <linux/kvm_host.h>
 
@@ -64,6 +65,9 @@ int kvm_hv_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 		flags = KVM_MEMORY_EXIT_FLAG_NW;
 	else if (fault->exec & !(prot & KVM_MEMORY_ATTRIBUTE_EXECUTE))
 		flags = KVM_MEMORY_EXIT_FLAG_NX;
+
+	trace_kvm_hv_faultin_pfn(vcpu->vcpu_id, fault->gfn, fault->write,
+				 fault->exec, fault->user, flags);
 
 	if (!flags) {
 		fault->map_executable = prot & KVM_MEMORY_ATTRIBUTE_EXECUTE;
