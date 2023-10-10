@@ -2280,7 +2280,7 @@ ret_success:
 }
 
 static void kvm_hv_send_ipi_to_many(struct kvm *kvm, u32 vector,
-				    u64 *sparse_banks, u64 valid_bank_mask)
+				    u64 *sparse_banks, u64 valid_bank_mask, int vtl)
 {
 	struct kvm_lapic_irq irq = {
 		.delivery_mode = APIC_DM_FIXED,
@@ -2295,6 +2295,9 @@ static void kvm_hv_send_ipi_to_many(struct kvm *kvm, u32 vector,
 					    valid_bank_mask, sparse_banks))
 			continue;
 
+		if (kvm_hv_get_active_vtl(vcpu) != vtl)
+			continue;
+
 		/* We fail only when APIC is disabled */
 		kvm_apic_set_irq(vcpu, &irq, NULL);
 	}
@@ -2307,13 +2310,19 @@ static u64 kvm_hv_send_ipi(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 	struct kvm *kvm = vcpu->kvm;
 	struct hv_send_ipi_ex send_ipi_ex;
 	struct hv_send_ipi send_ipi;
+	union hv_input_vtl *in_vtl;
 	u64 valid_bank_mask;
 	u32 vector;
 	bool all_cpus;
+	u8 vtl;
+
+	/* VTL is at the same offset on both IPI types */
+	in_vtl = &send_ipi.in_vtl;
+	vtl = in_vtl->use_target_vtl ? in_vtl->target_vtl : kvm_hv_get_active_vtl(vcpu);
 
 	if (hc->code == HVCALL_SEND_IPI) {
 		if (!hc->fast) {
-			if (unlikely(kvm_read_guest(kvm, hc->ingpa, &send_ipi,
+			if (unlikely(kvm_vcpu_read_guest(vcpu, hc->ingpa, &send_ipi,
 						    sizeof(send_ipi))))
 				return HV_STATUS_INVALID_HYPERCALL_INPUT;
 			sparse_banks[0] = send_ipi.cpu_mask;
@@ -2328,10 +2337,10 @@ static u64 kvm_hv_send_ipi(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 		all_cpus = false;
 		valid_bank_mask = BIT_ULL(0);
 
-		trace_kvm_hv_send_ipi(vector, sparse_banks[0]);
+		trace_kvm_hv_send_ipi(vector, sparse_banks[0], vtl);
 	} else {
 		if (!hc->fast) {
-			if (unlikely(kvm_read_guest(kvm, hc->ingpa, &send_ipi_ex,
+			if (unlikely(kvm_vcpu_read_guest(vcpu, hc->ingpa, &send_ipi_ex,
 						    sizeof(send_ipi_ex))))
 				return HV_STATUS_INVALID_HYPERCALL_INPUT;
 		} else {
@@ -2342,7 +2351,8 @@ static u64 kvm_hv_send_ipi(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 
 		trace_kvm_hv_send_ipi_ex(send_ipi_ex.vector,
 					 send_ipi_ex.vp_set.format,
-					 send_ipi_ex.vp_set.valid_bank_mask);
+					 send_ipi_ex.vp_set.valid_bank_mask,
+					 vtl);
 
 		vector = send_ipi_ex.vector;
 		valid_bank_mask = send_ipi_ex.vp_set.valid_bank_mask;
@@ -2372,9 +2382,9 @@ check_and_send_ipi:
 		return HV_STATUS_INVALID_HYPERCALL_INPUT;
 
 	if (all_cpus)
-		kvm_hv_send_ipi_to_many(kvm, vector, NULL, 0);
+		kvm_hv_send_ipi_to_many(kvm, vector, NULL, 0, vtl);
 	else
-		kvm_hv_send_ipi_to_many(kvm, vector, sparse_banks, valid_bank_mask);
+		kvm_hv_send_ipi_to_many(kvm, vector, sparse_banks, valid_bank_mask, vtl);
 
 ret_success:
 	return HV_STATUS_SUCCESS;
