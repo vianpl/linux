@@ -42,6 +42,8 @@
 #include "irq.h"
 #include "fpu.h"
 
+#include "mmu/mmu_internal.h"
+
 #define KVM_HV_MAX_SPARSE_VCPU_SET_BITS DIV_ROUND_UP(KVM_MAX_VCPUS, HV_VCPUS_PER_SPARSE_BANK)
 
 /*
@@ -3082,6 +3084,55 @@ struct kvm_hv_vtl_dev {
 	struct xarray mem_attrs;
 };
 
+static struct xarray *kvm_hv_vsm_get_memprots(struct kvm_vcpu *vcpu);
+
+bool kvm_hv_vsm_access_valid(struct kvm_page_fault *fault, unsigned long attrs)
+{
+	if (attrs == KVM_MEMORY_ATTRIBUTE_NO_ACCESS)
+		return false;
+
+	/* We should never get here without read permissions, force a fault. */
+	if (WARN_ON_ONCE(!(attrs & KVM_MEMORY_ATTRIBUTE_READ)))
+		return false;
+
+	if (fault->write && !(attrs & KVM_MEMORY_ATTRIBUTE_WRITE))
+		return false;
+
+	if (fault->exec && !(attrs & KVM_MEMORY_ATTRIBUTE_EXECUTE))
+		return false;
+
+	return true;
+}
+
+static unsigned long kvm_hv_vsm_get_memory_attributes(struct kvm_vcpu *vcpu,
+						      gfn_t gfn)
+{
+	struct xarray *prots = kvm_hv_vsm_get_memprots(vcpu);
+
+	if (!prots)
+		return 0;
+
+	return xa_to_value(xa_load(prots, gfn));
+}
+
+int kvm_hv_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
+{
+	unsigned long attrs;
+
+	attrs = kvm_hv_vsm_get_memory_attributes(vcpu, fault->gfn);
+	if (!attrs)
+		return RET_PF_CONTINUE;
+
+	if (kvm_hv_vsm_access_valid(fault, attrs)) {
+		fault->map_executable =
+			!!(attrs & KVM_MEMORY_ATTRIBUTE_EXECUTE);
+		fault->map_writable = !!(attrs & KVM_MEMORY_ATTRIBUTE_WRITE);
+		return RET_PF_CONTINUE;
+	}
+
+	return -EFAULT;
+}
+
 static int kvm_hv_vtl_get_attr(struct kvm_device *dev,
 			       struct kvm_device_attr *attr)
 {
@@ -3169,6 +3220,21 @@ static struct kvm_device_ops kvm_hv_vtl_ops = {
 	.ioctl = kvm_hv_vtl_ioctl,
 	.get_attr = kvm_hv_vtl_get_attr,
 };
+
+static struct xarray *kvm_hv_vsm_get_memprots(struct kvm_vcpu *vcpu)
+{
+	struct kvm_hv_vtl_dev *vtl_dev;
+	struct kvm_device *tmp;
+
+	list_for_each_entry(tmp, &vcpu->kvm->devices, vm_node)
+		if (tmp->ops == &kvm_hv_vtl_ops) {
+			vtl_dev = tmp->private;
+			if (vtl_dev->vtl == kvm_hv_get_active_vtl(vcpu))
+				return &vtl_dev->mem_attrs;
+		}
+
+	return NULL;
+}
 
 static int kvm_hv_vtl_create(struct kvm_device *dev, u32 type)
 {

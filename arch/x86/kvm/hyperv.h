@@ -357,5 +357,6 @@ static inline void kvm_mmu_role_set_hv_bits(struct kvm_vcpu *vcpu,
 
 int kvm_hv_vtl_dev_register(void);
 void kvm_hv_vtl_dev_unregister(void);
+int kvm_hv_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault);
 
 #endif /* __ARCH_X86_KVM_HYPERV_H__ */
