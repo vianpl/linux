@@ -78,7 +78,8 @@ static_assert(!(SPTE_TDP_AD_MASK & SHADOW_ACC_TRACK_SAVED_MASK));
  * SPTE is write-protected. See is_writable_pte() for details.
  */
 
-/* Bits 9 and 10 are ignored by all non-EPT PTEs. */
+/* Bits 8, 9 and 10 are ignored by all non-EPT PTEs. */
+#define DEFAULT_SPTE_HOST_EXEC		BIT_ULL(8)
 #define DEFAULT_SPTE_HOST_WRITABLE	BIT_ULL(9)
 #define DEFAULT_SPTE_MMU_WRITABLE	BIT_ULL(10)
 
@@ -87,11 +88,14 @@ static_assert(!(SPTE_TDP_AD_MASK & SHADOW_ACC_TRACK_SAVED_MASK));
  * to not overlap the A/D type mask or the saved access bits of access-tracked
  * SPTEs when A/D bits are disabled.
  */
+#define EPT_SPTE_HOST_EXEC		BIT_ULL(55)
 #define EPT_SPTE_HOST_WRITABLE		BIT_ULL(57)
 #define EPT_SPTE_MMU_WRITABLE		BIT_ULL(58)
 
+static_assert(!(EPT_SPTE_HOST_EXEC & SPTE_TDP_AD_MASK));
 static_assert(!(EPT_SPTE_HOST_WRITABLE & SPTE_TDP_AD_MASK));
 static_assert(!(EPT_SPTE_MMU_WRITABLE & SPTE_TDP_AD_MASK));
+static_assert(!(EPT_SPTE_HOST_EXEC & SHADOW_ACC_TRACK_SAVED_MASK));
 static_assert(!(EPT_SPTE_HOST_WRITABLE & SHADOW_ACC_TRACK_SAVED_MASK));
 static_assert(!(EPT_SPTE_MMU_WRITABLE & SHADOW_ACC_TRACK_SAVED_MASK));
 
@@ -168,6 +172,7 @@ static_assert(!(SHADOW_NONPRESENT_VALUE & SPTE_MMU_PRESENT_MASK));
 #endif
 
 extern u64 __read_mostly shadow_host_writable_mask;
+extern u64 __read_mostly shadow_host_exec_mask;
 extern u64 __read_mostly shadow_mmu_writable_mask;
 extern u64 __read_mostly shadow_nx_mask;
 extern u64 __read_mostly shadow_x_mask; /* mutual exclusive with nx_mask */
@@ -500,7 +505,7 @@ bool make_spte(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp,
 	       const struct kvm_memory_slot *slot,
 	       unsigned int pte_access, gfn_t gfn, kvm_pfn_t pfn,
 	       u64 old_spte, bool prefetch, bool can_unsync,
-	       bool host_writable, u64 *new_spte);
+	       bool host_writable, bool host_exec, u64 *new_spte);
 u64 make_huge_page_split_spte(struct kvm *kvm, u64 huge_spte,
 		      	      union kvm_mmu_page_role role, int index);
 u64 make_nonleaf_spte(u64 *child_pt, bool ad_disabled);

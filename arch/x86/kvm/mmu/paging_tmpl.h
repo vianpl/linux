@@ -909,6 +909,7 @@ static int FNAME(sync_spte)(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp, int 
 	struct kvm_memory_slot *slot;
 	unsigned pte_access;
 	pt_element_t gpte;
+	bool host_exec;
 	gpa_t pte_gpa;
 	gfn_t gfn;
 
@@ -961,10 +962,11 @@ static int FNAME(sync_spte)(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp, int 
 	sptep = &sp->spt[i];
 	spte = *sptep;
 	host_writable = spte & shadow_host_writable_mask;
+	host_exec = spte & shadow_host_exec_mask;
 	slot = kvm_vcpu_gfn_to_memslot(vcpu, gfn);
 	make_spte(vcpu, sp, slot, pte_access, gfn,
 		  spte_to_pfn(spte), spte, true, false,
-		  host_writable, &spte);
+		  host_writable, host_exec, &spte);
 
 	return mmu_spte_update(sptep, spte);
 }

@@ -25,6 +25,7 @@ module_param_named(mmio_caching, enable_mmio_caching, bool, 0444);
 EXPORT_SYMBOL_GPL(enable_mmio_caching);
 
 u64 __read_mostly shadow_host_writable_mask;
+u64 __read_mostly shadow_host_exec_mask;
 u64 __read_mostly shadow_mmu_writable_mask;
 u64 __read_mostly shadow_nx_mask;
 u64 __read_mostly shadow_x_mask; /* mutual exclusive with nx_mask */
@@ -158,7 +159,7 @@ bool make_spte(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp,
 	       const struct kvm_memory_slot *slot,
 	       unsigned int pte_access, gfn_t gfn, kvm_pfn_t pfn,
 	       u64 old_spte, bool prefetch, bool can_unsync,
-	       bool host_writable, u64 *new_spte)
+	       bool host_writable, bool host_exec, u64 *new_spte)
 {
 	int level = sp->role.level;
 	u64 spte = SPTE_MMU_PRESENT_MASK;
@@ -197,6 +198,11 @@ bool make_spte(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp,
 	    is_nx_huge_page_enabled(vcpu->kvm)) {
 		pte_access &= ~ACC_EXEC_MASK;
 	}
+
+	if (host_exec)
+		spte |= shadow_host_exec_mask;
+	else
+		pte_access &= ~ACC_EXEC_MASK;
 
 	if (pte_access & ACC_EXEC_MASK)
 		spte |= shadow_x_mask;
@@ -439,6 +445,7 @@ void kvm_mmu_set_ept_masks(bool has_ad_bits, bool has_exec_only)
 	shadow_memtype_mask	= VMX_EPT_MT_MASK | VMX_EPT_IPAT_BIT;
 	shadow_acc_track_mask	= VMX_EPT_RWX_MASK;
 	shadow_host_writable_mask = EPT_SPTE_HOST_WRITABLE;
+	shadow_host_exec_mask = EPT_SPTE_HOST_EXEC;
 	shadow_mmu_writable_mask  = EPT_SPTE_MMU_WRITABLE;
 
 	/*
@@ -497,6 +504,7 @@ void kvm_mmu_reset_all_pte_masks(void)
 	shadow_me_value		= 0;
 
 	shadow_host_writable_mask = DEFAULT_SPTE_HOST_WRITABLE;
+	shadow_host_exec_mask = DEFAULT_SPTE_HOST_EXEC;
 	shadow_mmu_writable_mask  = DEFAULT_SPTE_MMU_WRITABLE;
 
 	/*
