@@ -2290,5 +2290,6 @@ struct kvm_s390_zpci_op {
 /* Get/Set Hyper-V VSM state. Available with KVM_CAP_HYPERV_VSM */
 #define KVM_HV_GET_VSM_STATE _IOR(KVMIO, 0xd4, struct kvm_hv_vsm_state)
 #define KVM_HV_SET_VSM_STATE _IOW(KVMIO, 0xd5, struct kvm_hv_vsm_state)
+#define KVM_MEMORY_ATTRIBUTE_NOT_PRESENT       (-1ULL)
 
 #endif /* __LINUX_KVM_H */

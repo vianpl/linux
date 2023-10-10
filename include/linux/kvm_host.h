@@ -2333,4 +2333,9 @@ static inline void kvm_account_pgtable_pages(void *virt, int nr)
 /* Max number of entries allowed for each kvm dirty ring */
 #define  KVM_DIRTY_RING_MAX_ENTRIES  65536
 
+void kvm_arch_set_memory_attributes(struct kvm *kvm,
+				    struct kvm_memory_slot *slot,
+				    struct xarray *prots,
+				    unsigned long attrs,
+				    gfn_t start, gfn_t end);
 #endif
