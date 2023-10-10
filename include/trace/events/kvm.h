@@ -505,6 +505,29 @@ TRACE_EVENT(kvm_test_age_hva,
 	TP_printk("mmu notifier test age hva: %#016lx", __entry->hva)
 );
 
+TRACE_EVENT(kvm_set_mem_attributes,
+	TP_PROTO(u64 start, u64 size, u64 attributes, u64 flags),
+	TP_ARGS(start, size, attributes, flags),
+
+	TP_STRUCT__entry(
+		__field(	u64,	start		)
+		__field(	u64,	size		)
+		__field(	u64,	attributes	)
+		__field(	u64,	flags		)
+	),
+
+	TP_fast_assign(
+		__entry->start		= start;
+		__entry->size		= size;
+		__entry->attributes	= attributes;
+		__entry->flags		= flags;
+	),
+
+	TP_printk("start 0x%llx, size 0x%llx, attributes 0x%llx, flags 0x%llx",
+		  __entry->start, __entry->size, __entry->attributes,
+		  __entry->flags)
+);
+
 #endif /* _TRACE_KVM_MAIN_H */
 
 /* This part must be outside protection */

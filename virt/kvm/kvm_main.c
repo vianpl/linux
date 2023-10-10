@@ -1013,6 +1013,9 @@ int kvm_set_mem_attributes(struct kvm *kvm, struct xarray *prots,
 	if (!PAGE_ALIGNED(attrs->address) || !PAGE_ALIGNED(attrs->size))
 		return -EINVAL;
 
+	trace_kvm_set_mem_attributes(attrs->address, attrs->size,
+				     attrs->attributes, attrs->flags);
+
 	start = attrs->address >> PAGE_SHIFT;
 	end = (attrs->address + attrs->size - 1 + PAGE_SIZE) >> PAGE_SHIFT;
 
