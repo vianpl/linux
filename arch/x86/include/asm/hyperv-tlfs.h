@@ -821,6 +821,82 @@ struct hv_get_vp_from_apic_id_in {
 	u32 apic_ids[];
 } __packed;
 
+
+/* struct hv_intercept_header::access_type_mask */
+#define HV_INTERCEPT_ACCESS_MASK_NONE    0
+#define HV_INTERCEPT_ACCESS_MASK_READ    1
+#define HV_INTERCEPT_ACCESS_MASK_WRITE   2
+#define HV_INTERCEPT_ACCESS_MASK_EXECUTE 4
+
+/* struct hv_intercept_exception::cache_type */
+#define HV_X64_CACHE_TYPE_UNCACHED       0
+#define HV_X64_CACHE_TYPE_WRITECOMBINING 1
+#define HV_X64_CACHE_TYPE_WRITETHROUGH   4
+#define HV_X64_CACHE_TYPE_WRITEPROTECTED 5
+#define HV_X64_CACHE_TYPE_WRITEBACK      6
+
+/* Intecept message header */
+struct hv_intercept_header {
+	__u32 vp_index;
+	__u8 instruction_length;
+#define HV_INTERCEPT_ACCESS_READ    0
+#define HV_INTERCEPT_ACCESS_WRITE   1
+#define HV_INTERCEPT_ACCESS_EXECUTE 2
+	__u8 access_type_mask;
+	union {
+		__u16 as_u16;
+		struct {
+			__u16 cpl:2;
+			__u16 cr0_pe:1;
+			__u16 cr0_am:1;
+			__u16 efer_lma:1;
+			__u16 debug_active:1;
+			__u16 interruption_pending:1;
+			__u16 reserved:9;
+		};
+	} exec_state;
+	struct hv_x64_segment_register cs;
+	__u64 rip;
+	__u64 rflags;
+} __packed;
+
+union hv_x64_memory_access_info {
+	__u8 as_u8;
+	struct {
+		__u8 gva_valid:1;
+		__u8 _reserved:7;
+	};
+};
+
+struct hv_memory_intercept_message {
+	struct hv_intercept_header header;
+	__u32 cache_type;
+	__u8 instruction_byte_count;
+	union hv_x64_memory_access_info memory_access_info;
+	__u16 _reserved;
+	__u64 gva;
+	__u64 gpa;
+	__u8 instruction_bytes[16];
+	struct hv_x64_segment_register ds;
+	struct hv_x64_segment_register ss;
+	__u64 rax;
+	__u64 rcx;
+	__u64 rdx;
+	__u64 rbx;
+	__u64 rsp;
+	__u64 rbp;
+	__u64 rsi;
+	__u64 rdi;
+	__u64 r8;
+	__u64 r9;
+	__u64 r10;
+	__u64 r11;
+	__u64 r12;
+	__u64 r13;
+	__u64 r14;
+	__u64 r15;
+} __packed;
+
 #include <asm-generic/hyperv-tlfs.h>
 
 #endif
