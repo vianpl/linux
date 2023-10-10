@@ -957,6 +957,10 @@ static void kvm_mem_attrs_changed(struct kvm *kvm, struct xarray *prots,
 			gfn_range.slot = slot;
 
 			r |= kvm_unmap_gfn_range(kvm, &gfn_range);
+
+			kvm_arch_set_memory_attributes(kvm, slot, prots, attrs,
+						       gfn_range.start,
+						       gfn_range.end);
 		}
 	}
 
