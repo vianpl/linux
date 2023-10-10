@@ -256,6 +256,163 @@ static void synic_exit(struct kvm_vcpu_hv_synic *synic, u32 msr)
 	kvm_make_request(KVM_REQ_HV_EXIT, vcpu);
 }
 
+static int patch_hypercall_page(struct kvm_vcpu *vcpu, u64 data)
+{
+	struct kvm *kvm = vcpu->kvm;
+	struct kvm_hv *hv = to_kvm_hv(kvm);
+	u8 instructions[0x30];
+	int i = 0;
+	u64 addr;
+
+	/*
+	 * If Xen and Hyper-V hypercalls are both enabled, disambiguate
+	 * the same way Xen itself does, by setting the bit 31 of EAX
+	 * which is RsvdZ in the 32-bit Hyper-V hypercall ABI and just
+	 * going to be clobbered on 64-bit.
+	 */
+	if (kvm_xen_hypercall_enabled(kvm)) {
+		/* orl $0x80000000, %eax */
+		instructions[i++] = 0x0d;
+		instructions[i++] = 0x00;
+		instructions[i++] = 0x00;
+		instructions[i++] = 0x00;
+		instructions[i++] = 0x80;
+	}
+
+	/* vmcall/vmmcall */
+	static_call(kvm_x86_patch_hypercall)(vcpu, instructions + i);
+	i += 3;
+
+	/* ret */
+	((unsigned char *)instructions)[i++] = 0xc3;
+
+	/* VTL call/return entries */
+	if (!kvm_xen_hypercall_enabled(kvm) && kvm->arch.hyperv.hv_enable_vsm) {
+		/*
+		 * VTL call 32-bit entry prologue:
+		 * 	mov %eax, %ecx
+		 * 	mov $0x11, %eax
+		 * 	jmp 0:
+		 */
+		hv->vsm_code_page_offsets32.vtl_call_offset = i;
+		instructions[i++] = 0x89;
+		instructions[i++] = 0xc1;
+		instructions[i++] = 0xb8;
+		instructions[i++] = 0x11;
+		instructions[i++] = 0x00;
+		instructions[i++] = 0x00;
+		instructions[i++] = 0x00;
+		instructions[i++] = 0xeb;
+		instructions[i++] = 0xf3;
+		/*
+		 * VTL return 32-bit entry prologue:
+		 * 	mov %eax, %ecx
+		 * 	mov $0x12, %eax
+		 * 	jmp 0:
+		 */
+		hv->vsm_code_page_offsets32.vtl_return_offset = i;
+		instructions[i++] = 0x89;
+		instructions[i++] = 0xc1;
+		instructions[i++] = 0xb8;
+		instructions[i++] = 0x12;
+		instructions[i++] = 0x00;
+		instructions[i++] = 0x00;
+		instructions[i++] = 0x00;
+		instructions[i++] = 0xeb;
+		instructions[i++] = 0xea;
+
+#ifdef CONFIG_X86_64
+		/*
+		 * VTL call 64-bit entry prologue:
+		 * 	mov %rcx, %rax
+		 * 	mov $0x11, %ecx
+		 * 	jmp 0:
+		 */
+		hv->vsm_code_page_offsets64.vtl_call_offset = i;
+		instructions[i++] = 0x48;
+		instructions[i++] = 0x89;
+		instructions[i++] = 0xc8;
+		instructions[i++] = 0xb9;
+		instructions[i++] = 0x11;
+		instructions[i++] = 0x00;
+		instructions[i++] = 0x00;
+		instructions[i++] = 0x00;
+		instructions[i++] = 0xeb;
+		instructions[i++] = 0xe0;
+		/*
+		 * VTL return 64-bit entry prologue:
+		 * 	mov %rcx, %rax
+		 * 	mov $0x12, %ecx
+		 * 	jmp 0:
+		 */
+		hv->vsm_code_page_offsets64.vtl_return_offset = i;
+		instructions[i++] = 0x48;
+		instructions[i++] = 0x89;
+		instructions[i++] = 0xc8;
+		instructions[i++] = 0xb9;
+		instructions[i++] = 0x12;
+		instructions[i++] = 0x00;
+		instructions[i++] = 0x00;
+		instructions[i++] = 0x00;
+		instructions[i++] = 0xeb;
+		instructions[i++] = 0xd6;
+#endif
+	}
+	addr = data & HV_X64_MSR_HYPERCALL_PAGE_ADDRESS_MASK;
+	if (kvm_vcpu_write_guest(vcpu, addr, instructions, i))
+		return 1;
+
+	return 0;
+}
+
+static int kvm_hv_overlay_completion(struct kvm_vcpu *vcpu)
+{
+	struct kvm_hyperv_exit *exit = &vcpu->run->hyperv;
+	u64 data = exit->u.overlay.gpa;
+	int r = exit->u.overlay.error;
+
+	if (r)
+		goto out;
+
+	switch (exit->u.overlay.msr) {
+	case HV_X64_MSR_GUEST_OS_ID:
+		break;
+	case HV_X64_MSR_HYPERCALL:
+		r = patch_hypercall_page(vcpu, data);
+		break;
+	default:
+		r = 1;
+		pr_err("%s: unknown overlay MSR, %x\n", __func__,
+		       exit->u.overlay.msr);
+	}
+
+out:
+	if (r) {
+		if (exit->u.overlay.is_hypercall)
+			kvm_queue_exception(vcpu, UD_VECTOR);
+		else
+			kvm_inject_gp(vcpu, 0);
+	}
+	return 1;
+}
+
+static int overlay_exit(struct kvm_vcpu *vcpu, u32 msr, u64 gpa, bool is_hypercall)
+{
+	struct kvm_hyperv_exit *exit = &to_hv_vcpu(vcpu)->exit;
+
+	pr_info("%s, msr %x, gpa %llx\n", __func__, msr, gpa);
+	vcpu->run->exit_reason = KVM_EXIT_HYPERV;
+	exit->type = KVM_EXIT_HYPERV_OVERLAY;
+	exit->u.overlay.msr = msr;
+	exit->u.overlay.gpa = gpa;
+	exit->u.overlay.error = 0;
+	exit->u.overlay.is_hypercall = is_hypercall;
+	vcpu->arch.complete_userspace_io = kvm_hv_overlay_completion;
+
+	kvm_make_request(KVM_REQ_HV_EXIT, vcpu);
+	return 0;
+}
+
 static int synic_set_msr(struct kvm_vcpu_hv_synic *synic,
 			 u32 msr, u64 data, bool host)
 {
@@ -1334,14 +1491,13 @@ static int kvm_hv_set_msr_pw(struct kvm_vcpu *vcpu, u32 msr, u64 data,
 	case HV_X64_MSR_GUEST_OS_ID:
 		hv->hv_guest_os_id = data;
 		/* setting guest os id to zero disables hypercall page */
-		if (!hv->hv_guest_os_id)
+		if (!data) {
 			hv->hv_hypercall &= ~HV_X64_MSR_HYPERCALL_ENABLE;
+			if (kvm->arch.hyperv.hv_enable_vsm && !host)
+				return overlay_exit(vcpu, HV_X64_MSR_GUEST_OS_ID, data, false);
+		}
 		break;
-	case HV_X64_MSR_HYPERCALL: {
-		u8 instructions[9];
-		int i = 0;
-		u64 addr;
-
+	case HV_X64_MSR_HYPERCALL:
 		/* if guest os id is not set hypercall should remain disabled */
 		if (!hv->hv_guest_os_id)
 			break;
@@ -1350,34 +1506,16 @@ static int kvm_hv_set_msr_pw(struct kvm_vcpu *vcpu, u32 msr, u64 data,
 			break;
 		}
 
-		/*
-		 * If Xen and Hyper-V hypercalls are both enabled, disambiguate
-		 * the same way Xen itself does, by setting the bit 31 of EAX
-		 * which is RsvdZ in the 32-bit Hyper-V hypercall ABI and just
-		 * going to be clobbered on 64-bit.
-		 */
-		if (kvm_xen_hypercall_enabled(kvm)) {
-			/* orl $0x80000000, %eax */
-			instructions[i++] = 0x0d;
-			instructions[i++] = 0x00;
-			instructions[i++] = 0x00;
-			instructions[i++] = 0x00;
-			instructions[i++] = 0x80;
+		if (kvm->arch.hyperv.hv_enable_vsm) {
+			hv->hv_hypercall = data;
+			if (!host)
+				return overlay_exit(vcpu, HV_X64_MSR_HYPERCALL, data, false);
+			break;
 		}
-
-		/* vmcall/vmmcall */
-		static_call(kvm_x86_patch_hypercall)(vcpu, instructions + i);
-		i += 3;
-
-		/* ret */
-		((unsigned char *)instructions)[i++] = 0xc3;
-
-		addr = data & HV_X64_MSR_HYPERCALL_PAGE_ADDRESS_MASK;
-		if (kvm_vcpu_write_guest(vcpu, addr, instructions, i))
+		if (patch_hypercall_page(vcpu, data))
 			return 1;
 		hv->hv_hypercall = data;
 		break;
-	}
 	case HV_X64_MSR_REFERENCE_TSC:
 		hv->hv_tsc_page = data;
 		if (hv->hv_tsc_page & HV_X64_MSR_TSC_REFERENCE_ENABLE) {
