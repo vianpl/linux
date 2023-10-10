@@ -562,4 +562,10 @@ struct kvm_pmu_event_filter {
 /* x86-specific KVM_EXIT_HYPERCALL flags. */
 #define KVM_EXIT_HYPERCALL_LONG_MODE	BIT(0)
 
+/* Partition-wide VSM state; for KVM_HV_GET/SET_VSM_STATE */
+struct kvm_hv_vsm_state {
+	__u64 vsm_code_page_offsets64;
+	__u64 vsm_code_page_offsets32;
+};
+
 #endif /* _ASM_X86_KVM_H */

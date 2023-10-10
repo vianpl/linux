@@ -1105,6 +1105,9 @@ struct kvm_hv {
 	u64 hv_tsc_emulation_status;
 	u64 hv_invtsc_control;
 
+	union hv_register_vsm_code_page_offsets vsm_code_page_offsets32;
+	union hv_register_vsm_code_page_offsets vsm_code_page_offsets64;
+
 	/* How many vCPUs have VP index != vCPU index */
 	atomic_t num_mismatched_vp_indexes;
 

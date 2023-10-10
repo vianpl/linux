@@ -823,4 +823,19 @@ struct hv_mmio_write_input {
 	u8 data[HV_HYPERCALL_MMIO_MAX_DATA_LENGTH];
 } __packed;
 
+#define HV_NUM_VTLS		2
+#define HV_INVALID_VTL	((u8) -1)
+#define HV_ALL_VTLS		((u8) 0xF)
+
+/*
+ * VTL call/return hypercall page offsets register
+ */
+union hv_register_vsm_code_page_offsets {
+	u64 as_u64;
+	struct {
+		u64 vtl_call_offset:12;
+		u64 vtl_return_offset:12;
+		u64 reserved:40;
+	} __packed;
+};
 #endif
