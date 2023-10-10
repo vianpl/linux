@@ -252,4 +252,10 @@ int kvm_vm_ioctl_get_hv_vsm_state(struct kvm *kvm, struct kvm_hv_vsm_state *stat
 int kvm_vm_ioctl_set_hv_vsm_state(struct kvm *kvm, struct kvm_hv_vsm_state *state);
 int kvm_hv_vtl_dev_register(void);
 void kvm_hv_vtl_dev_unregister(void);
+static inline bool kvm_hv_vsm_enabled(struct kvm *kvm)
+{
+	return kvm->arch.hyperv.hv_enable_vsm;
+}
+
+int kvm_hv_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault);
 #endif
