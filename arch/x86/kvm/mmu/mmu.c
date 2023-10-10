@@ -4374,7 +4374,7 @@ static int __kvm_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 					  fault->write, &fault->map_writable,
 					  &fault->hva);
 	if (!async)
-		return RET_PF_CONTINUE; /* *pfn has correct page already */
+		goto pf_continue; /* *pfn has correct page already */
 
 	if (!fault->prefetch && kvm_can_do_async_pf(vcpu)) {
 		trace_kvm_try_async_get_page(fault->addr, fault->gfn);
@@ -4395,6 +4395,13 @@ static int __kvm_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 	fault->pfn = __gfn_to_pfn_memslot(slot, fault->gfn, false, true, NULL,
 					  fault->write, &fault->map_writable,
 					  &fault->hva);
+pf_continue:
+	if (kvm_hv_vsm_enabled(vcpu->kvm)) {
+		if (kvm_hv_faultin_pfn(vcpu, fault)) {
+			kvm_mmu_prepare_memory_fault_exit(vcpu, fault);
+			return -EFAULT;
+		}
+	}
 	return RET_PF_CONTINUE;
 }
 
