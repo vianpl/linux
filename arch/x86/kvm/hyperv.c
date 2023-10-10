@@ -1814,6 +1814,7 @@ struct kvm_hv_hcall {
 	u16 rep_idx;
 	bool fast;
 	bool rep;
+	bool xmm_dirty;
 	sse128_t xmm[HV_HYPERCALL_MAX_XMM_REGISTERS];
 
 	/*
@@ -2322,6 +2323,18 @@ static void kvm_hv_hypercall_set_result(struct kvm_vcpu *vcpu, u64 result)
 	}
 }
 
+static void kvm_hv_hypercall_set_xmm_regs(struct kvm_vcpu *vcpu)
+{
+	u64 *xmm = vcpu->run->hyperv.u.hcall.xmm;
+	int reg;
+
+	kvm_fpu_get();
+	for (reg = 0; reg < HV_HYPERCALL_MAX_XMM_REGISTERS; reg++)
+		//TODO: This is not great :(
+		_kvm_write_sse_reg(reg, &(const sse128_t){sse128(xmm[reg * 2], xmm[(reg * 2) + 1])});
+	kvm_fpu_put();
+}
+
 static int kvm_hv_hypercall_complete(struct kvm_vcpu *vcpu, u64 result)
 {
 	u32 tlb_lock_count = 0;
@@ -2347,6 +2360,13 @@ static int kvm_hv_hypercall_complete(struct kvm_vcpu *vcpu, u64 result)
 
 static int kvm_hv_hypercall_complete_userspace(struct kvm_vcpu *vcpu)
 {
+	u16 call = vcpu->run->hyperv.u.hcall.input & 0xffff;
+	bool fast = !!(vcpu->run->hyperv.u.hcall.input & HV_HYPERCALL_FAST_BIT);
+
+	//TODO: Not in love with this approach
+	if (call == HVCALL_GET_VP_REGISTERS && fast)
+		kvm_hv_hypercall_set_xmm_regs(vcpu);
+
 	return kvm_hv_hypercall_complete(vcpu, vcpu->run->hyperv.u.hcall.result);
 }
 
@@ -2413,6 +2433,20 @@ static void kvm_hv_hypercall_read_xmm(struct kvm_hv_hcall *hc)
 	for (reg = 0; reg < HV_HYPERCALL_MAX_XMM_REGISTERS; reg++)
 		_kvm_read_sse_reg(reg, &hc->xmm[reg]);
 	kvm_fpu_put();
+
+	/* It's not dirty because we've replaced any possible changes */
+	hc->xmm_dirty = false;
+}
+
+static void kvm_hv_hypercall_write_xmm(struct kvm_hv_hcall *hc)
+{
+	int reg;
+
+	kvm_fpu_get();
+	for (reg = 0; reg < HV_HYPERCALL_MAX_XMM_REGISTERS; reg++)
+		_kvm_write_sse_reg(reg, &hc->xmm[reg]);
+	kvm_fpu_put();
+	hc->xmm_dirty = false;
 }
 
 static bool hv_check_hypercall_access(struct kvm_vcpu_hv *hv_vcpu, u16 code)
@@ -2622,6 +2656,9 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 		break;
 	}
 
+	if ((ret & HV_HYPERCALL_RESULT_MASK) == HV_STATUS_SUCCESS && hc.xmm_dirty)
+		kvm_hv_hypercall_write_xmm(&hc);
+
 hypercall_complete:
 	return kvm_hv_hypercall_complete(vcpu, ret);
 
@@ -2631,6 +2668,12 @@ hypercall_userspace_exit:
 	vcpu->run->hyperv.u.hcall.input = hc.param;
 	vcpu->run->hyperv.u.hcall.params[0] = hc.ingpa;
 	vcpu->run->hyperv.u.hcall.params[1] = hc.outgpa;
+	if (hc.fast) {
+		for (i = 0; i < HV_HYPERCALL_MAX_XMM_REGISTERS; i++) {
+			vcpu->run->hyperv.u.hcall.xmm[i * 2] = sse128_lo(hc.xmm[i]);
+			vcpu->run->hyperv.u.hcall.xmm[(i * 2) + 1] = sse128_hi(hc.xmm[i]);
+		}
+	}
 	vcpu->arch.complete_userspace_io = kvm_hv_hypercall_complete_userspace;
 	return 0;
 }
@@ -2779,6 +2822,7 @@ int kvm_get_hv_cpuid(struct kvm_vcpu *vcpu, struct kvm_cpuid2 *cpuid,
 			ent->ebx |= HV_ENABLE_EXTENDED_HYPERCALLS;
 
 			ent->edx |= HV_X64_HYPERCALL_XMM_INPUT_AVAILABLE;
+			ent->edx |= HV_X64_HYPERCALL_XMM_OUTPUT_AVAILABLE;
 			ent->edx |= HV_FEATURE_FREQUENCY_MSRS_AVAILABLE;
 			ent->edx |= HV_FEATURE_GUEST_CRASH_MSR_AVAILABLE;
 
