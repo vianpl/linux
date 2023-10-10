@@ -2903,8 +2903,9 @@ static int mmu_set_spte(struct kvm_vcpu *vcpu, struct kvm_memory_slot *slot,
 	bool wrprot;
 	u64 spte;
 
-	/* Prefetching always gets a writable pfn.  */
+	/* Prefetching always gets a writable and executable pfn.  */
 	bool host_writable = !fault || fault->map_writable;
+	bool host_exec = !fault || fault->map_executable;
 	bool prefetch = !fault || fault->prefetch;
 	bool write_fault = fault && fault->write;
 
@@ -2934,7 +2935,7 @@ static int mmu_set_spte(struct kvm_vcpu *vcpu, struct kvm_memory_slot *slot,
 	}
 
 	wrprot = make_spte(vcpu, sp, slot, pte_access, gfn, pfn, *sptep, prefetch,
-			   true, host_writable, &spte);
+			   true, host_writable, host_exec, &spte);
 
 	if (*sptep == spte) {
 		ret = RET_PF_SPURIOUS;
@@ -3223,6 +3224,7 @@ void disallowed_hugepage_adjust(struct kvm_page_fault *fault, u64 spte, int cur_
 static int direct_map(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 {
 	struct kvm_shadow_walk_iterator it;
+	unsigned int access = ACC_ALL;
 	struct kvm_mmu_page *sp;
 	int ret;
 	gfn_t base_gfn = fault->gfn;
@@ -3255,7 +3257,7 @@ static int direct_map(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 	if (WARN_ON_ONCE(it.level != fault->goal_level))
 		return -EFAULT;
 
-	ret = mmu_set_spte(vcpu, fault->slot, it.sptep, ACC_ALL,
+	ret = mmu_set_spte(vcpu, fault->slot, it.sptep, access,
 			   base_gfn, fault->pfn, fault);
 	if (ret == RET_PF_SPURIOUS)
 		return ret;
