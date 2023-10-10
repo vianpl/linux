@@ -1606,42 +1606,46 @@ TRACE_EVENT(kvm_hv_flush_tlb_ex,
  * Tracepoints for kvm_hv_send_ipi.
  */
 TRACE_EVENT(kvm_hv_send_ipi,
-	TP_PROTO(u32 vector, u64 processor_mask),
-	TP_ARGS(vector, processor_mask),
+	TP_PROTO(u32 vector, u64 processor_mask, u8 vtl),
+	TP_ARGS(vector, processor_mask, vtl),
 
 	TP_STRUCT__entry(
 		__field(u32, vector)
 		__field(u64, processor_mask)
+		__field(u8, vtl)
 	),
 
 	TP_fast_assign(
 		__entry->vector = vector;
 		__entry->processor_mask = processor_mask;
+		__entry->vtl = vtl;
 	),
 
-	TP_printk("vector %x processor_mask 0x%llx",
-		  __entry->vector, __entry->processor_mask)
+	TP_printk("vector %x processor_mask 0x%llx vtl %d",
+		  __entry->vector, __entry->processor_mask, __entry->vtl)
 );
 
 TRACE_EVENT(kvm_hv_send_ipi_ex,
-	TP_PROTO(u32 vector, u64 format, u64 valid_bank_mask),
-	TP_ARGS(vector, format, valid_bank_mask),
+	TP_PROTO(u32 vector, u64 format, u64 valid_bank_mask, u8 vtl),
+	TP_ARGS(vector, format, valid_bank_mask, vtl),
 
 	TP_STRUCT__entry(
 		__field(u32, vector)
 		__field(u64, format)
 		__field(u64, valid_bank_mask)
+		__field(u8, vtl)
 	),
 
 	TP_fast_assign(
 		__entry->vector = vector;
 		__entry->format = format;
 		__entry->valid_bank_mask = valid_bank_mask;
+		__entry->vtl = vtl;
 	),
 
-	TP_printk("vector %x format %llx valid_bank_mask 0x%llx",
+	TP_printk("vector %x format %llx valid_bank_mask 0x%llx vtl %d",
 		  __entry->vector, __entry->format,
-		  __entry->valid_bank_mask)
+		  __entry->valid_bank_mask, __entry->vtl)
 );
 
 TRACE_EVENT(kvm_pv_tlb_flush,
