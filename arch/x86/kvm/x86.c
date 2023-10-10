@@ -10746,6 +10746,7 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
 
 	/* Store vcpu->apicv_active before vcpu->mode.  */
 	smp_store_release(&vcpu->mode, IN_GUEST_MODE);
+	WRITE_ONCE(vcpu->kicked, false);
 
 	kvm_vcpu_srcu_read_unlock(vcpu);
 
