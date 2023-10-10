@@ -1671,6 +1671,56 @@ TRACE_EVENT(kvm_hv_send_ipi_ex,
 		  __entry->valid_bank_mask, __entry->vtl)
 );
 
+TRACE_EVENT(kvm_hv_faultin_pfn,
+	TP_PROTO(u32 vcpu_id, u64 gfn, bool write, bool exec, bool user, u64 prots),
+	TP_ARGS(vcpu_id, gfn, write, exec, user, prots),
+
+	TP_STRUCT__entry(
+		__field(u32, vcpu_id)
+		__field(u64, gfn)
+		__field(bool, write)
+		__field(bool, exec)
+		__field(bool, user)
+		__field(u64, prots)
+	),
+
+	TP_fast_assign(
+		__entry->vcpu_id = vcpu_id;
+		__entry->gfn = gfn;
+		__entry->write = write;
+		__entry->exec = exec;
+		__entry->user = user;
+		__entry->prots = prots;
+	),
+
+	TP_printk("vcpu%d gfn %llx write %d exec %d user %d prots %llx",
+		  __entry->vcpu_id, __entry->gfn, __entry->write,
+		  __entry->exec, __entry->user, __entry->prots)
+);
+
+TRACE_EVENT(kvm_hv_modify_vtl_protection_mask,
+	TP_PROTO(u64 target_partition_id, u32 map_flags, u8 target_vtl, u16 count),
+	TP_ARGS(target_partition_id, map_flags, target_vtl, count),
+
+	TP_STRUCT__entry(
+		__field(u64, target_partition_id)
+		__field(u32, map_flags)
+		__field(u8, target_vtl)
+		__field(u16, count)
+	),
+
+	TP_fast_assign(
+		__entry->target_partition_id = target_partition_id;
+		__entry->map_flags = map_flags;
+		__entry->target_vtl = target_vtl;
+		__entry->count = count;
+	),
+
+	TP_printk("target partition id 0x%llx, map flags 0x%x, target VTL %d, count %d",
+		  __entry->target_partition_id, __entry->map_flags,
+		  __entry->target_vtl, __entry->count)
+);
+
 TRACE_EVENT(kvm_pv_tlb_flush,
 	TP_PROTO(unsigned int vcpu_id, bool need_flush_tlb),
 	TP_ARGS(vcpu_id, need_flush_tlb),
