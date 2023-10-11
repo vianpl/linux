@@ -1398,6 +1398,10 @@ void kvm_mmu_invalidate_begin(struct kvm *kvm);
 void kvm_mmu_invalidate_range_add(struct kvm *kvm, gfn_t start, gfn_t end);
 void kvm_mmu_invalidate_end(struct kvm *kvm);
 
+int kvm_set_mem_attributes(struct kvm *kvm, struct xarray *prots,
+				  struct kvm_memory_attributes *attrs,
+				  u64 supported_attrs);
+
 long kvm_arch_dev_ioctl(struct file *filp,
 			unsigned int ioctl, unsigned long arg);
 long kvm_arch_vcpu_ioctl(struct file *filp,
