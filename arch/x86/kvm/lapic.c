@@ -141,7 +141,7 @@ static inline int apic_enabled(struct kvm_lapic *apic)
 
 static inline u32 kvm_x2apic_id(struct kvm_lapic *apic)
 {
-	return apic->vcpu->vcpu_id;
+	return kvm_apic_id(apic->vcpu);
 }
 
 static bool kvm_can_post_timer_interrupt(struct kvm_vcpu *vcpu)
@@ -219,8 +219,8 @@ static int kvm_recalculate_phys_map(struct kvm_apic_map *new,
 				    bool *xapic_id_mismatch)
 {
 	struct kvm_lapic *apic = vcpu->arch.apic;
-	u32 x2apic_id = kvm_x2apic_id(apic);
-	u32 xapic_id = kvm_xapic_id(apic);
+	u32 x2apic_id = kvm_apic_id_and_group(vcpu);
+	u32 xapic_id = kvm_apic_id_and_group(vcpu);
 	u32 physical_id;
 
 	/*
@@ -299,6 +299,13 @@ static void kvm_recalculate_logical_map(struct kvm_apic_map *new,
 	u16 mask;
 	u32 ldr;
 
+	/*
+	 * Using maps for logical destinations when KVM_CAP_APIC_ID_GRUPS is in
+	 * use isn't supported.
+	 */
+	if (kvm_apic_group(vcpu))
+		new->logical_mode = KVM_APIC_MODE_MAP_DISABLED;
+
 	if (new->logical_mode == KVM_APIC_MODE_MAP_DISABLED)
 		return;
 
@@ -370,6 +377,25 @@ enum {
 	DIRTY
 };
 
+int kvm_vm_ioctl_set_apic_id_groups(struct kvm *kvm,
+				    struct kvm_apic_id_groups *groups)
+{
+	u8 n_bits = groups->n_bits;
+
+	if (n_bits > 32)
+		return -EINVAL;
+
+	kvm->arch.apic_id_group_mask = n_bits ? GENMASK(31, 32 - n_bits): 0;
+	/*
+	 * Bitshifts >= than the width of the type are UD, so set the
+	 * apic group shift to 0 when n_bits == 0. The group mask above will
+	 * clear the APIC ID, so group querying functions will return the
+	 * correct value.
+	 */
+	kvm->arch.apic_id_group_shift = n_bits ? 32 - n_bits : 0;
+	return 0;
+}
+
 void kvm_recalculate_apic_map(struct kvm *kvm)
 {
 	struct kvm_apic_map *new, *old = NULL;
@@ -414,7 +440,7 @@ retry:
 
 	kvm_for_each_vcpu(i, vcpu, kvm)
 		if (kvm_apic_present(vcpu))
-			max_id = max(max_id, kvm_x2apic_id(vcpu->arch.apic));
+			max_id = max(max_id, kvm_apic_id_and_group(vcpu));
 
 	new = kvzalloc(sizeof(struct kvm_apic_map) +
 	                   sizeof(struct kvm_lapic *) * ((u64)max_id + 1),
@@ -525,7 +551,7 @@ static inline void kvm_apic_set_x2apic_id(struct kvm_lapic *apic, u32 id)
 {
 	u32 ldr = kvm_apic_calc_x2apic_ldr(id);
 
-	WARN_ON_ONCE(id != apic->vcpu->vcpu_id);
+	WARN_ON_ONCE(id != kvm_apic_id(apic->vcpu));
 
 	kvm_lapic_set_reg(apic, APIC_ID, id);
 	kvm_lapic_set_reg(apic, APIC_LDR, ldr);
@@ -1067,6 +1093,17 @@ bool kvm_apic_match_dest(struct kvm_vcpu *vcpu, struct kvm_lapic *source,
 	struct kvm_lapic *target = vcpu->arch.apic;
 	u32 mda = kvm_apic_mda(vcpu, dest, source, target);
 
+	/*
+	 * Make sure vCPUs belong to the same APIC group, it's not possible
+	 * to send interrupts across groups.
+	 *
+	 * Non-IPIs and PV-IPIs can only be injected into the default APIC
+	 * group (group 0).
+	 */
+	if ((source && !kvm_match_apic_group(source->vcpu, vcpu)) ||
+	    kvm_apic_group(vcpu))
+		return false;
+
 	ASSERT(target);
 	switch (shorthand) {
 	case APIC_DEST_NOSHORT:
@@ -1517,6 +1554,10 @@ void kvm_apic_send_ipi(struct kvm_lapic *apic, u32 icr_low, u32 icr_high)
 		irq.dest_id = icr_high;
 	else
 		irq.dest_id = GET_XAPIC_DEST_FIELD(icr_high);
+
+	if (irq.dest_mode == APIC_DEST_PHYSICAL)
+		kvm_apic_id_set_group(apic->vcpu->kvm,
+				      kvm_apic_group(apic->vcpu), &irq.dest_id);
 
 	trace_kvm_apic_ipi(icr_low, irq.dest_id);
 
@@ -2541,7 +2582,7 @@ void kvm_lapic_set_base(struct kvm_vcpu *vcpu, u64 value)
 	/* update jump label if enable bit changes */
 	if ((old_value ^ value) & MSR_IA32_APICBASE_ENABLE) {
 		if (value & MSR_IA32_APICBASE_ENABLE) {
-			kvm_apic_set_xapic_id(apic, vcpu->vcpu_id);
+			kvm_apic_set_xapic_id(apic, kvm_apic_id(vcpu));
 			static_branch_slow_dec_deferred(&apic_hw_disabled);
 			/* Check if there are APF page ready requests pending */
 			kvm_make_request(KVM_REQ_APF_READY, vcpu);
@@ -2553,9 +2594,9 @@ void kvm_lapic_set_base(struct kvm_vcpu *vcpu, u64 value)
 
 	if ((old_value ^ value) & X2APIC_ENABLE) {
 		if (value & X2APIC_ENABLE)
-			kvm_apic_set_x2apic_id(apic, vcpu->vcpu_id);
+			kvm_apic_set_x2apic_id(apic, kvm_apic_id(vcpu));
 		else if (value & MSR_IA32_APICBASE_ENABLE)
-			kvm_apic_set_xapic_id(apic, vcpu->vcpu_id);
+			kvm_apic_set_xapic_id(apic, kvm_apic_id(vcpu));
 	}
 
 	if ((old_value ^ value) & (MSR_IA32_APICBASE_ENABLE | X2APIC_ENABLE)) {
@@ -2685,7 +2726,7 @@ void kvm_lapic_reset(struct kvm_vcpu *vcpu, bool init_event)
 
 	/* The xAPIC ID is set at RESET even if the APIC was already enabled. */
 	if (!init_event)
-		kvm_apic_set_xapic_id(apic, vcpu->vcpu_id);
+		kvm_apic_set_xapic_id(apic, kvm_apic_id(vcpu));
 	kvm_apic_set_version(apic->vcpu);
 
 	for (i = 0; i < apic->nr_lvt_entries; i++)

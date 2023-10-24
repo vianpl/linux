@@ -97,6 +97,8 @@ void kvm_lapic_set_tpr(struct kvm_vcpu *vcpu, unsigned long cr8);
 void kvm_lapic_set_eoi(struct kvm_vcpu *vcpu);
 void kvm_lapic_set_base(struct kvm_vcpu *vcpu, u64 value);
 u64 kvm_lapic_get_base(struct kvm_vcpu *vcpu);
+int kvm_vm_ioctl_set_apic_id_groups(struct kvm *kvm,
+				    struct kvm_apic_id_groups *groups);
 void kvm_recalculate_apic_map(struct kvm *kvm);
 void kvm_apic_set_version(struct kvm_vcpu *vcpu);
 void kvm_apic_after_set_mcg_cap(struct kvm_vcpu *vcpu);
@@ -275,6 +277,37 @@ static inline enum lapic_mode kvm_apic_mode(u64 apic_base)
 static inline u8 kvm_xapic_id(struct kvm_lapic *apic)
 {
 	return kvm_lapic_get_reg(apic, APIC_ID) >> 24;
+}
+
+static inline u32 kvm_apic_id(struct kvm_vcpu *vcpu)
+{
+	return vcpu->vcpu_id & ~vcpu->kvm->arch.apic_id_group_mask;
+}
+
+static inline u32 kvm_apic_id_and_group(struct kvm_vcpu *vcpu)
+{
+	return vcpu->vcpu_id;
+}
+
+static inline u32 kvm_apic_group(struct kvm_vcpu *vcpu)
+{
+	struct kvm *kvm = vcpu->kvm;
+
+	return (vcpu->vcpu_id & kvm->arch.apic_id_group_mask) >>
+	       kvm->arch.apic_id_group_shift;
+}
+
+static inline void kvm_apic_id_set_group(struct kvm *kvm, u32 group,
+					 u32 *apic_id)
+{
+	*apic_id |= ((group << kvm->arch.apic_id_group_shift) &
+		     kvm->arch.apic_id_group_mask);
+}
+
+static inline bool kvm_match_apic_group(struct kvm_vcpu *src,
+					struct kvm_vcpu *dst)
+{
+	return kvm_apic_group(src) == kvm_apic_group(dst);
 }
 
 #endif

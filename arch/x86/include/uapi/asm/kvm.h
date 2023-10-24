@@ -565,4 +565,9 @@ struct kvm_pmu_event_filter {
 #define KVM_X86_DEFAULT_VM	0
 #define KVM_X86_SW_PROTECTED_VM	1
 
+/* for KVM_SET_APIC_ID_GROUPS */
+struct kvm_apic_id_groups {
+	__u8 n_bits; /* nr of bits used to represent group in the APIC ID */
+};
+
 #endif /* _ASM_X86_KVM_H */

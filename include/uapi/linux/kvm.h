@@ -1219,6 +1219,7 @@ struct kvm_ppc_resize_hpt {
 #define KVM_CAP_MEMORY_ATTRIBUTES 232
 #define KVM_CAP_GUEST_MEMFD 233
 #define KVM_CAP_VM_TYPES 234
+#define KVM_CAP_APIC_ID_GROUPS 235
 
 #ifdef KVM_CAP_IRQ_ROUTING
 
@@ -2307,4 +2308,5 @@ struct kvm_create_guest_memfd {
 
 #define KVM_GUEST_MEMFD_ALLOW_HUGEPAGE		(1ULL << 0)
 
+#define KVM_SET_APIC_ID_GROUPS _IOW(KVMIO, 0xd7, struct kvm_apic_id_groups)
 #endif /* __LINUX_KVM_H */

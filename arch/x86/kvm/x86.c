@@ -4526,6 +4526,7 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 	case KVM_CAP_VM_DISABLE_NX_HUGE_PAGES:
 	case KVM_CAP_IRQFD_RESAMPLE:
 	case KVM_CAP_MEMORY_FAULT_INFO:
+	case KVM_CAP_APIC_ID_GROUPS:
 		r = 1;
 		break;
 	case KVM_CAP_EXIT_HYPERCALL:
@@ -7110,6 +7111,20 @@ set_pit2_out:
 			return -EFAULT;
 
 		r = kvm_vm_ioctl_set_msr_filter(kvm, &filter);
+		break;
+	}
+	case KVM_SET_APIC_ID_GROUPS: {
+		struct kvm_apic_id_groups groups;
+
+		r = -EINVAL;
+		if (kvm->created_vcpus)
+			goto out;
+
+		r = -EFAULT;
+		if (copy_from_user(&groups, argp, sizeof(groups)))
+			goto out;
+
+		r = kvm_vm_ioctl_set_apic_id_groups(kvm, &groups);
 		break;
 	}
 	default:
