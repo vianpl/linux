@@ -1372,6 +1372,29 @@ TRACE_EVENT(kvm_hv_stimer_cleanup,
 		  __entry->vcpu_id, __entry->timer_index)
 );
 
+TRACE_EVENT(kvm_hv_translate_virtual_address,
+	TP_PROTO(u64 partition_id, u32 vp_index, u64 control_flags, u64 gva),
+	TP_ARGS(partition_id, vp_index, control_flags, gva),
+
+	TP_STRUCT__entry(
+		__field(u64, partition_id)
+		__field(u32, vp_index)
+		__field(u64, control_flags)
+		__field(u64, gva)
+	),
+
+	TP_fast_assign(
+		__entry->partition_id = partition_id;
+		__entry->vp_index = vp_index;
+		__entry->control_flags = control_flags;
+		__entry->gva = gva;
+	),
+
+	TP_printk("partition id 0x%llx, vp index 0x%x, control flags 0x%llx, gva 0x%llx",
+		  __entry->partition_id, __entry->vp_index,
+		  __entry->control_flags, __entry->gva)
+);
+
 TRACE_EVENT(kvm_apicv_inhibit_changed,
 	    TP_PROTO(int reason, bool set, unsigned long inhibits),
 	    TP_ARGS(reason, set, inhibits),
