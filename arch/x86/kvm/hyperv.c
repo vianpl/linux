@@ -2593,6 +2593,7 @@ static bool is_xmm_fast_hypercall(struct kvm_hv_hcall *hc)
 	case HVCALL_GET_VP_REGISTERS:
 	case HVCALL_SET_VP_REGISTERS:
 	case HVCALL_MODIFY_VTL_PROTECTION_MASK:
+	case HVCALL_TRANSLATE_VIRTUAL_ADDRESS:
 		return true;
 	}
 
@@ -2635,6 +2636,99 @@ static u64 kvm_hv_ext_query_capabilities(struct kvm_vcpu *vcpu, struct kvm_hv_hc
 	}
 
 	trace_kvm_hv_ext_query_capabilities(caps);
+	return HV_STATUS_SUCCESS;
+}
+
+static bool kvm_hv_xlate_va_validate_input(struct kvm_vcpu* vcpu,
+					   struct hv_xlate_va_input *in,
+					   u8 *vtl, u8 *flags)
+{
+	struct kvm_vcpu_hv *hv = vcpu->arch.hyperv;
+	union hv_input_vtl in_vtl;
+
+	if (in->partition_id != HV_PARTITION_ID_SELF)
+		return false;
+
+	if (in->vp_index != HV_VP_INDEX_SELF && in->vp_index != hv->vp_index)
+		return false;
+
+	in_vtl.as_uint8 = in->control_flags >> 56;
+	*flags = in->control_flags & HV_XLATE_GVA_FLAGS_MASK;
+	if (*flags > (HV_XLATE_GVA_VAL_READ |
+		      HV_XLATE_GVA_VAL_WRITE |
+		      HV_XLATE_GVA_VAL_EXECUTE))
+		pr_info_ratelimited("Translate VA control flags unsupported and will be ignored: 0x%llx\n",
+				    in->control_flags);
+
+	*vtl = in_vtl.use_target_vtl ? in_vtl.target_vtl : get_active_vtl(vcpu);
+
+	if (*vtl >= HV_NUM_VTLS || *vtl > get_active_vtl(vcpu))
+		return false;
+
+	return true;
+}
+
+static u64 kvm_hv_xlate_va_walk(struct kvm_vcpu* vcpu, u64 gva, u8 flags)
+{
+	struct kvm_mmu *mmu = vcpu->arch.walk_mmu;
+	u32 access = 0;
+
+	if (flags & HV_XLATE_GVA_VAL_WRITE)
+		access |= PFERR_WRITE_MASK;
+	if (flags & HV_XLATE_GVA_VAL_EXECUTE)
+		access |= PFERR_FETCH_MASK;
+
+	return vcpu->arch.walk_mmu->gva_to_gpa(vcpu, mmu, gva, access, NULL);
+}
+
+static u64 kvm_hv_translate_virtual_address(struct kvm_vcpu* vcpu,
+					    struct kvm_hv_hcall *hc)
+{
+	struct hv_xlate_va_output output = {};
+	struct hv_xlate_va_input input;
+	struct kvm_vcpu *target_vcpu;
+	u8 flags, target_vtl;
+
+	if (hc->fast) {
+		input.partition_id = hc->ingpa;
+		input.vp_index = hc->outgpa & 0xFFFFFFFF;
+		input.control_flags = sse128_lo(hc->xmm[0]);
+		input.gva = sse128_hi(hc->xmm[0]);
+	} else {
+		if (unlikely(kvm_vcpu_read_guest(vcpu, hc->ingpa, &input, sizeof(input)) != 0))
+			return HV_STATUS_INVALID_HYPERCALL_INPUT;
+	}
+
+	trace_kvm_hv_translate_virtual_address(input.partition_id, input.vp_index, input.control_flags, input.gva);
+
+	if (!kvm_hv_xlate_va_validate_input(vcpu, &input, &target_vtl, &flags))
+		return HV_STATUS_INVALID_HYPERCALL_INPUT;
+
+	target_vcpu = kvm_hv_get_vtl_vcpu(vcpu, target_vtl);
+	output.gpa = kvm_hv_xlate_va_walk(target_vcpu, input.gva << PAGE_SHIFT, flags);
+	if (output.gpa == INVALID_GPA) {
+		output.result_code = HV_XLATE_GVA_UNMAPPED;
+	} else {
+		struct kvm_hv *hv = to_kvm_hv(vcpu->kvm);
+		u64 hcall_page = hv->hv_hypercall &
+				HV_X64_MSR_HYPERCALL_PAGE_ADDRESS_MASK;
+
+		if (output.gpa == hcall_page)
+			output.overlay_page = 1;
+
+		output.gpa >>= PAGE_SHIFT;
+		output.result_code = HV_XLATE_GVA_SUCCESS;
+		output.cache_type = HV_CACHE_TYPE_X64_WB;
+	}
+
+	if (hc->fast) {
+		memcpy(&hc->xmm[1], &output, sizeof(output));
+		hc->xmm_dirty = true;
+	} else {
+		if (unlikely(kvm_vcpu_write_guest(vcpu, hc->outgpa, &output, sizeof(output)) != 0))
+			return HV_STATUS_INVALID_HYPERCALL_INPUT;
+	}
+
 	return HV_STATUS_SUCCESS;
 }
 
@@ -2912,6 +3006,14 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 	case HVCALL_VTL_CALL:
 	case HVCALL_VTL_RETURN:
 		goto hypercall_userspace_exit;
+	case HVCALL_TRANSLATE_VIRTUAL_ADDRESS:
+		if (unlikely(hc.rep_cnt)) {
+			ret = HV_STATUS_INVALID_HYPERCALL_INPUT;
+			break;
+		}
+
+		ret = kvm_hv_translate_virtual_address(vcpu, &hc);
+		break;
 	default:
 		ret = HV_STATUS_INVALID_HYPERCALL_CODE;
 		break;

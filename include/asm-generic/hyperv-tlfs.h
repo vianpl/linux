@@ -163,6 +163,7 @@ union hv_reference_tsc_msr {
 #define HVCALL_CREATE_VP			0x004e
 #define HVCALL_GET_VP_REGISTERS			0x0050
 #define HVCALL_SET_VP_REGISTERS			0x0051
+#define HVCALL_TRANSLATE_VIRTUAL_ADDRESS	0x0052
 #define HVCALL_POST_MESSAGE			0x005c
 #define HVCALL_SIGNAL_EVENT			0x005d
 #define HVCALL_POST_DEBUG_DATA			0x0069
@@ -847,4 +848,31 @@ union hv_register_vsm_code_page_offsets {
 		u64 reserved:40;
 	} __packed;
 };
+
+#define HV_XLATE_GVA_SUCCESS 0
+#define HV_XLATE_GVA_UNMAPPED 1
+#define HV_XLATE_GPA_UNMAPPED 4
+#define HV_CACHE_TYPE_X64_WB 6
+
+#define HV_XLATE_GVA_VAL_READ 1
+#define HV_XLATE_GVA_VAL_WRITE 2
+#define HV_XLATE_GVA_VAL_EXECUTE 4
+#define HV_XLATE_GVA_FLAGS_MASK 0x3F
+
+struct hv_xlate_va_input {
+	u64 partition_id;
+	u32 vp_index;
+	u32 reserved;
+	u64 control_flags;
+	u64 gva;
+};
+
+struct hv_xlate_va_output {
+	u32 result_code;
+	u32 cache_type:8;
+	u32 overlay_page:1;
+	u32 reserved:23;
+	u64 gpa;
+};
+
 #endif
