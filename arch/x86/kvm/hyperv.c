@@ -256,6 +256,42 @@ static void synic_exit(struct kvm_vcpu_hv_synic *synic, u32 msr)
 	kvm_make_request(KVM_REQ_HV_EXIT, vcpu);
 }
 
+static int patch_hypercall_page(struct kvm_vcpu *vcpu, u64 data)
+{
+	struct kvm *kvm = vcpu->kvm;
+	u8 instructions[9];
+	int i = 0;
+	u64 addr;
+
+	/*
+	 * If Xen and Hyper-V hypercalls are both enabled, disambiguate
+	 * the same way Xen itself does, by setting the bit 31 of EAX
+	 * which is RsvdZ in the 32-bit Hyper-V hypercall ABI and just
+	 * going to be clobbered on 64-bit.
+	 */
+	if (kvm_xen_hypercall_enabled(kvm)) {
+		/* orl $0x80000000, %eax */
+		instructions[i++] = 0x0d;
+		instructions[i++] = 0x00;
+		instructions[i++] = 0x00;
+		instructions[i++] = 0x00;
+		instructions[i++] = 0x80;
+	}
+
+	/* vmcall/vmmcall */
+	static_call(kvm_x86_patch_hypercall)(vcpu, instructions + i);
+	i += 3;
+
+	/* ret */
+	((unsigned char *)instructions)[i++] = 0xc3;
+
+	addr = data & HV_X64_MSR_HYPERCALL_PAGE_ADDRESS_MASK;
+	if (kvm_vcpu_write_guest(vcpu, addr, instructions, i))
+		return 1;
+
+	return 0;
+}
+
 static int synic_set_msr(struct kvm_vcpu_hv_synic *synic,
 			 u32 msr, u64 data, bool host)
 {
@@ -1338,11 +1374,7 @@ static int kvm_hv_set_msr_pw(struct kvm_vcpu *vcpu, u32 msr, u64 data,
 		if (!hv->hv_guest_os_id)
 			hv->hv_hypercall &= ~HV_X64_MSR_HYPERCALL_ENABLE;
 		break;
-	case HV_X64_MSR_HYPERCALL: {
-		u8 instructions[9];
-		int i = 0;
-		u64 addr;
-
+	case HV_X64_MSR_HYPERCALL:
 		/* if guest os id is not set hypercall should remain disabled */
 		if (!hv->hv_guest_os_id)
 			break;
@@ -1351,34 +1383,11 @@ static int kvm_hv_set_msr_pw(struct kvm_vcpu *vcpu, u32 msr, u64 data,
 			break;
 		}
 
-		/*
-		 * If Xen and Hyper-V hypercalls are both enabled, disambiguate
-		 * the same way Xen itself does, by setting the bit 31 of EAX
-		 * which is RsvdZ in the 32-bit Hyper-V hypercall ABI and just
-		 * going to be clobbered on 64-bit.
-		 */
-		if (kvm_xen_hypercall_enabled(kvm)) {
-			/* orl $0x80000000, %eax */
-			instructions[i++] = 0x0d;
-			instructions[i++] = 0x00;
-			instructions[i++] = 0x00;
-			instructions[i++] = 0x00;
-			instructions[i++] = 0x80;
-		}
-
-		/* vmcall/vmmcall */
-		static_call(kvm_x86_patch_hypercall)(vcpu, instructions + i);
-		i += 3;
-
-		/* ret */
-		((unsigned char *)instructions)[i++] = 0xc3;
-
-		addr = data & HV_X64_MSR_HYPERCALL_PAGE_ADDRESS_MASK;
-		if (kvm_vcpu_write_guest(vcpu, addr, instructions, i))
+		if (patch_hypercall_page(vcpu, data))
 			return 1;
+
 		hv->hv_hypercall = data;
 		break;
-	}
 	case HV_X64_MSR_REFERENCE_TSC:
 		hv->hv_tsc_page = data;
 		if (hv->hv_tsc_page & HV_X64_MSR_TSC_REFERENCE_ENABLE) {
