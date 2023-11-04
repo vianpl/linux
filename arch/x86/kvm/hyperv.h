@@ -23,6 +23,7 @@
 
 #include <linux/kvm_host.h>
 #include "x86.h"
+#include "lapic.h"
 
 /* "Hv#1" signature */
 #define HYPERV_CPUID_SIGNATURE_EAX 0x31237648
@@ -81,6 +82,23 @@ static inline struct kvm_vcpu *hv_synic_to_vcpu(struct kvm_vcpu_hv_synic *synic)
 static inline struct kvm_hv_syndbg *to_hv_syndbg(struct kvm_vcpu *vcpu)
 {
 	return &vcpu->kvm->arch.hyperv.hv_syndbg;
+}
+
+static inline struct kvm_vcpu *kvm_hv_get_vtl_vcpu(struct kvm_vcpu *vcpu, int vtl)
+{
+	struct kvm *kvm = vcpu->kvm;
+	u32 target_id = kvm_apic_id(vcpu);
+
+	kvm_apic_id_set_group(kvm, vtl, &target_id);
+	if (vcpu->vcpu_id == target_id)
+		return vcpu;
+
+	return kvm_get_vcpu_by_id(kvm, target_id);
+}
+
+static inline u8 kvm_hv_get_active_vtl(struct kvm_vcpu *vcpu)
+{
+	return kvm_apic_group(vcpu);
 }
 
 static inline u32 kvm_hv_get_vpindex(struct kvm_vcpu *vcpu)
