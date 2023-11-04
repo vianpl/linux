@@ -238,4 +238,9 @@ static inline int kvm_hv_verify_vp_assist(struct kvm_vcpu *vcpu)
 
 int kvm_hv_vcpu_flush_tlb(struct kvm_vcpu *vcpu);
 
+static inline bool kvm_hv_vsm_enabled(struct kvm *kvm)
+{
+       return kvm->arch.hyperv.hv_enable_vsm;
+}
+
 #endif
