@@ -408,14 +408,39 @@ struct hv_nested_enlightenments_control {
 	} hypercallControls;
 } __packed;
 
+struct hv_vp_vtl_control {
+	__u32 vtl_entry_reason;
+
+	union {
+		__u8 as_u8;
+		struct {
+			__u8 vina_asserted:1;
+			__u8 reserved0:7;
+		};
+	};
+
+	__u8 reserved1[3];
+
+	union {
+		struct {
+			__u64 vtl_ret_x64rax;
+			__u64 vtl_ret_x64rcx;
+		};
+
+		struct {
+			__u32 vtl_return_x86_eax;
+			__u32 vtl_return_x86_ecx;
+			__u32 vtl_return_x86_edx;
+			__u32 reserved2;
+		};
+	};
+};
+
 /* Define virtual processor assist page structure. */
 struct hv_vp_assist_page {
 	__u32 apic_assist;
 	__u32 reserved1;
-	__u32 vtl_entry_reason;
-	__u32 vtl_reserved;
-	__u64 vtl_ret_x64rax;
-	__u64 vtl_ret_x64rcx;
+	struct hv_vp_vtl_control vtl_control;
 	struct hv_nested_enlightenments_control nested_control;
 	__u8 enlighten_vmentry;
 	__u8 reserved2[7];
