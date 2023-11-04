@@ -122,6 +122,11 @@ struct kvm_s390_cmma_log {
 	__u64 values;
 };
 
+struct kvm_hyperv_xmm_reg {
+	__u64 low;
+	__u64 high;
+};
+
 struct kvm_hyperv_exit {
 #define KVM_EXIT_HYPERV_SYNIC          1
 #define KVM_EXIT_HYPERV_HCALL          2
@@ -140,6 +145,7 @@ struct kvm_hyperv_exit {
 			__u64 input;
 			__u64 result;
 			__u64 params[2];
+			struct kvm_hyperv_xmm_reg xmm[6];
 		} hcall;
 		struct {
 			__u32 msr;
