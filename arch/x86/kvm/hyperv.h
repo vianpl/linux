@@ -324,4 +324,9 @@ static inline u32 kvm_hv_get_vpindex(struct kvm_vcpu *vcpu)
 static inline void kvm_hv_nested_transtion_tlb_flush(struct kvm_vcpu *vcpu, bool tdp_enabled) {}
 #endif /* CONFIG_KVM_HYPERV */
 
+static inline bool kvm_hv_vsm_enabled(struct kvm *kvm)
+{
+       return kvm->arch.hyperv.hv_enable_vsm;
+}
+
 #endif /* __ARCH_X86_KVM_HYPERV_H__ */

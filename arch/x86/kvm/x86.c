@@ -4622,6 +4622,7 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 	case KVM_CAP_HYPERV_CPUID:
 	case KVM_CAP_HYPERV_ENFORCE_CPUID:
 	case KVM_CAP_SYS_HYPERV_CPUID:
+	case KVM_CAP_HYPERV_VSM:
 #endif
 	case KVM_CAP_PCI_SEGMENT:
 	case KVM_CAP_DEBUGREGS:
@@ -6670,6 +6671,10 @@ split_irqchip_unlock:
 			r = 0;
 		}
 		mutex_unlock(&kvm->lock);
+		break;
+	case KVM_CAP_HYPERV_VSM:
+		kvm->arch.hyperv.hv_enable_vsm = true;
+		r = 0;
 		break;
 	default:
 		r = -EINVAL;

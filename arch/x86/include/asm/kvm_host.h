@@ -1149,6 +1149,7 @@ struct kvm_hv {
 	struct kvm_hv_syndbg hv_syndbg;
 
 	bool xsaves_xsavec_checked;
+	bool hv_enable_vsm;
 };
 #endif
 
