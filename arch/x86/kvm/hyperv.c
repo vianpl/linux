@@ -2728,6 +2728,14 @@ static bool is_hypercall_advertised(struct kvm_vcpu *vcpu, u16 code)
 		feature_mask = HV_ACCESS_VP_REGISTERS;
 		reg = VCPU_REGS_RBX;
 		break;
+	case HVCALL_ENABLE_PARTITION_VTL:
+	case HVCALL_ENABLE_VP_VTL:
+	case HVCALL_MODIFY_VTL_PROTECTION_MASK:
+	case HVCALL_VTL_CALL:
+	case HVCALL_VTL_RETURN:
+		feature_mask = HV_ACCESS_VSM;
+		reg = VCPU_REGS_RBX;
+		break;
 	default:
 		/* everything else is advertised by default */
 		return true;
