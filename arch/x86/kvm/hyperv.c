@@ -2512,6 +2512,11 @@ static bool kvm_hv_is_xmm_output_hcall(u16 code)
 	return false;
 }
 
+static inline bool kvm_hv_is_vtl_call_return(u16 code)
+{
+	return code == HVCALL_VTL_CALL || code == HVCALL_VTL_RETURN;
+}
+
 static int kvm_hv_hypercall_complete_userspace(struct kvm_vcpu *vcpu)
 {
 	bool fast = !!(vcpu->run->hyperv.u.hcall.input & HV_HYPERCALL_FAST_BIT);
@@ -2520,6 +2525,9 @@ static int kvm_hv_hypercall_complete_userspace(struct kvm_vcpu *vcpu)
 
 	if (kvm_hv_is_xmm_output_hcall(code) && hv_result_success(result) && fast)
 		kvm_hv_write_xmm(vcpu->run->hyperv.u.hcall.xmm);
+
+	if (kvm_hv_is_vtl_call_return(code))
+		return kvm_skip_emulated_instruction(vcpu);
 
 	return kvm_hv_hypercall_complete(vcpu, result);
 }
@@ -2575,6 +2583,7 @@ static bool is_xmm_fast_hypercall(struct kvm_hv_hcall *hc)
 	case HVCALL_SEND_IPI_EX:
 	case HVCALL_GET_VP_REGISTERS:
 	case HVCALL_SET_VP_REGISTERS:
+	case HVCALL_MODIFY_VTL_PROTECTION_MASK:
 		return true;
 	}
 
@@ -2795,6 +2804,11 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 		goto hypercall_userspace_exit;
 	case HVCALL_GET_VP_REGISTERS:
 	case HVCALL_SET_VP_REGISTERS:
+	case HVCALL_MODIFY_VTL_PROTECTION_MASK:
+	case HVCALL_ENABLE_PARTITION_VTL:
+	case HVCALL_ENABLE_VP_VTL:
+	case HVCALL_VTL_CALL:
+	case HVCALL_VTL_RETURN:
 		goto hypercall_userspace_exit;
 	default:
 		ret = HV_STATUS_INVALID_HYPERCALL_CODE;
@@ -2962,6 +2976,7 @@ int kvm_get_hv_cpuid(struct kvm_vcpu *vcpu, struct kvm_cpuid2 *cpuid,
 			ent->ebx |= HV_SIGNAL_EVENTS;
 			ent->ebx |= HV_ENABLE_EXTENDED_HYPERCALLS;
 			ent->ebx |= HV_ACCESS_VP_REGISTERS;
+			ent->ebx |= HV_ACCESS_VSM;
 
 			ent->edx |= HV_X64_HYPERCALL_XMM_INPUT_AVAILABLE;
 			ent->edx |= HV_X64_HYPERCALL_XMM_OUTPUT_AVAILABLE;
