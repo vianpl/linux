@@ -2421,6 +2421,21 @@ static inline void kvm_prepare_memory_fault_exit(struct kvm_vcpu *vcpu,
 		vcpu->run->memory_fault.flags |= KVM_MEMORY_EXIT_FLAG_PRIVATE;
 }
 
+static inline bool kvm_memory_attribute_may_read(u64 attrs)
+{
+	return !(attrs & KVM_MEMORY_ATTRIBUTE_NR);
+}
+
+static inline bool kvm_memory_attribute_may_write(u64 attrs)
+{
+	return !(attrs & KVM_MEMORY_ATTRIBUTE_NW);
+}
+
+static inline bool kvm_memory_attribute_may_exec(u64 attrs)
+{
+	return !(attrs & KVM_MEMORY_ATTRIBUTE_NX);
+}
+
 #ifdef CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES
 static inline unsigned long kvm_get_memory_attributes(struct kvm *kvm, gfn_t gfn)
 {
@@ -2433,6 +2448,7 @@ bool kvm_arch_pre_set_memory_attributes(struct kvm *kvm,
 					struct kvm_gfn_range *range);
 bool kvm_arch_post_set_memory_attributes(struct kvm *kvm,
 					 struct kvm_gfn_range *range);
+bool kvm_memory_attributes_valid(struct kvm *kvm, unsigned long attrs);
 
 static inline bool kvm_memory_attributes_in_use(struct kvm *kvm)
 {
@@ -2445,6 +2461,11 @@ static inline bool kvm_mem_is_private(struct kvm *kvm, gfn_t gfn)
 	       kvm_get_memory_attributes(kvm, gfn) & KVM_MEMORY_ATTRIBUTE_PRIVATE;
 }
 #else
+static inline bool kvm_memory_attributes_valid(struct kvm *kvm,
+					       unsigned long attrs)
+{
+	return false;
+}
 static inline bool kvm_memory_attributes_in_use(struct kvm *kvm)
 {
 	return false;
