@@ -3150,6 +3150,32 @@ struct kvm_hv_vtl_dev {
 
 static struct xarray *kvm_hv_vsm_get_memprots(struct kvm_vcpu *vcpu);
 
+static void kvm_hv_inject_gpa_intercept(struct kvm_vcpu *vcpu,
+					struct kvm_page_fault *fault)
+{
+	struct kvm_vcpu *target_vcpu =
+		kvm_hv_get_vtl_vcpu(vcpu, kvm_hv_get_active_vtl(vcpu) + 1);
+	struct kvm_vcpu_hv_intercept_info *intercept =
+		&target_vcpu->arch.hyperv->intercept_info;
+
+	/*
+        * No target VTL available, log a warning and let user-space deal with
+        * the fault.
+        */
+	if (WARN_ON_ONCE(!target_vcpu))
+		return;
+
+	intercept->type = HVMSG_GPA_INTERCEPT;
+	intercept->gpa = fault->addr;
+	intercept->access = (fault->user ? HV_INTERCEPT_ACCESS_READ : 0) |
+			    (fault->write ? HV_INTERCEPT_ACCESS_WRITE : 0) |
+			    (fault->exec ? HV_INTERCEPT_ACCESS_EXECUTE : 0);
+	intercept->vcpu = vcpu;
+
+	kvm_make_request(KVM_REQ_HV_INJECT_INTERCEPT, target_vcpu);
+	kvm_vcpu_kick(target_vcpu);
+}
+
 bool kvm_hv_vsm_access_valid(struct kvm_page_fault *fault, unsigned long attrs)
 {
 	if (attrs == KVM_MEMORY_ATTRIBUTE_NO_ACCESS)
@@ -3194,6 +3220,7 @@ int kvm_hv_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 		return RET_PF_CONTINUE;
 	}
 
+	kvm_hv_inject_gpa_intercept(vcpu, fault);
 	return -EFAULT;
 }
 
