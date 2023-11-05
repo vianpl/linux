@@ -2394,6 +2394,9 @@ kvm_get_memory_attributes(struct xarray *mem_attr_array, gfn_t gfn)
 	return xa_to_value(xa_load(mem_attr_array, gfn));
 }
 
+int kvm_ioctl_set_mem_attributes(struct kvm *kvm, struct xarray *mem_attr_array,
+				 u64 supported_attrs,
+				 struct kvm_memory_attributes *attrs);
 bool kvm_range_has_memory_attributes(struct xarray *mem_attr_array, gfn_t start,
 				     gfn_t end, unsigned long attrs);
 bool kvm_arch_pre_set_memory_attributes(struct kvm *kvm,
