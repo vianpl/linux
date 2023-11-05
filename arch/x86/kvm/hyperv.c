@@ -2389,7 +2389,12 @@ static void kvm_hv_hypercall_set_result(struct kvm_vcpu *vcpu, u64 result)
 	}
 }
 
-static int kvm_hv_hypercall_complete(struct kvm_vcpu *vcpu, u64 result)
+static inline bool kvm_hv_is_vtl_call_return(u16 code)
+{
+	return code == HVCALL_VTL_CALL || code == HVCALL_VTL_RETURN;
+}
+
+static int kvm_hv_hypercall_complete(struct kvm_vcpu *vcpu, u16 code, u64 result)
 {
 	u32 tlb_lock_count = 0;
 	int ret;
@@ -2401,8 +2406,11 @@ static int kvm_hv_hypercall_complete(struct kvm_vcpu *vcpu, u64 result)
 		result = HV_STATUS_INVALID_HYPERCALL_INPUT;
 
 	trace_kvm_hv_hypercall_done(result);
-	kvm_hv_hypercall_set_result(vcpu, result);
 	++vcpu->stat.hypercalls;
+
+	/* VTL call and return don't set a hcall result */
+	if (!kvm_hv_is_vtl_call_return(code))
+		kvm_hv_hypercall_set_result(vcpu, result);
 
 	ret = kvm_skip_emulated_instruction(vcpu);
 
@@ -2462,7 +2470,7 @@ static int kvm_hv_hypercall_complete_userspace(struct kvm_vcpu *vcpu)
 		kvm_hv_write_xmm(vcpu->run->hyperv.u.hcall.xmm);
 	}
 
-	return kvm_hv_hypercall_complete(vcpu, result);
+	return kvm_hv_hypercall_complete(vcpu, code, result);
 }
 
 static u16 kvm_hvcall_signal_event(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
@@ -2516,6 +2524,7 @@ static bool is_xmm_fast_hypercall(struct kvm_hv_hcall *hc)
 	case HVCALL_SEND_IPI_EX:
 	case HVCALL_GET_VP_REGISTERS:
 	case HVCALL_SET_VP_REGISTERS:
+	case HVCALL_MODIFY_VTL_PROTECTION_MASK:
 	case HVCALL_TRANSLATE_VIRTUAL_ADDRESS:
 		return true;
 	}
@@ -2555,6 +2564,12 @@ static bool hv_check_hypercall_access(struct kvm_vcpu_hv *hv_vcpu, u16 code)
 		 */
 		return !kvm_hv_is_syndbg_enabled(hv_vcpu->vcpu) ||
 			hv_vcpu->cpuid_cache.features_ebx & HV_DEBUGGING;
+	case HVCALL_MODIFY_VTL_PROTECTION_MASK:
+	case HVCALL_ENABLE_PARTITION_VTL:
+	case HVCALL_ENABLE_VP_VTL:
+	case HVCALL_VTL_CALL:
+	case HVCALL_VTL_RETURN:
+		return hv_vcpu->cpuid_cache.features_ebx & HV_ACCESS_VSM;
 	case HVCALL_GET_VP_REGISTERS:
 	case HVCALL_SET_VP_REGISTERS:
 		return hv_vcpu->cpuid_cache.features_ebx &
@@ -2747,6 +2762,11 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 			break;
 		}
 		goto hypercall_userspace_exit;
+	case HVCALL_MODIFY_VTL_PROTECTION_MASK:
+	case HVCALL_ENABLE_PARTITION_VTL:
+	case HVCALL_ENABLE_VP_VTL:
+	case HVCALL_VTL_CALL:
+	case HVCALL_VTL_RETURN:
 	case HVCALL_GET_VP_REGISTERS:
 	case HVCALL_SET_VP_REGISTERS:
 	case HVCALL_TRANSLATE_VIRTUAL_ADDRESS:
@@ -2768,7 +2788,7 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 	}
 
 hypercall_complete:
-	return kvm_hv_hypercall_complete(vcpu, ret);
+	return kvm_hv_hypercall_complete(vcpu, hc.code, ret);
 
 hypercall_userspace_exit:
 	vcpu->run->exit_reason = KVM_EXIT_HYPERV;
@@ -2925,6 +2945,7 @@ int kvm_get_hv_cpuid(struct kvm_vcpu *vcpu, struct kvm_cpuid2 *cpuid,
 			ent->ebx |= HV_POST_MESSAGES;
 			ent->ebx |= HV_SIGNAL_EVENTS;
 			ent->ebx |= HV_ENABLE_EXTENDED_HYPERCALLS;
+			ent->ebx |= HV_ACCESS_VSM;
 			ent->ebx |= HV_ACCESS_VP_REGISTERS;
 			ent->ebx |= HV_START_VIRTUAL_PROCESSOR;
 
