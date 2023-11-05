@@ -9087,3 +9087,26 @@ HvCallGetVpIndexFromApicId. Currently, it is only used in conjunction with
 HV_ACCESS_VSM, and immediately exits to userspace with KVM_EXIT_HYPERV_HCALL as
 the reason. Userspace is expected to complete the hypercall before resuming
 execution.
+
+10.4 HV_ACCESS_VSM
+------------------
+
+:Location: CPUID.40000003H:EBX[bit 16]
+
+This CPUID indicates that KVM supports HvCallModifyVtlProtectionMask,
+HvCallEnablePartitionVtl, HvCallEnableVpVtl, HvCallVtlCall, and
+HvCallVtlReturn.  Additionally, as a prerequirsite to being able to implement
+Hyper-V VSM, it also identifies the availability of HvTranslateVirtualAddress,
+as well as the VTL-aware aspects of HvCallSendSyntheticClusterIpi and
+HvCallSendSyntheticClusterIpiEx.
+
+All these hypercalls immediately exit with KVM_EXIT_HYPERV_HCALL as the reason.
+Userspace is expected to complete the hypercall before resuming execution.
+Note that both IPI hypercalls will only exit to userspace if the request is
+VTL-aware, which will only happen if HV_ACCESS_VSM is exposed to the guest.
+
+Access restriction memory attributes (4.141) are available to simplify
+HvCallModifyVtlProtectionMask's implementation.
+
+Ultimately this CPUID also indicates that KVM_MP_STATE_HV_INACTIVE_VTL is
+available.
