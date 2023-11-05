@@ -2839,6 +2839,120 @@ hypercall_userspace_exit:
 	return 0;
 }
 
+static void store_kvm_segment(const struct kvm_segment *kvmseg,
+			      struct hv_x64_segment_register *reg)
+{
+	reg->base = kvmseg->base;
+	reg->limit = kvmseg->limit;
+	reg->selector = kvmseg->selector;
+	reg->segment_type = kvmseg->type;
+	reg->present = kvmseg->present;
+	reg->descriptor_privilege_level = kvmseg->dpl;
+	reg->_default = kvmseg->db;
+	reg->non_system_segment = kvmseg->s;
+	reg->_long = kvmseg->l;
+	reg->granularity = kvmseg->g;
+	reg->available = kvmseg->avl;
+}
+
+static void deliver_gpa_intercept(struct kvm_vcpu *target_vcpu,
+				  struct kvm_vcpu *intercepted_vcpu, u64 gpa,
+				  u64 gva, u8 access_type_mask)
+{
+	ulong cr0;
+	struct hv_message msg = { 0 };
+	struct hv_memory_intercept_message *intercept = (struct hv_memory_intercept_message *)msg.u.payload;
+	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(target_vcpu);
+	struct x86_exception e;
+	struct kvm_segment kvmseg;
+
+	msg.header.message_type = HVMSG_GPA_INTERCEPT;
+	msg.header.payload_size = sizeof(*intercept);
+
+	intercept->header.vp_index = to_hv_vcpu(intercepted_vcpu)->vp_index;
+	intercept->header.instruction_length = intercepted_vcpu->arch.exit_instruction_len;
+	intercept->header.access_type_mask = access_type_mask;
+	kvm_x86_ops.get_segment(intercepted_vcpu, &kvmseg, VCPU_SREG_CS);
+	store_kvm_segment(&kvmseg, &intercept->header.cs);
+
+	cr0 = kvm_read_cr0(intercepted_vcpu);
+	intercept->header.exec_state.cr0_pe = (cr0 & X86_CR0_PE);
+	intercept->header.exec_state.cr0_am = (cr0 & X86_CR0_AM);
+	intercept->header.exec_state.cpl = kvm_x86_ops.get_cpl(intercepted_vcpu);
+	intercept->header.exec_state.efer_lma = is_long_mode(intercepted_vcpu);
+	intercept->header.exec_state.debug_active = 0;
+	intercept->header.exec_state.interruption_pending = 0;
+	intercept->header.rip = kvm_rip_read(intercepted_vcpu);
+	intercept->header.rflags = kvm_get_rflags(intercepted_vcpu);
+
+	/*
+	 * For exec violations we don't have a way to decode an instruction that issued a fetch
+	 * to a non-X page because CPU points RIP and GPA to the fetch destination in the faulted page.
+	 * Instruction length though is the length of the fetch source.
+	 * Seems like Hyper-V is aware of that and is not trying to access those fields.
+	 */
+	if (access_type_mask == HV_INTERCEPT_ACCESS_EXECUTE) {
+		intercept->instruction_byte_count = 0;
+	} else {
+		intercept->instruction_byte_count = intercepted_vcpu->arch.exit_instruction_len;
+		if (intercept->instruction_byte_count > sizeof(intercept->instruction_bytes))
+			intercept->instruction_byte_count = sizeof(intercept->instruction_bytes);
+		if (kvm_read_guest_virt(intercepted_vcpu,
+					kvm_rip_read(intercepted_vcpu),
+					intercept->instruction_bytes,
+					intercept->instruction_byte_count, &e))
+			goto inject_ud;
+	}
+
+	intercept->memory_access_info.gva_valid = (gva != 0);
+	intercept->gva = gva;
+	intercept->gpa = gpa;
+	intercept->cache_type = HV_X64_CACHE_TYPE_WRITEBACK;
+	kvm_x86_ops.get_segment(intercepted_vcpu, &kvmseg, VCPU_SREG_DS);
+	store_kvm_segment(&kvmseg, &intercept->ds);
+	kvm_x86_ops.get_segment(intercepted_vcpu, &kvmseg, VCPU_SREG_SS);
+	store_kvm_segment(&kvmseg, &intercept->ss);
+	intercept->rax = kvm_rax_read(intercepted_vcpu);
+	intercept->rcx = kvm_rcx_read(intercepted_vcpu);
+	intercept->rdx = kvm_rdx_read(intercepted_vcpu);
+	intercept->rbx = kvm_rbx_read(intercepted_vcpu);
+	intercept->rsp = kvm_rsp_read(intercepted_vcpu);
+	intercept->rbp = kvm_rbp_read(intercepted_vcpu);
+	intercept->rsi = kvm_rsi_read(intercepted_vcpu);
+	intercept->rdi = kvm_rdi_read(intercepted_vcpu);
+	intercept->r8 = kvm_r8_read(intercepted_vcpu);
+	intercept->r9 = kvm_r9_read(intercepted_vcpu);
+	intercept->r10 = kvm_r10_read(intercepted_vcpu);
+	intercept->r11 = kvm_r11_read(intercepted_vcpu);
+	intercept->r12 = kvm_r12_read(intercepted_vcpu);
+	intercept->r13 = kvm_r13_read(intercepted_vcpu);
+	intercept->r14 = kvm_r14_read(intercepted_vcpu);
+	intercept->r15 = kvm_r15_read(intercepted_vcpu);
+
+	if (synic_deliver_msg(&hv_vcpu->synic, 0, &msg, true))
+		goto inject_ud;
+
+	return;
+
+inject_ud:
+	kvm_queue_exception(target_vcpu, UD_VECTOR);
+}
+
+void kvm_hv_deliver_intercept(struct kvm_vcpu *vcpu)
+{
+	struct kvm_vcpu_hv_intercept_info *info = &to_hv_vcpu(vcpu)->intercept_info;
+
+	switch (info->type) {
+	case HVMSG_GPA_INTERCEPT:
+		deliver_gpa_intercept(vcpu, info->vcpu, info->gpa, 0,
+				      info->access);
+		break;
+	default:
+		pr_warn("Unknown exception\n");
+	}
+}
+EXPORT_SYMBOL_GPL(kvm_hv_deliver_intercept);
+
 void kvm_hv_init_vm(struct kvm *kvm)
 {
 	struct kvm_hv *hv = to_kvm_hv(kvm);

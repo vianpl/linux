@@ -359,4 +359,6 @@ int kvm_hv_vtl_dev_register(void);
 void kvm_hv_vtl_dev_unregister(void);
 int kvm_hv_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault);
 
+void kvm_hv_deliver_intercept(struct kvm_vcpu *vcpu);
+
 #endif /* __ARCH_X86_KVM_HYPERV_H__ */
