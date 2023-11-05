@@ -2399,10 +2399,17 @@ static int kvm_vm_ioctl_clear_dirty_log(struct kvm *kvm,
 #ifdef CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES
 static u64 kvm_supported_mem_attributes(struct kvm *kvm)
 {
-	if (!kvm || kvm_arch_has_private_mem(kvm))
-		return KVM_MEMORY_ATTRIBUTE_PRIVATE;
+	u64 supported_attrs = 0;
 
-	return 0;
+	if (kvm_arch_has_memory_protection_attributes())
+		supported_attrs |= KVM_MEMORY_ATTRIBUTE_NR |
+				   KVM_MEMORY_ATTRIBUTE_NW |
+				   KVM_MEMORY_ATTRIBUTE_NX;
+
+	if (!kvm || kvm_arch_has_private_mem(kvm))
+		supported_attrs |= KVM_MEMORY_ATTRIBUTE_PRIVATE;
+
+	return supported_attrs;
 }
 
 /*
@@ -2561,6 +2568,28 @@ out_unlock:
 
 	return r;
 }
+
+bool kvm_memory_attributes_valid(struct kvm *kvm, unsigned long attrs)
+{
+	bool may_read = kvm_memory_attribute_may_read(attrs);
+	bool may_write = kvm_memory_attribute_may_write(attrs);
+	bool may_exec = kvm_memory_attribute_may_exec(attrs);
+	bool priv = attrs & KVM_MEMORY_ATTRIBUTE_PRIVATE;
+
+	if (attrs & ~kvm_supported_mem_attributes(kvm))
+		return false;
+
+	/* Private memory and access permissions are incompatible */
+	if (priv && (!may_read || !may_write || !may_exec))
+		return false;
+
+	/* Write and exec mappings require read access */
+	if ((may_write || may_exec) && !may_read)
+		return false;
+
+	return true;
+}
+
 static int kvm_vm_ioctl_set_mem_attributes(struct kvm *kvm,
 					   struct kvm_memory_attributes *attrs)
 {
@@ -2569,7 +2598,7 @@ static int kvm_vm_ioctl_set_mem_attributes(struct kvm *kvm,
 	/* flags is currently not used. */
 	if (attrs->flags)
 		return -EINVAL;
-	if (attrs->attributes & ~kvm_supported_mem_attributes(kvm))
+	if (!kvm_memory_attributes_valid(kvm, attrs->attributes))
 		return -EINVAL;
 	if (attrs->size == 0 || attrs->address + attrs->size < attrs->address)
 		return -EINVAL;
