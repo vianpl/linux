@@ -2697,6 +2697,45 @@ static bool hv_check_hypercall_access(struct kvm_vcpu_hv *hv_vcpu, u16 code)
 	return true;
 }
 
+static bool is_hyperv_feature_advertised(struct kvm_vcpu *vcpu, enum kvm_reg reg, u64 feature_mask)
+{
+	struct kvm_cpuid_entry2 *entry;
+	u64 regval;
+
+	entry = kvm_find_cpuid_entry(vcpu, HYPERV_CPUID_FEATURES);
+	if (!entry)
+		return false;
+
+	switch (reg) {
+	case VCPU_REGS_RAX: regval = entry->eax; break;
+	case VCPU_REGS_RBX: regval = entry->ebx; break;
+	case VCPU_REGS_RDX: regval = entry->edx; break;
+	default: return false;
+	};
+
+	return (regval & feature_mask) == feature_mask;
+}
+
+static bool is_hypercall_advertised(struct kvm_vcpu *vcpu, u16 code)
+{
+	u64 feature_mask;
+	enum kvm_reg reg;
+
+	/* Some hypercalls are advertised by default, the others are not */
+	switch (code) {
+	case HVCALL_GET_VP_REGISTERS:
+	case HVCALL_SET_VP_REGISTERS:
+		feature_mask = HV_ACCESS_VP_REGISTERS;
+		reg = VCPU_REGS_RBX;
+		break;
+	default:
+		/* everything else is advertised by default */
+		return true;
+	}
+
+	return is_hyperv_feature_advertised(vcpu, reg, feature_mask);
+}
+
 int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 {
 	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
@@ -2758,6 +2797,9 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 
 		kvm_hv_hypercall_read_xmm(&hc);
 	}
+
+	if (unlikely(!is_hypercall_advertised(vcpu, hc.code)))
+		return kvm_hv_hypercall_complete(vcpu, HV_STATUS_INVALID_HYPERCALL_CODE);
 
 	switch (hc.code) {
 	case HVCALL_NOTIFY_LONG_SPIN_WAIT:
