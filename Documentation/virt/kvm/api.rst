@@ -9062,3 +9062,13 @@ CPUIDs map to KVM functionality.
 This CPUID indicates that KVM supports retuning data to the guest in response
 to a hypercall using the XMM registers. It also extends ``struct
 kvm_hyperv_exit`` to allow passing the XMM data from userspace.
+
+10.2 HV_ACCESS_VP_REGISTERS
+---------------------------
+
+:Location: CPUID.40000003H:EBX[bit 17]
+
+This CPUID indicates that KVM supports HvGetVpRegisters and HvSetVpRegisters.
+Currently, it is only used in conjunction with HV_ACCESS_VSM, and immediately
+exits to userspace with KVM_EXIT_HYPERV_HCALL as the reason. Userspace is
+expected to complete the hypercall before resuming execution.

@@ -2429,6 +2429,11 @@ static bool kvm_hv_is_xmm_output_hcall(struct kvm_vcpu *vcpu, u16 code)
 	if (!(vcpu->run->hyperv.u.hcall.input & HV_HYPERCALL_FAST_BIT))
 		return false;
 
+	switch (code) {
+	case HVCALL_GET_VP_REGISTERS:
+		return true;
+	}
+
 	return false;
 }
 
@@ -2508,6 +2513,8 @@ static bool is_xmm_fast_hypercall(struct kvm_hv_hcall *hc)
 	case HVCALL_FLUSH_VIRTUAL_ADDRESS_LIST_EX:
 	case HVCALL_FLUSH_VIRTUAL_ADDRESS_SPACE_EX:
 	case HVCALL_SEND_IPI_EX:
+	case HVCALL_GET_VP_REGISTERS:
+	case HVCALL_SET_VP_REGISTERS:
 		return true;
 	}
 
@@ -2546,6 +2553,10 @@ static bool hv_check_hypercall_access(struct kvm_vcpu_hv *hv_vcpu, u16 code)
 		 */
 		return !kvm_hv_is_syndbg_enabled(hv_vcpu->vcpu) ||
 			hv_vcpu->cpuid_cache.features_ebx & HV_DEBUGGING;
+	case HVCALL_GET_VP_REGISTERS:
+	case HVCALL_SET_VP_REGISTERS:
+		return hv_vcpu->cpuid_cache.features_ebx &
+			HV_ACCESS_VP_REGISTERS;
 	case HVCALL_FLUSH_VIRTUAL_ADDRESS_LIST_EX:
 	case HVCALL_FLUSH_VIRTUAL_ADDRESS_SPACE_EX:
 		if (!(hv_vcpu->cpuid_cache.enlightenments_eax &
@@ -2730,6 +2741,9 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 			break;
 		}
 		goto hypercall_userspace_exit;
+	case HVCALL_GET_VP_REGISTERS:
+	case HVCALL_SET_VP_REGISTERS:
+		goto hypercall_userspace_exit;
 	default:
 		ret = HV_STATUS_INVALID_HYPERCALL_CODE;
 		break;
@@ -2902,6 +2916,7 @@ int kvm_get_hv_cpuid(struct kvm_vcpu *vcpu, struct kvm_cpuid2 *cpuid,
 			ent->ebx |= HV_POST_MESSAGES;
 			ent->ebx |= HV_SIGNAL_EVENTS;
 			ent->ebx |= HV_ENABLE_EXTENDED_HYPERCALLS;
+			ent->ebx |= HV_ACCESS_VP_REGISTERS;
 
 			ent->edx |= HV_X64_HYPERCALL_XMM_INPUT_AVAILABLE;
 			ent->edx |= HV_X64_HYPERCALL_XMM_OUTPUT_AVAILABLE;
