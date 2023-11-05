@@ -294,6 +294,7 @@ static int patch_hypercall_page(struct kvm_vcpu *vcpu, u64 data)
 
 	/* VTL call/return entries */
 	if (!kvm_xen_hypercall_enabled(kvm) && kvm_hv_vsm_enabled(kvm)) {
+		i = 22;
 #ifdef CONFIG_X86_64
 		if (is_64_bit_mode(vcpu)) {
 			/*
