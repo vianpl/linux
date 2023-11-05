@@ -62,6 +62,10 @@
  */
 #define HV_EXT_CALL_MAX (HV_EXT_CALL_QUERY_CAPABILITIES + 64)
 
+#define KVM_HV_VTL_ATTRS						\
+	(KVM_MEMORY_ATTRIBUTE_READ | KVM_MEMORY_ATTRIBUTE_WRITE |	\
+	 KVM_MEMORY_ATTRIBUTE_EXECUTE | KVM_MEMORY_ATTRIBUTE_NO_ACCESS)
+
 static void stimer_mark_pending(struct kvm_vcpu_hv_stimer *stimer,
 				bool vcpu_kick);
 
@@ -3075,6 +3079,7 @@ int kvm_vm_ioctl_get_hv_vsm_state(struct kvm *kvm, struct kvm_hv_vsm_state *stat
 
 struct kvm_hv_vtl_dev {
 	int vtl;
+	struct xarray mem_attrs;
 };
 
 static int kvm_hv_vtl_get_attr(struct kvm_device *dev,
@@ -3097,8 +3102,62 @@ static void kvm_hv_vtl_release(struct kvm_device *dev)
 {
 	struct kvm_hv_vtl_dev *vtl_dev = dev->private;
 
+	xa_destroy(&vtl_dev->mem_attrs);
 	kfree(vtl_dev);
 	kfree(dev); /* alloc by kvm_ioctl_create_device, free by .release */
+}
+
+/*
+ * The TLFS lists the valid memory protection combinations (15.9.3):
+ *  - No access
+ *  - Read-only, no execute
+ *  - Read-only, execute
+ *  - Read/write, no execute
+ *  - Read/write, execute
+ */
+static bool kvm_hv_validate_vtl_mem_attributes(struct kvm_memory_attributes *attrs)
+{
+	u64 attr = attrs->attributes;
+
+	if (attr & ~KVM_HV_VTL_ATTRS)
+		return false;
+
+	if (attr == KVM_MEMORY_ATTRIBUTE_NO_ACCESS)
+		return true;
+
+	if (!(attr & KVM_MEMORY_ATTRIBUTE_READ))
+		return false;
+
+	return true;
+}
+
+static long kvm_hv_vtl_ioctl(struct kvm_device *dev, unsigned int ioctl,
+			     unsigned long arg)
+{
+	switch (ioctl) {
+	case KVM_SET_MEMORY_ATTRIBUTES: {
+		struct kvm_hv_vtl_dev *vtl_dev = dev->private;
+		struct kvm_memory_attributes attrs;
+		int r;
+
+		if (copy_from_user(&attrs, (void __user *)arg, sizeof(attrs)))
+			return -EFAULT;
+
+		r = -EINVAL;
+		if (!kvm_hv_validate_vtl_mem_attributes(&attrs))
+			return r;
+
+		r = kvm_ioctl_set_mem_attributes(dev->kvm, &vtl_dev->mem_attrs,
+						 KVM_HV_VTL_ATTRS, &attrs);
+		if (r)
+			return r;
+		break;
+	}
+	default:
+		return -ENOTTY;
+	}
+
+	return 0;
 }
 
 static int kvm_hv_vtl_create(struct kvm_device *dev, u32 type);
@@ -3107,6 +3166,7 @@ static struct kvm_device_ops kvm_hv_vtl_ops = {
 	.name = "kvm-hv-vtl",
 	.create = kvm_hv_vtl_create,
 	.release = kvm_hv_vtl_release,
+	.ioctl = kvm_hv_vtl_ioctl,
 	.get_attr = kvm_hv_vtl_get_attr,
 };
 
@@ -3126,6 +3186,7 @@ static int kvm_hv_vtl_create(struct kvm_device *dev, u32 type)
 			vtl++;
 
 	vtl_dev->vtl = vtl;
+	xa_init(&vtl_dev->mem_attrs);
 	dev->private = vtl_dev;
 
 	return 0;
