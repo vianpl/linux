@@ -7275,6 +7275,24 @@ set_pit2_out:
 		r = kvm_vm_ioctl_set_msr_filter(kvm, &filter);
 		break;
 	}
+	case KVM_HV_GET_VSM_STATE: {
+		struct kvm_hv_vsm_state vsm_state;
+
+		r = -EINVAL;
+		if (!kvm_hv_vsm_enabled(kvm))
+			goto out;
+
+		r = kvm_vm_ioctl_get_hv_vsm_state(kvm, &vsm_state);
+		if (r)
+			goto out;
+
+		r = -EFAULT;
+		if (copy_to_user(argp, &vsm_state, sizeof(vsm_state)))
+			goto out;
+
+		r = 0;
+		break;
+	}
 	default:
 		r = -ENOTTY;
 	}

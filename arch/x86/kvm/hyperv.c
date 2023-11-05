@@ -3040,3 +3040,11 @@ int kvm_get_hv_cpuid(struct kvm_vcpu *vcpu, struct kvm_cpuid2 *cpuid,
 
 	return 0;
 }
+
+int kvm_vm_ioctl_get_hv_vsm_state(struct kvm *kvm, struct kvm_hv_vsm_state *state)
+{
+	struct kvm_hv* hv = &kvm->arch.hyperv;
+
+	state->vsm_code_page_offsets = hv->vsm_code_page_offsets.as_u64;
+	return 0;
+}

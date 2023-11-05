@@ -2234,4 +2234,8 @@ struct kvm_create_guest_memfd {
 	__u64 reserved[6];
 };
 
+
+/* Get/Set Hyper-V VSM state. Available with KVM_CAP_HYPERV_VSM */
+#define KVM_HV_GET_VSM_STATE _IOR(KVMIO, 0xd5, struct kvm_hv_vsm_state)
+
 #endif /* __LINUX_KVM_H */
