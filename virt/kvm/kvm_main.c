@@ -2435,7 +2435,6 @@ static int kvm_vm_ioctl_clear_dirty_log(struct kvm *kvm,
 }
 #endif /* CONFIG_KVM_GENERIC_DIRTYLOG_READ_PROTECT */
 
-#ifdef CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES
 /*
  * Returns true if _all_ gfns in the range [@start, @end) have attributes
  * matching @attrs.
@@ -2470,14 +2469,6 @@ bool kvm_range_has_memory_attributes(struct xarray *mem_attr_array, gfn_t start,
 out:
 	rcu_read_unlock();
 	return has_attrs;
-}
-
-static u64 kvm_supported_mem_attributes(struct kvm *kvm)
-{
-	if (!kvm || kvm_arch_has_private_mem(kvm))
-		return KVM_MEMORY_ATTRIBUTE_PRIVATE;
-
-	return 0;
 }
 
 static __always_inline void kvm_handle_gfn_range(struct kvm *kvm,
@@ -2642,6 +2633,15 @@ int kvm_ioctl_set_mem_attributes(struct kvm *kvm, struct xarray *mem_attr_array,
 
 	return kvm_set_mem_attributes(kvm, mem_attr_array, start, end,
 				      attrs->attributes);
+}
+
+#ifdef CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES
+static u64 kvm_supported_mem_attributes(struct kvm *kvm)
+{
+	if (!kvm || kvm_arch_has_private_mem(kvm))
+		return KVM_MEMORY_ATTRIBUTE_PRIVATE;
+
+	return 0;
 }
 
 static int kvm_vm_ioctl_set_mem_attributes(struct kvm *kvm,
