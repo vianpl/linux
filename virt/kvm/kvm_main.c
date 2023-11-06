@@ -2440,10 +2440,10 @@ static int kvm_vm_ioctl_clear_dirty_log(struct kvm *kvm,
  * Returns true if _all_ gfns in the range [@start, @end) have attributes
  * matching @attrs.
  */
-bool kvm_range_has_memory_attributes(struct kvm *kvm, gfn_t start, gfn_t end,
-				     unsigned long attrs)
+bool kvm_range_has_memory_attributes(struct xarray *mem_attr_array, gfn_t start,
+				     gfn_t end, unsigned long attrs)
 {
-	XA_STATE(xas, &kvm->mem_attr_array, start);
+	XA_STATE(xas, mem_attr_array, start);
 	unsigned long index;
 	bool has_attrs;
 	void *entry;
@@ -2582,7 +2582,8 @@ static int kvm_vm_set_mem_attributes(struct kvm *kvm, gfn_t start, gfn_t end,
 	mutex_lock(&kvm->slots_lock);
 
 	/* Nothing to do if the entire range as the desired attributes. */
-	if (kvm_range_has_memory_attributes(kvm, start, end, attributes))
+	if (kvm_range_has_memory_attributes(&kvm->mem_attr_array, start, end,
+					    attributes))
 		goto out_unlock;
 
 	/*
