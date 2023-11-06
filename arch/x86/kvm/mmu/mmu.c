@@ -7311,6 +7311,7 @@ static bool hugepage_has_attrs(struct xarray *mem_attr_array,
 bool kvm_arch_post_set_memory_attributes(struct kvm *kvm,
 					 struct kvm_gfn_range *range)
 {
+	struct xarray *mem_attr_array = range->arg.mem_attr_array;
 	unsigned long attrs = range->arg.attributes;
 	struct kvm_memory_slot *slot = range->slot;
 	int level;
@@ -7344,8 +7345,8 @@ bool kvm_arch_post_set_memory_attributes(struct kvm *kvm,
 			 * misaligned address regardless of memory attributes.
 			 */
 			if (gfn >= slot->base_gfn) {
-				if (hugepage_has_attrs(&kvm->mem_attr_array,
-						       slot, gfn, level, attrs))
+				if (hugepage_has_attrs(mem_attr_array, slot,
+						       gfn, level, attrs))
 					hugepage_clear_mixed(slot, gfn, level);
 				else
 					hugepage_set_mixed(slot, gfn, level);
@@ -7367,8 +7368,7 @@ bool kvm_arch_post_set_memory_attributes(struct kvm *kvm,
 		 */
 		if (gfn < range->end &&
 		    (gfn + nr_pages) <= (slot->base_gfn + slot->npages)) {
-			if (hugepage_has_attrs(&kvm->mem_attr_array, slot, gfn,
-					       level, attrs))
+			if (hugepage_has_attrs(mem_attr_array, slot, gfn, level, attrs))
 				hugepage_clear_mixed(slot, gfn, level);
 			else
 				hugepage_set_mixed(slot, gfn, level);
