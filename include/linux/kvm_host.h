@@ -256,7 +256,10 @@ int kvm_async_pf_wakeup_all(struct kvm_vcpu *vcpu);
 #ifdef CONFIG_KVM_GENERIC_MMU_NOTIFIER
 union kvm_mmu_notifier_arg {
 	pte_t pte;
-	unsigned long attributes;
+	struct {
+		unsigned long attributes;
+		struct xarray *mem_attr_array;
+	};
 };
 
 struct kvm_gfn_range {
