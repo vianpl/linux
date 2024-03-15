@@ -3465,7 +3465,7 @@ static void kvm_hv_inject_gpa_intercept(struct kvm_vcpu *vcpu,
 	kvm_vcpu_kick(target_vcpu);
 }
 
-bool kvm_hv_vsm_access_valid(struct kvm_page_fault *fault, unsigned long attrs)
+static bool kvm_hv_vsm_access_valid(struct kvm_page_fault *fault, unsigned long attrs)
 {
 	if (attrs == KVM_MEMORY_ATTRIBUTE_NO_ACCESS)
 		return false;

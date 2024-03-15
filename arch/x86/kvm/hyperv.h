@@ -283,6 +283,27 @@ static inline void kvm_hv_nested_transtion_tlb_flush(struct kvm_vcpu *vcpu,
 }
 
 int kvm_hv_vcpu_flush_tlb(struct kvm_vcpu *vcpu);
+
+static inline bool kvm_hv_vsm_enabled(struct kvm *kvm)
+{
+       return kvm->arch.hyperv.hv_enable_vsm;
+}
+
+int kvm_vm_ioctl_get_hv_vsm_state(struct kvm *kvm, struct kvm_hv_vsm_state *state);
+
+static inline void kvm_mmu_role_set_hv_bits(struct kvm_vcpu *vcpu,
+					    union kvm_mmu_page_role *role)
+{
+	role->vtl = kvm_hv_get_active_vtl(vcpu);
+}
+
+int kvm_hv_vtl_dev_register(void);
+void kvm_hv_vtl_dev_unregister(void);
+int kvm_hv_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault);
+
+void kvm_hv_deliver_intercept(struct kvm_vcpu *vcpu);
+
+void dump_ftrace_vcpu_hyperv(struct kvm_vcpu *vcpu);
 #else /* CONFIG_KVM_HYPERV */
 static inline void kvm_hv_setup_tsc_page(struct kvm *kvm,
 					 struct pvclock_vcpu_time_info *hv_clock) {}
@@ -341,26 +362,5 @@ static inline u32 kvm_hv_get_vpindex(struct kvm_vcpu *vcpu)
 }
 static inline void kvm_hv_nested_transtion_tlb_flush(struct kvm_vcpu *vcpu, bool tdp_enabled) {}
 #endif /* CONFIG_KVM_HYPERV */
-
-static inline bool kvm_hv_vsm_enabled(struct kvm *kvm)
-{
-       return kvm->arch.hyperv.hv_enable_vsm;
-}
-
-int kvm_vm_ioctl_get_hv_vsm_state(struct kvm *kvm, struct kvm_hv_vsm_state *state);
-
-static inline void kvm_mmu_role_set_hv_bits(struct kvm_vcpu *vcpu,
-					    union kvm_mmu_page_role *role)
-{
-	role->vtl = kvm_hv_get_active_vtl(vcpu);
-}
-
-int kvm_hv_vtl_dev_register(void);
-void kvm_hv_vtl_dev_unregister(void);
-int kvm_hv_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault);
-
-void kvm_hv_deliver_intercept(struct kvm_vcpu *vcpu);
-
-void dump_ftrace_vcpu_hyperv(struct kvm_vcpu *vcpu);
 
 #endif /* __ARCH_X86_KVM_HYPERV_H__ */

@@ -6,6 +6,7 @@
 
 #include "../cpuid.h"
 #include "hyperv.h"
+#include "../hyperv.h"
 #include "nested.h"
 #include "vmcs.h"
 #include "vmx.h"

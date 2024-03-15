@@ -9,6 +9,7 @@
 
 #include "cpuid.h"
 #include "hyperv.h"
+#include "../hyperv.h"
 #include "mmu.h"
 #include "nested.h"
 #include "pmu.h"

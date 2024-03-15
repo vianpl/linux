@@ -52,6 +52,7 @@
 #include "capabilities.h"
 #include "cpuid.h"
 #include "hyperv.h"
+#include "../hyperv.h"
 #include "kvm_onhyperv.h"
 #include "irq.h"
 #include "kvm_cache_regs.h"
