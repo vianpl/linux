@@ -183,6 +183,7 @@ static int synic_set_sint(struct kvm_vcpu_hv_synic *synic, int sint,
 	old_vector = synic_read_sint(synic, sint) & HV_SYNIC_SINT_VECTOR_MASK;
 
 	atomic64_set(&synic->sint[sint], data);
+	trace_printk("sint %d, val %llx, synic %llx\n", sint, data, (long long)synic);
 
 	synic_update_vector(synic, old_vector);
 
@@ -680,6 +681,7 @@ static void synic_init(struct kvm_vcpu_hv_synic *synic)
 	synic->version = HV_SYNIC_VERSION_1;
 	for (i = 0; i < ARRAY_SIZE(synic->sint); i++) {
 		atomic64_set(&synic->sint[i], HV_SYNIC_SINT_MASKED);
+		trace_printk("sint %d, val %llx\n", i, HV_SYNIC_SINT_MASKED);
 		atomic_set(&synic->sint_to_gsi[i], -1);
 	}
 }
@@ -2287,7 +2289,7 @@ ret_success:
 }
 
 static void kvm_hv_send_ipi_to_many(struct kvm *kvm, u32 vector,
-				    u64 *sparse_banks, u64 valid_bank_mask, int vtl)
+				    u64 *sparse_banks, u64 valid_bank_mask)
 {
 	struct kvm_lapic_irq irq = {
 		.delivery_mode = APIC_DM_FIXED,
@@ -2300,9 +2302,6 @@ static void kvm_hv_send_ipi_to_many(struct kvm *kvm, u32 vector,
 		if (sparse_banks &&
 		    !hv_is_vp_in_sparse_set(kvm_hv_get_vpindex(vcpu),
 					    valid_bank_mask, sparse_banks))
-			continue;
-
-		if (kvm_hv_get_active_vtl(vcpu) != vtl)
 			continue;
 
 		/* We fail only when APIC is disabled */
@@ -2321,13 +2320,9 @@ static u64 kvm_hv_send_ipi(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 	u64 valid_bank_mask;
 	u32 vector;
 	bool all_cpus;
-	u8 vtl;
-
-	/* VTL is at the same offset on both IPI types */
-	in_vtl = &send_ipi.in_vtl;
-	vtl = in_vtl->use_target_vtl ? in_vtl->target_vtl : kvm_hv_get_active_vtl(vcpu);
 
 	if (hc->code == HVCALL_SEND_IPI) {
+		in_vtl = &send_ipi.in_vtl;
 		if (!hc->fast) {
 			if (unlikely(kvm_vcpu_read_guest(vcpu, hc->ingpa, &send_ipi,
 						    sizeof(send_ipi))))
@@ -2336,16 +2331,21 @@ static u64 kvm_hv_send_ipi(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 			vector = send_ipi.vector;
 		} else {
 			/* 'reserved' part of hv_send_ipi should be 0 */
-			if (unlikely(hc->ingpa >> 32 != 0))
+			if (unlikely(hc->ingpa >> 40 != 0))
 				return HV_STATUS_INVALID_HYPERCALL_INPUT;
+			in_vtl->as_uint8 = (u8)(hc->ingpa >> 32);
 			sparse_banks[0] = hc->outgpa;
 			vector = (u32)hc->ingpa;
 		}
 		all_cpus = false;
 		valid_bank_mask = BIT_ULL(0);
 
-		trace_kvm_hv_send_ipi(vector, sparse_banks[0], vtl);
+		if (in_vtl->use_target_vtl)
+			return HV_STATUS_OPERATION_DENIED;
+
+		trace_kvm_hv_send_ipi(vector, sparse_banks[0]);
 	} else {
+		in_vtl = &send_ipi_ex.in_vtl;
 		if (!hc->fast) {
 			if (unlikely(kvm_vcpu_read_guest(vcpu, hc->ingpa, &send_ipi_ex,
 						    sizeof(send_ipi_ex))))
@@ -2354,12 +2354,15 @@ static u64 kvm_hv_send_ipi(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 			send_ipi_ex.vector = (u32)hc->ingpa;
 			send_ipi_ex.vp_set.format = hc->outgpa;
 			send_ipi_ex.vp_set.valid_bank_mask = sse128_lo(hc->xmm[0]);
+			in_vtl->as_uint8 = (u8)(hc->ingpa >> 32);
 		}
+
+		if (in_vtl->use_target_vtl)
+			return HV_STATUS_OPERATION_DENIED;
 
 		trace_kvm_hv_send_ipi_ex(send_ipi_ex.vector,
 					 send_ipi_ex.vp_set.format,
-					 send_ipi_ex.vp_set.valid_bank_mask,
-					 vtl);
+					 send_ipi_ex.vp_set.valid_bank_mask);
 
 		vector = send_ipi_ex.vector;
 		valid_bank_mask = send_ipi_ex.vp_set.valid_bank_mask;
@@ -2389,9 +2392,9 @@ check_and_send_ipi:
 		return HV_STATUS_INVALID_HYPERCALL_INPUT;
 
 	if (all_cpus)
-		kvm_hv_send_ipi_to_many(kvm, vector, NULL, 0, vtl);
+		kvm_hv_send_ipi_to_many(kvm, vector, NULL, 0);
 	else
-		kvm_hv_send_ipi_to_many(kvm, vector, sparse_banks, valid_bank_mask, vtl);
+		kvm_hv_send_ipi_to_many(kvm, vector, sparse_banks, valid_bank_mask);
 
 ret_success:
 	return HV_STATUS_SUCCESS;
@@ -2513,7 +2516,8 @@ static void kvm_hv_write_xmm(struct kvm_hyperv_xmm_reg *xmm)
 
 static bool kvm_hv_is_xmm_output_hcall(u16 code)
 {
-	if (code == HVCALL_GET_VP_REGISTERS)
+	if (code == HVCALL_GET_VP_REGISTERS ||
+	    code == HVCALL_TRANSLATE_VIRTUAL_ADDRESS)
 		return true;
 
 	return false;
@@ -2665,7 +2669,7 @@ static u64 kvm_hv_xlate_va_walk(struct kvm_vcpu* vcpu, u64 gva, u8 flags)
 	return vcpu->arch.walk_mmu->gva_to_gpa(vcpu, mmu, gva, access, NULL);
 }
 
-static u64 kvm_hv_translate_virtual_address(struct kvm_vcpu* vcpu,
+__maybe_unused static u64 kvm_hv_translate_virtual_address(struct kvm_vcpu* vcpu,
 					    struct kvm_hv_hcall *hc)
 {
 	struct hv_xlate_va_output output = {};
@@ -2941,6 +2945,9 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 			break;
 		}
 		ret = kvm_hv_send_ipi(vcpu, &hc);
+		/* VTL-enabled ipi, let user-space handle it */
+		if (ret == HV_STATUS_OPERATION_DENIED)
+			goto hypercall_userspace_exit;
 		break;
 	case HVCALL_POST_DEBUG_DATA:
 	case HVCALL_RETRIEVE_DEBUG_DATA:
@@ -2983,6 +2990,7 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 	case HVCALL_MODIFY_VTL_PROTECTION_MASK:
 	case HVCALL_ENABLE_PARTITION_VTL:
 	case HVCALL_ENABLE_VP_VTL:
+	case HVCALL_TRANSLATE_VIRTUAL_ADDRESS:
 		goto hypercall_userspace_exit;
 	case HVCALL_VTL_CALL:
 	case HVCALL_VTL_RETURN:
@@ -2994,13 +3002,13 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 		trace_printk("---------------------------------------------------------------------------\n");
 		kvm_get_vcpu_by_id(vcpu->kvm, 0)->dump_state_on_run = true;
 		goto hypercall_userspace_exit;
-	case HVCALL_TRANSLATE_VIRTUAL_ADDRESS:
-		if (unlikely(hc.rep_cnt)) {
-			ret = HV_STATUS_INVALID_HYPERCALL_INPUT;
-			break;
-		}
-		ret = kvm_hv_translate_virtual_address(vcpu, &hc);
-		break;
+	/* case HVCALL_TRANSLATE_VIRTUAL_ADDRESS: */
+		/* if (unlikely(hc.rep_cnt)) { */
+			/* ret = HV_STATUS_INVALID_HYPERCALL_INPUT; */
+			/* break; */
+		/* } */
+		/* ret = kvm_hv_translate_virtual_address(vcpu, &hc); */
+		/* break; */
 	default:
 		ret = HV_STATUS_INVALID_HYPERCALL_CODE;
 		break;
@@ -3439,13 +3447,15 @@ struct kvm_hv_vtl_dev {
 
 static struct xarray *kvm_hv_vsm_get_memprots(struct kvm_vcpu *vcpu);
 
-static void kvm_hv_inject_gpa_intercept(struct kvm_vcpu *vcpu,
+__maybe_unused static void kvm_hv_inject_gpa_intercept(struct kvm_vcpu *vcpu,
 					struct kvm_page_fault *fault)
 {
 	struct kvm_vcpu *target_vcpu =
 		kvm_hv_get_vtl_vcpu(vcpu, kvm_hv_get_active_vtl(vcpu) + 1);
 	struct kvm_vcpu_hv_intercept_info *intercept =
 		&target_vcpu->arch.hyperv->intercept_info;
+
+	return;
 
 	/*
         * No target VTL available, log a warning and let user-space deal with
@@ -3486,7 +3496,7 @@ static bool kvm_hv_vsm_access_valid(struct kvm_page_fault *fault, unsigned long 
 static unsigned long kvm_hv_vsm_get_memory_attributes(struct kvm_vcpu *vcpu,
 						      gfn_t gfn)
 {
-	struct xarray *prots = kvm_hv_vsm_get_memprots(vcpu);
+	struct xarray *prots = &vcpu->kvm->mem_attr_array;
 
 	if (!prots)
 		return 0;
@@ -3512,7 +3522,11 @@ int kvm_hv_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 		return RET_PF_CONTINUE;
 	}
 
-	kvm_hv_inject_gpa_intercept(vcpu, fault);
+	pr_info("%llx: vcpu%d gfn %llx write %d exec %d user %d prots %lx",
+		(long long)vcpu->kvm, vcpu->vcpu_id, fault->gfn, fault->write, fault->exec,
+		fault->user, attrs);
+
+	//kvm_hv_inject_gpa_intercept(vcpu, fault);
 	return -EFAULT;
 }
 
@@ -3604,7 +3618,7 @@ static struct kvm_device_ops kvm_hv_vtl_ops = {
 	.get_attr = kvm_hv_vtl_get_attr,
 };
 
-static struct xarray *kvm_hv_vsm_get_memprots(struct kvm_vcpu *vcpu)
+__maybe_unused static struct xarray *kvm_hv_vsm_get_memprots(struct kvm_vcpu *vcpu)
 {
 	struct kvm_hv_vtl_dev *vtl_dev;
 	struct kvm_device *tmp;
@@ -3666,7 +3680,7 @@ void dump_ftrace_vcpu_hyperv(struct kvm_vcpu *vcpu)
 	struct hv_vp_vtl_control vtl_control;
 
 	trace_printk("*** HyperV VTL state ***\n");
-	if (kvm_hv_get_active_vtl(vcpu) && hv_read_vtl_control(vcpu, &vtl_control))
+	if (hv_read_vtl_control(vcpu, &vtl_control))
 		trace_printk("entry_reason 0x%x, vina %d, rax %llx, rcx %llx\n",
 			     vtl_control.vtl_entry_reason, vtl_control.vina_asserted,
 			     vtl_control.vtl_ret_x64rax, vtl_control.vtl_ret_x64rcx);

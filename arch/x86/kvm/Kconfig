@@ -143,6 +143,7 @@ config KVM_HYPERV
 	bool "Support for Microsoft Hyper-V emulation"
 	depends on KVM
 	default y
+	select KVM_GENERIC_MEMORY_ATTRIBUTES
 	help
 	  Provides KVM support for emulating Microsoft Hyper-V.  This allows KVM
 	  to expose a subset of the paravirtualized interfaces defined in the

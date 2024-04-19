@@ -570,4 +570,9 @@ struct kvm_hv_vsm_state {
 	__u64 vsm_code_page_offsets;
 };
 
+/* for KVM_HV_VTL_VCPU_MAP */
+struct kvm_hv_vtl_map {
+	int vtl;
+};
+
 #endif /* _ASM_X86_KVM_H */

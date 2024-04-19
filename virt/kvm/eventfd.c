@@ -299,6 +299,21 @@ bool __attribute__((weak)) kvm_arch_irqfd_route_changed(
 }
 #endif
 
+struct eventfd_ctx {
+	struct kref kref;
+	wait_queue_head_t wqh;
+	/*
+	 * Every time that a write(2) is performed on an eventfd, the
+	 * value of the __u64 being written is added to "count" and a
+	 * wakeup is performed on "wqh". If EFD_SEMAPHORE flag was not
+	 * specified, a read(2) will return the "count" value to userspace,
+	 * and will reset "count" to zero. The kernel side eventfd_signal()
+	 * also, adds to the "count" counter and issue a wakeup.
+	 */
+	__u64 count;
+	unsigned int flags;
+	int id;
+};
 static int
 kvm_irqfd_assign(struct kvm *kvm, struct kvm_irqfd *args)
 {

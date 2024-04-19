@@ -6675,6 +6675,7 @@ split_irqchip_unlock:
 	case KVM_CAP_HYPERV_VSM:
 		kvm_hv_vtl_dev_register();
 		kvm->arch.hyperv.hv_enable_vsm = true;
+		pr_info("Enabled VSM: %llx\n", (long long)kvm);
 		r = 0;
 		break;
 	default:
@@ -7292,6 +7293,9 @@ set_pit2_out:
 			goto out;
 
 		r = 0;
+		break;
+	}
+	case KVM_HV_SET_VTL_MAP: {
 		break;
 	}
 	default:
@@ -11866,7 +11870,7 @@ void dump_ftrace_vcpu_state(struct kvm_vcpu *vcpu)
 	dump_ftrace_vcpu_sregs2(vcpu);
 	dump_ftrace_vcpu_kvm_lapic_state(vcpu);
 	dump_ftrace_vcpu_debugregs(vcpu);
-	dump_ftrace_vcpu_hyperv(vcpu);
+	//dump_ftrace_vcpu_hyperv(vcpu);
 }
 
 int kvm_task_switch(struct kvm_vcpu *vcpu, u16 tss_selector, int idt_index,

@@ -2629,10 +2629,14 @@ int kvm_ioctl_set_mem_attributes(struct kvm *kvm, struct xarray *mem_attr_array,
 #ifdef CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES
 static u64 kvm_supported_mem_attributes(struct kvm *kvm)
 {
-	if (!kvm || kvm_arch_has_private_mem(kvm))
-		return KVM_MEMORY_ATTRIBUTE_PRIVATE;
+	u64 supported_attrs =
+		KVM_MEMORY_ATTRIBUTE_READ | KVM_MEMORY_ATTRIBUTE_WRITE |
+		KVM_MEMORY_ATTRIBUTE_EXECUTE | KVM_MEMORY_ATTRIBUTE_NO_ACCESS;
 
-	return 0;
+	if (!kvm || kvm_arch_has_private_mem(kvm))
+		supported_attrs |= KVM_MEMORY_ATTRIBUTE_PRIVATE;
+
+	return supported_attrs;
 }
 
 static int kvm_vm_ioctl_set_mem_attributes(struct kvm *kvm,

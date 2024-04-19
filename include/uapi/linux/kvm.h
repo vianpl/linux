@@ -475,12 +475,10 @@ struct kvm_run {
 #define KVM_MEMORY_EXIT_FLAG_WRITE	(1ULL << 1)
 #define KVM_MEMORY_EXIT_FLAG_EXECUTE	(1ULL << 2)
 #define KVM_MEMORY_EXIT_FLAG_PRIVATE	(1ULL << 3)
-#define KVM_MEMORY_EXIT_NO_ACCESS                            \
-	(KVM_MEMORY_EXIT_FLAG_NR | KVM_MEMORY_EXIT_FLAG_NW | \
-	 KVM_MEMORY_EXIT_FLAG_NX)
 			__u64 flags;
 			__u64 gpa;
 			__u64 size;
+			__u8 exit_instruction_len;
 		} memory_fault;
 		/* Fix the size of the union. */
 		char padding[256];
@@ -2252,5 +2250,8 @@ struct kvm_create_guest_memfd {
 
 /* Get/Set Hyper-V VSM state. Available with KVM_CAP_HYPERV_VSM */
 #define KVM_HV_GET_VSM_STATE _IOR(KVMIO, 0xd5, struct kvm_hv_vsm_state)
+
+/* Link vCPU with its sibling VTL vCPUs. Available with KVM_CAP_HYPERV_VSM */
+#define KVM_HV_SET_VTL_MAP _IOW(KVMIO, 0xd8, struct kvm_hv_vtl_map)
 
 #endif /* __LINUX_KVM_H */
