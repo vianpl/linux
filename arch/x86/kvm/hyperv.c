@@ -183,7 +183,6 @@ static int synic_set_sint(struct kvm_vcpu_hv_synic *synic, int sint,
 	old_vector = synic_read_sint(synic, sint) & HV_SYNIC_SINT_VECTOR_MASK;
 
 	atomic64_set(&synic->sint[sint], data);
-	trace_printk("sint %d, val %llx, synic %llx\n", sint, data, (long long)synic);
 
 	synic_update_vector(synic, old_vector);
 
@@ -681,7 +680,6 @@ static void synic_init(struct kvm_vcpu_hv_synic *synic)
 	synic->version = HV_SYNIC_VERSION_1;
 	for (i = 0; i < ARRAY_SIZE(synic->sint); i++) {
 		atomic64_set(&synic->sint[i], HV_SYNIC_SINT_MASKED);
-		trace_printk("sint %d, val %llx\n", i, HV_SYNIC_SINT_MASKED);
 		atomic_set(&synic->sint_to_gsi[i], -1);
 	}
 }
@@ -2627,96 +2625,6 @@ static u64 kvm_hv_ext_query_capabilities(struct kvm_vcpu *vcpu, struct kvm_hv_hc
 	return HV_STATUS_SUCCESS;
 }
 
-static bool kvm_hv_xlate_va_validate_input(struct kvm_vcpu* vcpu,
-					   struct hv_xlate_va_input *in,
-					   u8 *vtl, u8 *flags)
-{
-	union hv_input_vtl in_vtl;
-
-	if (in->partition_id != HV_PARTITION_ID_SELF)
-		return false;
-
-	if (in->vp_index != HV_VP_INDEX_SELF &&
-	    in->vp_index != kvm_hv_get_vpindex(vcpu))
-		return false;
-
-	in_vtl.as_uint8 = in->control_flags >> 56;
-	*flags = in->control_flags & HV_XLATE_GVA_FLAGS_MASK;
-	if (*flags > (HV_XLATE_GVA_VAL_READ |
-		      HV_XLATE_GVA_VAL_WRITE |
-		      HV_XLATE_GVA_VAL_EXECUTE))
-		pr_info_ratelimited("Translate VA control flags unsupported and will be ignored: 0x%llx\n",
-				    in->control_flags);
-
-	*vtl = in_vtl.use_target_vtl ? in_vtl.target_vtl :
-					     kvm_hv_get_active_vtl(vcpu);
-	if (*vtl > kvm_hv_get_active_vtl(vcpu))
-		return false;
-
-	return true;
-}
-
-static u64 kvm_hv_xlate_va_walk(struct kvm_vcpu* vcpu, u64 gva, u8 flags)
-{
-	struct kvm_mmu *mmu = vcpu->arch.walk_mmu;
-	u32 access = 0;
-
-	if (flags & HV_XLATE_GVA_VAL_WRITE)
-		access |= PFERR_WRITE_MASK;
-	if (flags & HV_XLATE_GVA_VAL_EXECUTE)
-		access |= PFERR_FETCH_MASK;
-
-	return vcpu->arch.walk_mmu->gva_to_gpa(vcpu, mmu, gva, access, NULL);
-}
-
-__maybe_unused static u64 kvm_hv_translate_virtual_address(struct kvm_vcpu* vcpu,
-					    struct kvm_hv_hcall *hc)
-{
-	struct hv_xlate_va_output output = {};
-	struct hv_xlate_va_input input;
-	struct kvm_vcpu *target_vcpu;
-	u8 flags, target_vtl;
-
-	if (hc->fast) {
-		input.partition_id = hc->ingpa;
-		input.vp_index = hc->outgpa & 0xFFFFFFFF;
-		input.control_flags = sse128_lo(hc->xmm[0]);
-		input.gva = sse128_hi(hc->xmm[0]);
-	} else {
-		if (kvm_read_guest(vcpu->kvm, hc->ingpa, &input, sizeof(input)))
-			return HV_STATUS_INVALID_HYPERCALL_INPUT;
-	}
-
-	trace_kvm_hv_translate_virtual_address(input.partition_id,
-					       input.vp_index,
-					       input.control_flags, input.gva);
-
-	if (!kvm_hv_xlate_va_validate_input(vcpu, &input, &target_vtl, &flags))
-		return HV_STATUS_INVALID_HYPERCALL_INPUT;
-
-	target_vcpu = kvm_hv_get_vtl_vcpu(vcpu, target_vtl);
-	output.gpa = kvm_hv_xlate_va_walk(target_vcpu, input.gva << PAGE_SHIFT,
-					  flags);
-	if (output.gpa == INVALID_GPA) {
-		output.result_code = HV_XLATE_GVA_UNMAPPED;
-	} else {
-		output.gpa >>= PAGE_SHIFT;
-		output.result_code = HV_XLATE_GVA_SUCCESS;
-		output.cache_type = HV_CACHE_TYPE_X64_WB;
-	}
-
-	if (hc->fast) {
-		memcpy(&hc->xmm[1], &output, sizeof(output));
-		hc->xmm_dirty = true;
-	} else {
-		if (kvm_write_guest(vcpu->kvm, hc->outgpa, &output,
-				    sizeof(output)))
-			return HV_STATUS_INVALID_HYPERCALL_INPUT;
-	}
-
-	return HV_STATUS_SUCCESS;
-}
-
 static bool hv_check_hypercall_access(struct kvm_vcpu_hv *hv_vcpu, u16 code)
 {
 	if (!hv_vcpu->enforce_cpuid)
@@ -2808,6 +2716,11 @@ static bool is_hypercall_advertised(struct kvm_vcpu *vcpu, u16 code)
 		break;
 	case HV_EXT_CALL_QUERY_CAPABILITIES:
 		feature_mask = HV_ENABLE_EXTENDED_HYPERCALLS;
+		reg = VCPU_REGS_RBX;
+		break;
+	case HVCALL_GET_VP_ID_FROM_APIC_ID:
+	case HVCALL_START_VP:
+		feature_mask = HV_START_VIRTUAL_PROCESSOR;
 		reg = VCPU_REGS_RBX;
 		break;
 	default:
@@ -2991,6 +2904,8 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 	case HVCALL_ENABLE_PARTITION_VTL:
 	case HVCALL_ENABLE_VP_VTL:
 	case HVCALL_TRANSLATE_VIRTUAL_ADDRESS:
+	case HVCALL_START_VP:
+	case HVCALL_GET_VP_ID_FROM_APIC_ID:
 		goto hypercall_userspace_exit;
 	case HVCALL_VTL_CALL:
 	case HVCALL_VTL_RETURN:
@@ -3000,15 +2915,7 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 		dump_ftrace_vmcs(vcpu);
 		dump_ftrace_vcpu_state(vcpu);
 		trace_printk("---------------------------------------------------------------------------\n");
-		kvm_get_vcpu_by_id(vcpu->kvm, 0)->dump_state_on_run = true;
 		goto hypercall_userspace_exit;
-	/* case HVCALL_TRANSLATE_VIRTUAL_ADDRESS: */
-		/* if (unlikely(hc.rep_cnt)) { */
-			/* ret = HV_STATUS_INVALID_HYPERCALL_INPUT; */
-			/* break; */
-		/* } */
-		/* ret = kvm_hv_translate_virtual_address(vcpu, &hc); */
-		/* break; */
 	default:
 		ret = HV_STATUS_INVALID_HYPERCALL_CODE;
 		break;
@@ -3344,6 +3251,7 @@ int kvm_get_hv_cpuid(struct kvm_vcpu *vcpu, struct kvm_cpuid2 *cpuid,
 			ent->ebx |= HV_ENABLE_EXTENDED_HYPERCALLS;
 			ent->ebx |= HV_ACCESS_VP_REGISTERS;
 			ent->ebx |= HV_ACCESS_VSM;
+			ent->ebx |= HV_START_VIRTUAL_PROCESSOR;
 
 			ent->edx |= HV_X64_HYPERCALL_XMM_INPUT_AVAILABLE;
 			ent->edx |= HV_X64_HYPERCALL_XMM_OUTPUT_AVAILABLE;
@@ -3445,36 +3353,6 @@ struct kvm_hv_vtl_dev {
 	struct xarray mem_attrs;
 };
 
-static struct xarray *kvm_hv_vsm_get_memprots(struct kvm_vcpu *vcpu);
-
-__maybe_unused static void kvm_hv_inject_gpa_intercept(struct kvm_vcpu *vcpu,
-					struct kvm_page_fault *fault)
-{
-	struct kvm_vcpu *target_vcpu =
-		kvm_hv_get_vtl_vcpu(vcpu, kvm_hv_get_active_vtl(vcpu) + 1);
-	struct kvm_vcpu_hv_intercept_info *intercept =
-		&target_vcpu->arch.hyperv->intercept_info;
-
-	return;
-
-	/*
-        * No target VTL available, log a warning and let user-space deal with
-        * the fault.
-        */
-	if (WARN_ON_ONCE(!target_vcpu))
-		return;
-
-	intercept->type = HVMSG_GPA_INTERCEPT;
-	intercept->gpa = fault->addr;
-	intercept->access = (fault->user ? HV_INTERCEPT_ACCESS_READ : 0) |
-			    (fault->write ? HV_INTERCEPT_ACCESS_WRITE : 0) |
-			    (fault->exec ? HV_INTERCEPT_ACCESS_EXECUTE : 0);
-	intercept->vcpu = vcpu;
-
-	kvm_make_request(KVM_REQ_HV_INJECT_INTERCEPT, target_vcpu);
-	kvm_vcpu_kick(target_vcpu);
-}
-
 static bool kvm_hv_vsm_access_valid(struct kvm_page_fault *fault, unsigned long attrs)
 {
 	if (attrs == KVM_MEMORY_ATTRIBUTE_NO_ACCESS)
@@ -3526,7 +3404,6 @@ int kvm_hv_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 		(long long)vcpu->kvm, vcpu->vcpu_id, fault->gfn, fault->write, fault->exec,
 		fault->user, attrs);
 
-	//kvm_hv_inject_gpa_intercept(vcpu, fault);
 	return -EFAULT;
 }
 
@@ -3617,21 +3494,6 @@ static struct kvm_device_ops kvm_hv_vtl_ops = {
 	.ioctl = kvm_hv_vtl_ioctl,
 	.get_attr = kvm_hv_vtl_get_attr,
 };
-
-__maybe_unused static struct xarray *kvm_hv_vsm_get_memprots(struct kvm_vcpu *vcpu)
-{
-	struct kvm_hv_vtl_dev *vtl_dev;
-	struct kvm_device *tmp;
-
-	list_for_each_entry(tmp, &vcpu->kvm->devices, vm_node)
-		if (tmp->ops == &kvm_hv_vtl_ops) {
-			vtl_dev = tmp->private;
-			if (vtl_dev->vtl == kvm_hv_get_active_vtl(vcpu))
-				return &vtl_dev->mem_attrs;
-		}
-
-	return NULL;
-}
 
 static int kvm_hv_vtl_create(struct kvm_device *dev, u32 type)
 {

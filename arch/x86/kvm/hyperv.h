@@ -86,23 +86,6 @@ static inline struct kvm_hv_syndbg *to_hv_syndbg(struct kvm_vcpu *vcpu)
 	return &vcpu->kvm->arch.hyperv.hv_syndbg;
 }
 
-static inline struct kvm_vcpu *kvm_hv_get_vtl_vcpu(struct kvm_vcpu *vcpu, int vtl)
-{
-	struct kvm *kvm = vcpu->kvm;
-	u32 target_id = kvm_apic_id(vcpu);
-
-	kvm_apic_id_set_group(kvm, vtl, &target_id);
-	if (vcpu->vcpu_id == target_id)
-		return vcpu;
-
-	return kvm_get_vcpu_by_id(kvm, target_id);
-}
-
-static inline u8 kvm_hv_get_active_vtl(struct kvm_vcpu *vcpu)
-{
-	return kvm_apic_group(vcpu);
-}
-
 static inline u32 kvm_hv_get_vpindex(struct kvm_vcpu *vcpu)
 {
 	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
@@ -290,12 +273,6 @@ static inline bool kvm_hv_vsm_enabled(struct kvm *kvm)
 }
 
 int kvm_vm_ioctl_get_hv_vsm_state(struct kvm *kvm, struct kvm_hv_vsm_state *state);
-
-static inline void kvm_mmu_role_set_hv_bits(struct kvm_vcpu *vcpu,
-					    union kvm_mmu_page_role *role)
-{
-	role->vtl = kvm_hv_get_active_vtl(vcpu);
-}
 
 int kvm_hv_vtl_dev_register(void);
 void kvm_hv_vtl_dev_unregister(void);

@@ -5348,11 +5348,11 @@ static int handle_exception_nmi(struct kvm_vcpu *vcpu)
 static __always_inline int handle_external_interrupt(struct kvm_vcpu *vcpu)
 {
 	++vcpu->stat.irq_exits;
-	trace_printk("-------------------------------------------VCPU%d---------------------------------\n", vcpu->vcpu_id);
-	trace_printk("External interrupt\n");
-	dump_ftrace_vmcs(vcpu);
-	dump_ftrace_vcpu_state(vcpu);
-	trace_printk("---------------------------------------------------------------------------\n");
+	/* trace_printk("-------------------------------------------VCPU%d---------------------------------\n", vcpu->vcpu_id); */
+	/* trace_printk("External interrupt\n"); */
+	/* dump_ftrace_vmcs(vcpu); */
+	/* dump_ftrace_vcpu_state(vcpu); */
+	/* trace_printk("---------------------------------------------------------------------------\n"); */
 	return 1;
 }
 
