@@ -2909,8 +2909,7 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 		goto hypercall_userspace_exit;
 	case HVCALL_VTL_CALL:
 	case HVCALL_VTL_RETURN:
-		vcpu->dump_state_on_run = true;
-		trace_printk("-------------------------------------------VCPU%d---------------------------------\n", vcpu->vcpu_id);
+		trace_printk("-------------------------------------------KVM:0x%llx|VCPU%d---------------------------------\n", (long long)vcpu->kvm, vcpu->vcpu_id);
 		trace_printk("Exiting to user-space with code 0x%x\n", hc.code);
 		dump_ftrace_vmcs(vcpu);
 		dump_ftrace_vcpu_state(vcpu);
@@ -3530,7 +3529,8 @@ void kvm_hv_vtl_dev_unregister(void)
 static bool hv_read_vtl_control(struct kvm_vcpu *vcpu, struct hv_vp_vtl_control *vtl_control)
 {
        /* VTL control is a part of VP assist page, which is accessed through pv_eoi */
-	if (!vcpu->arch.pv_eoi.data.len)
+	if (!vcpu->arch.pv_eoi.data.len ||
+	     vcpu->arch.pv_eoi.data.len < sizeof(struct hv_vp_assist_page))
 		return 0;
 
 	return !kvm_read_guest_offset_cached(vcpu->kvm, &vcpu->arch.pv_eoi.data, vtl_control,

@@ -235,7 +235,8 @@ struct kvm_run {
 	/* in */
 	__u8 request_interrupt_window;
 	__u8 immediate_exit;
-	__u8 padding1[6];
+	__u8 dump_state_on_run;
+	__u8 padding1[5];
 
 	/* out */
 	__u32 exit_reason;

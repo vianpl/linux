@@ -503,7 +503,6 @@ static void kvm_vcpu_init(struct kvm_vcpu *vcpu, struct kvm *kvm, unsigned id)
 	snprintf(vcpu->stats_id, sizeof(vcpu->stats_id), "kvm-%d/vcpu-%d",
 		 task_pid_nr(current), id);
 	init_waitqueue_head(&vcpu->wqh);
-	vcpu->dump_state_on_run = true;
 }
 
 static void kvm_vcpu_destroy(struct kvm_vcpu *vcpu)
@@ -3984,9 +3983,9 @@ void kvm_vcpu_kick(struct kvm_vcpu *vcpu)
 
 	if (!cmpxchg(&vcpu->kicked, false, true)) {
 		wake_up_interruptible(&vcpu->wqh);
-		trace_printk("vCPU%d\n", vcpu->vcpu_id);
+		trace_printk("kvm 0x%llx, vCPU%d\n", (long long)vcpu->kvm,
+			     vcpu->vcpu_id);
 		trace_dump_stack(0);
-		kvm_get_vcpu_by_id(vcpu->kvm, 0)->dump_state_on_run = true;
 	}
 
 out:

@@ -7572,17 +7572,26 @@ static fastpath_t vmx_vcpu_run(struct kvm_vcpu *vcpu)
 		vmx_update_hv_timer(vcpu);
 
 	kvm_wait_lapic_expire(vcpu);
-	if (vcpu->dump_state_on_run) {
-		trace_printk("-------------------------------------------VCPU%d---------------------------------\n", vcpu->vcpu_id);
+	if (vcpu->run->dump_state_on_run) {
+		trace_printk("-------------------------------------------KVM:0x%llx|VCPU%d---------------------------------\n", (long long)vcpu->kvm, vcpu->vcpu_id);
 		trace_printk("Entering guest\n");
 		dump_ftrace_vmcs(vcpu);
 		dump_ftrace_vcpu_state(vcpu);
 		trace_printk("---------------------------------------------------------------------------\n");
-		vcpu->dump_state_on_run = false;
+		vcpu->run->dump_state_on_run = false;
 	}
 
 	/* The actual VMENTER/EXIT is in the .noinstr.text section. */
 	vmx_vcpu_enter_exit(vcpu, __vmx_vcpu_run_flags(vmx));
+
+	if (vcpu->run->dump_state_on_run) {
+		trace_printk("-------------------------------------------KVM:0x%llx|VCPU%d---------------------------------\n", (long long)vcpu->kvm, vcpu->vcpu_id);
+		trace_printk("Exiting guest\n");
+		dump_ftrace_vmcs(vcpu);
+		dump_ftrace_vcpu_state(vcpu);
+		trace_printk("---------------------------------------------------------------------------\n");
+		vcpu->run->dump_state_on_run = false;
+	}
 
 	/* All fields are clean at this point */
 	if (kvm_is_using_evmcs()) {

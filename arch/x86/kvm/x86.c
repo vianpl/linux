@@ -11870,7 +11870,7 @@ void dump_ftrace_vcpu_state(struct kvm_vcpu *vcpu)
 	dump_ftrace_vcpu_sregs2(vcpu);
 	dump_ftrace_vcpu_kvm_lapic_state(vcpu);
 	dump_ftrace_vcpu_debugregs(vcpu);
-	//dump_ftrace_vcpu_hyperv(vcpu);
+	dump_ftrace_vcpu_hyperv(vcpu);
 }
 
 int kvm_task_switch(struct kvm_vcpu *vcpu, u16 tss_selector, int idt_index,
