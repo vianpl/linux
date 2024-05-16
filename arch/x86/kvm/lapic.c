@@ -3187,8 +3187,8 @@ static int kvm_lapic_msr_write(struct kvm_lapic *apic, u32 reg, u64 data)
 		return kvm_x2apic_icr_write(apic, data);
 
 	/* Bits 63:32 are reserved in all other registers. */
-	if (data >> 32)
-		return 1;
+	/* if (data >> 32) */
+		/* return 1; */
 
 	return kvm_lapic_reg_write(apic, reg, (u32)data);
 }
