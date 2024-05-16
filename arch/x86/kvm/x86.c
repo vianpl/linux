@@ -3876,8 +3876,6 @@ int kvm_set_msr_common(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 
 		if (!msr_info->host_initiated) {
 			/* RO bits */
-			if ((old_val ^ data) & MSR_IA32_MISC_ENABLE_PMU_RO_MASK)
-				return 1;
 
 			/* R bits, i.e. writes are ignored, but don't fault. */
 			data = data & ~MSR_IA32_MISC_ENABLE_EMON;
