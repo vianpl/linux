@@ -5068,7 +5068,8 @@ int vmx_nmi_allowed(struct kvm_vcpu *vcpu, bool for_injection)
 
 bool __vmx_interrupt_blocked(struct kvm_vcpu *vcpu)
 {
-	return !(vmx_get_rflags(vcpu) & X86_EFLAGS_IF) ||
+	return (!(vmx_get_rflags(vcpu) & X86_EFLAGS_IF) &&
+	       !kvm_hv_vcpu_is_idle_vtl(vcpu)) ||
 	       (vmcs_read32(GUEST_INTERRUPTIBILITY_INFO) &
 		(GUEST_INTR_STATE_STI | GUEST_INTR_STATE_MOV_SS));
 }
