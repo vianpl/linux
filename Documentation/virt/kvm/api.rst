@@ -1523,6 +1523,8 @@ Possible values are:
                                  [s390]
    KVM_MP_STATE_SUSPENDED        the vcpu is in a suspend state and is waiting
                                  for a wakeup event [arm64]
+   KVM_MP_STATE_HV_INACTIVE_VTL  the vcpu is an inactive VTL and is waiting for
+                                 a wakeup event [x86]
    ==========================    ===============================================
 
 On x86, this ioctl is only useful after KVM_CREATE_IRQCHIP. Without an
@@ -1564,6 +1566,23 @@ KVM_MP_STATE_RUNNABLE which reflect if the vcpu is paused or not.
 
 On LoongArch, only the KVM_MP_STATE_RUNNABLE state is used to reflect
 whether the vcpu is runnable.
+
+For x86:
+^^^^^^^^
+
+KVM_MP_STATE_HV_INACTIVE_VTL is only available to a VM if Hyper-V's
+HV_ACCESS_VSM CPUID is exposed to the guest.  This processor state models the
+behavior of an inactive VTL and should only be used for this purpose. A
+userspace process should only switch a vCPU into this MP state in response to a
+HvCallVtlCall, HvCallVtlReturn.
+
+If a vCPU is in KVM_MP_STATE_HV_INACTIVE_VTL, KVM will emulate the
+architectural execution of a HLT instruction with the caveat that RFLAGS.IF is
+ignored when deciding whether to wake up (TLFS 12.12.2.1).  If a wakeup is
+recognized, KVM will exit to userspace with a KVM_SYSTEM_EVENT exit, where the
+event type is KVM_SYSTEM_EVENT_WAKEUP. Userspace has the responsibility to
+switch the vCPU back into KVM_MP_STATE_RUNNABLE state. Calling KVM_RUN on a
+KVM_MP_STATE_HV_INACTIVE_VTL vCPU with pending events will exit immediately.
 
 4.39 KVM_SET_MP_STATE
 ---------------------

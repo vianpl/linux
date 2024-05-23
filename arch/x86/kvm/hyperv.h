@@ -271,6 +271,10 @@ static inline bool kvm_hv_cpuid_vsm_enabled(struct kvm_vcpu *vcpu)
 
 	return hv_vcpu && (hv_vcpu->cpuid_cache.features_ebx & HV_ACCESS_VSM);
 }
+static inline bool kvm_hv_vcpu_is_idle_vtl(struct kvm_vcpu *vcpu)
+{
+	return vcpu->arch.mp_state == KVM_MP_STATE_HV_INACTIVE_VTL;
+}
 #else /* CONFIG_KVM_HYPERV */
 static inline void kvm_hv_setup_tsc_page(struct kvm *kvm,
 					 struct pvclock_vcpu_time_info *hv_clock) {}
@@ -328,6 +332,10 @@ static inline u32 kvm_hv_get_vpindex(struct kvm_vcpu *vcpu)
 }
 static inline void kvm_hv_nested_transtion_tlb_flush(struct kvm_vcpu *vcpu, bool tdp_enabled) {}
 static inline bool kvm_hv_cpuid_vsm_enabled(struct kvm_vcpu *vcpu)
+{
+	return false;
+}
+static inline bool kvm_hv_vcpu_is_idle_vtl(struct kvm_vcpu *vcpu)
 {
 	return false;
 }
