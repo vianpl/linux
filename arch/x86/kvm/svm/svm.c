@@ -49,6 +49,7 @@
 #include "svm.h"
 #include "svm_ops.h"
 
+#include "hyperv.h"
 #include "kvm_onhyperv.h"
 #include "svm_onhyperv.h"
 
@@ -3825,6 +3826,10 @@ bool svm_interrupt_blocked(struct kvm_vcpu *vcpu)
 	if (!gif_set(svm))
 		return true;
 
+	/*
+	 * The Hyper-V TLFS states that RFLAGS.IF is ignored when deciding
+	 * whether to block interrupts targeted at inactive VTLs.
+	 */
 	if (is_guest_mode(vcpu)) {
 		/* As long as interrupts are being delivered...  */
 		if ((svm->nested.ctl.int_ctl & V_INTR_MASKING_MASK)
@@ -3836,7 +3841,7 @@ bool svm_interrupt_blocked(struct kvm_vcpu *vcpu)
 		if (nested_exit_on_intr(svm))
 			return false;
 	} else {
-		if (!svm_get_if_flag(vcpu))
+		if (!svm_get_if_flag(vcpu) && !kvm_hv_vcpu_is_idle_vtl(vcpu))
 			return true;
 	}
 
