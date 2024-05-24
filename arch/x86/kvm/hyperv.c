@@ -1450,7 +1450,7 @@ static int kvm_hv_set_msr_pw(struct kvm_vcpu *vcpu, u32 msr, u64 data,
 			return kvm_hv_msr_set_crash_ctl(kvm, data);
 
 		if (data & HV_CRASH_CTL_CRASH_NOTIFY) {
-			vcpu_debug(vcpu, "hv crash (0x%llx 0x%llx 0x%llx 0x%llx 0x%llx)\n",
+			vcpu_err(vcpu, "hv crash (0x%llx 0x%llx 0x%llx 0x%llx 0x%llx)\n",
 				   hv->hv_crash_param[0],
 				   hv->hv_crash_param[1],
 				   hv->hv_crash_param[2],
