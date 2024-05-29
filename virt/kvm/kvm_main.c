@@ -2563,6 +2563,8 @@ static int kvm_vm_set_mem_attributes(struct kvm *kvm, gfn_t start, gfn_t end,
 
 	kvm_handle_gfn_range(kvm, &post_set_range);
 
+	trace_kvm_vm_set_mem_attributes(start, end - start, attributes);
+
 out_unlock:
 	mutex_unlock(&kvm->slots_lock);
 
