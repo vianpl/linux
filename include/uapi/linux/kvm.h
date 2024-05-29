@@ -441,6 +441,7 @@ struct kvm_run {
 			__u64 flags;
 			__u64 gpa;
 			__u64 size;
+			__u8 insn_len;
 		} memory_fault;
 		/* Fix the size of the union. */
 		char padding[256];
@@ -927,6 +928,7 @@ struct kvm_enable_cap {
 #define KVM_CAP_MEMORY_ATTRIBUTES 233
 #define KVM_CAP_GUEST_MEMFD 234
 #define KVM_CAP_VM_TYPES 235
+#define KVM_CAP_FAULT_EXIT_INSN_LEN 236
 
 struct kvm_irq_routing_irqchip {
 	__u32 irqchip;
