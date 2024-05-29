@@ -7112,11 +7112,15 @@ spec refer, https://github.com/riscv/riscv-sbi-doc.
 			__u64 flags;
 			__u64 gpa;
 			__u64 size;
+                        __u8 insn_len;
 		} memory_fault;
 
 KVM_EXIT_MEMORY_FAULT indicates the vCPU has encountered a memory fault that
 could not be resolved by KVM.  The 'gpa' and 'size' (in bytes) describe the
-guest physical address range [gpa, gpa + size) of the fault.  The 'flags' field
+guest physical address range [gpa, gpa + size) of the fault.  The
+'insn_len' field describes the size (in bytes) of the instruction
+that caused the fault. It is only available if the underlying HW exposes that
+information on guest exit, otherwise it's set to 0.  The 'flags' field
 describes properties of the faulting access that are likely pertinent:
 
  - KVM_MEMORY_EXIT_FLAG_PRIVATE - When set, indicates the memory fault occurred
