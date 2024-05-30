@@ -4318,7 +4318,7 @@ void kvm_arch_async_page_ready(struct kvm_vcpu *vcpu, struct kvm_async_pf *work)
 		return;
 
 	r = kvm_mmu_do_page_fault(vcpu, work->cr2_or_gpa, work->arch.error_code,
-				  true, NULL, NULL);
+				  true, NULL, NULL, 0);
 
 	/*
 	 * Account fixed page faults, otherwise they'll never be counted, but
@@ -4737,7 +4737,8 @@ static int kvm_tdp_map_page(struct kvm_vcpu *vcpu, gpa_t gpa, u64 error_code,
 		if (signal_pending(current))
 			return -EINTR;
 		cond_resched();
-		r = kvm_mmu_do_page_fault(vcpu, gpa, error_code, true, NULL, level);
+		r = kvm_mmu_do_page_fault(vcpu, gpa, error_code, true, NULL,
+					  level, 0);
 	} while (r == RET_PF_RETRY);
 
 	if (r < 0)
@@ -6128,7 +6129,7 @@ int noinline kvm_mmu_page_fault(struct kvm_vcpu *vcpu, gpa_t cr2_or_gpa, u64 err
 		vcpu->stat.pf_taken++;
 
 		r = kvm_mmu_do_page_fault(vcpu, cr2_or_gpa, error_code, false,
-					  &emulation_type, NULL);
+					  &emulation_type, NULL, insn_len);
 		if (KVM_BUG_ON(r == RET_PF_INVALID, vcpu->kvm))
 			return -EIO;
 	}
@@ -6151,8 +6152,12 @@ int noinline kvm_mmu_page_fault(struct kvm_vcpu *vcpu, gpa_t cr2_or_gpa, u64 err
 		return 1;
 
 emulate:
+	/*
+	 * x86_emulate_instruction() expects insn to contain data if
+	 * insn_len > 0.
+	 */
 	return x86_emulate_instruction(vcpu, cr2_or_gpa, emulation_type, insn,
-				       insn_len);
+				       insn ? insn_len : 0);
 }
 EXPORT_SYMBOL_GPL(kvm_mmu_page_fault);
 

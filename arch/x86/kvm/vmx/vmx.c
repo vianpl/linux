@@ -5823,11 +5823,13 @@ static int handle_ept_violation(struct kvm_vcpu *vcpu)
 	if (unlikely(allow_smaller_maxphyaddr && !kvm_vcpu_is_legal_gpa(vcpu, gpa)))
 		return kvm_emulate_instruction(vcpu, 0);
 
-	return kvm_mmu_page_fault(vcpu, gpa, error_code, NULL, 0);
+	return kvm_mmu_page_fault(vcpu, gpa, error_code, NULL,
+				  vmcs_read32(VM_EXIT_INSTRUCTION_LEN));
 }
 
 static int handle_ept_misconfig(struct kvm_vcpu *vcpu)
 {
+	u8 insn_len = 0;
 	gpa_t gpa;
 
 	if (vmx_check_emulate_instruction(vcpu, EMULTYPE_PF, NULL, 0))
@@ -5844,7 +5846,17 @@ static int handle_ept_misconfig(struct kvm_vcpu *vcpu)
 		return kvm_skip_emulated_instruction(vcpu);
 	}
 
-	return kvm_mmu_page_fault(vcpu, gpa, PFERR_RSVD_MASK, NULL, 0);
+	/*
+	 * Using VMCS.VM_EXIT_INSTRUCTION_LEN on EPT misconfig depends on
+	 * undefined behavior: Intel's SDM doesn't mandate the VMCS field be
+	 * set when EPT misconfig occurs.  In practice, real hardware updates
+	 * VM_EXIT_INSTRUCTION_LEN on EPT misconfig, but other hypervisors
+	 * (namely Hyper-V) don't set it due to it being undefined behavior.
+	 */
+	if (!static_cpu_has(X86_FEATURE_HYPERVISOR))
+		insn_len = vmcs_read32(VM_EXIT_INSTRUCTION_LEN);
+
+	return kvm_mmu_page_fault(vcpu, gpa, PFERR_RSVD_MASK, NULL, insn_len);
 }
 
 static int handle_nmi_window(struct kvm_vcpu *vcpu)
