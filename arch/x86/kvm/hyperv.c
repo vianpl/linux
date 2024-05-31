@@ -2559,6 +2559,10 @@ static bool hv_check_hypercall_access(struct kvm_vcpu_hv *hv_vcpu, u16 code)
 	case HVCALL_SET_VP_REGISTERS:
 		return hv_vcpu->cpuid_cache.features_ebx &
 			HV_ACCESS_VP_REGISTERS;
+	case HVCALL_START_VP:
+	case HVCALL_GET_VP_ID_FROM_APIC_ID:
+		return hv_vcpu->cpuid_cache.features_ebx &
+			HV_START_VIRTUAL_PROCESSOR;
 	case HVCALL_FLUSH_VIRTUAL_ADDRESS_LIST_EX:
 	case HVCALL_FLUSH_VIRTUAL_ADDRESS_SPACE_EX:
 		if (!(hv_vcpu->cpuid_cache.enlightenments_eax &
@@ -2746,6 +2750,8 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 	case HVCALL_GET_VP_REGISTERS:
 	case HVCALL_SET_VP_REGISTERS:
 	case HVCALL_TRANSLATE_VIRTUAL_ADDRESS:
+	case HVCALL_START_VP:
+	case HVCALL_GET_VP_ID_FROM_APIC_ID:
 		goto hypercall_userspace_exit;
 	default:
 		ret = HV_STATUS_INVALID_HYPERCALL_CODE;
@@ -2920,6 +2926,7 @@ int kvm_get_hv_cpuid(struct kvm_vcpu *vcpu, struct kvm_cpuid2 *cpuid,
 			ent->ebx |= HV_SIGNAL_EVENTS;
 			ent->ebx |= HV_ENABLE_EXTENDED_HYPERCALLS;
 			ent->ebx |= HV_ACCESS_VP_REGISTERS;
+			ent->ebx |= HV_START_VIRTUAL_PROCESSOR;
 
 			ent->edx |= HV_X64_HYPERCALL_XMM_INPUT_AVAILABLE;
 			ent->edx |= HV_X64_HYPERCALL_XMM_OUTPUT_AVAILABLE;
