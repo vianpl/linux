@@ -9072,3 +9072,14 @@ This CPUID indicates that KVM supports HvGetVpRegisters and HvSetVpRegisters.
 Currently, it is only used in conjunction with HV_ACCESS_VSM, and immediately
 exits to userspace with KVM_EXIT_HYPERV_HCALL as the reason. Userspace is
 expected to complete the hypercall before resuming execution.
+
+10.3 HV_START_VIRTUAL_PROCESSOR
+-------------------------------
+
+:Location: CPUID.40000003H:EBX[bit 21]
+
+This CPUID indicates that KVM supports HvCallStartVirtualProcessor and
+HvCallGetVpIndexFromApicId. Currently, it is only used in conjunction with
+HV_ACCESS_VSM, and immediately exits to userspace with KVM_EXIT_HYPERV_HCALL as
+the reason. Userspace is expected to complete the hypercall before resuming
+execution.
