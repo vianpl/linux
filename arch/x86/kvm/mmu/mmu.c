@@ -754,7 +754,8 @@ static u32 kvm_mmu_page_get_access(struct kvm_mmu_page *sp, int index)
 	return sp->role.access;
 }
 
-static void kvm_mmu_page_set_translation(struct kvm_mmu_page *sp, int index,
+static void kvm_mmu_page_set_translation(struct kvm *kvm,
+					 struct kvm_mmu_page *sp, int index,
 					 gfn_t gfn, unsigned int access)
 {
 	if (sp_has_gptes(sp)) {
@@ -762,10 +763,17 @@ static void kvm_mmu_page_set_translation(struct kvm_mmu_page *sp, int index,
 		return;
 	}
 
-	WARN_ONCE(access != kvm_mmu_page_get_access(sp, index),
-	          "access mismatch under %s page %llx (expected %u, got %u)\n",
-	          sp->role.passthrough ? "passthrough" : "direct",
-	          sp->gfn, kvm_mmu_page_get_access(sp, index), access);
+	/*
+	 * Userspace might have introduced memory attributes for this gfn,
+	 * breaking the assumption that the spte's access restrictions match
+	 * the guest's. Userspace is also responsible from taking care of
+	 * faults caused by these 'artificial' access restrictions.
+	 */
+	WARN_ONCE(access != kvm_mmu_page_get_access(sp, index) &&
+		  !kvm_get_memory_attributes(kvm, gfn),
+		  "access mismatch under %s page %llx (expected %u, got %u)\n",
+		  sp->role.passthrough ? "passthrough" : "direct", sp->gfn,
+		  kvm_mmu_page_get_access(sp, index), access);
 
 	WARN_ONCE(gfn != kvm_mmu_page_get_gfn(sp, index),
 	          "gfn mismatch under %s page %llx (expected %llx, got %llx)\n",
@@ -773,12 +781,12 @@ static void kvm_mmu_page_set_translation(struct kvm_mmu_page *sp, int index,
 	          sp->gfn, kvm_mmu_page_get_gfn(sp, index), gfn);
 }
 
-static void kvm_mmu_page_set_access(struct kvm_mmu_page *sp, int index,
-				    unsigned int access)
+static void kvm_mmu_page_set_access(struct kvm *kvm, struct kvm_mmu_page *sp,
+				    int index, unsigned int access)
 {
 	gfn_t gfn = kvm_mmu_page_get_gfn(sp, index);
 
-	kvm_mmu_page_set_translation(sp, index, gfn, access);
+	kvm_mmu_page_set_translation(kvm, sp, index, gfn, access);
 }
 
 /*
@@ -1607,7 +1615,7 @@ static void __rmap_add(struct kvm *kvm,
 	int rmap_count;
 
 	sp = sptep_to_sp(spte);
-	kvm_mmu_page_set_translation(sp, spte_index(spte), gfn, access);
+	kvm_mmu_page_set_translation(kvm, sp, spte_index(spte), gfn, access);
 	kvm_update_page_stats(kvm, sp->role.level, 1);
 
 	rmap_head = gfn_to_rmap(gfn, sp->role.level, slot);
@@ -2928,7 +2936,8 @@ static int mmu_set_spte(struct kvm_vcpu *vcpu, struct kvm_memory_slot *slot,
 		rmap_add(vcpu, slot, sptep, gfn, pte_access);
 	} else {
 		/* Already rmapped but the pte_access bits may have changed. */
-		kvm_mmu_page_set_access(sp, spte_index(sptep), pte_access);
+		kvm_mmu_page_set_access(vcpu->kvm, sp, spte_index(sptep),
+					pte_access);
 	}
 
 	return ret;
@@ -4320,6 +4329,38 @@ static int kvm_faultin_pfn_private(struct kvm_vcpu *vcpu,
 	return RET_PF_CONTINUE;
 }
 
+static int kvm_mem_attributes_faultin_access_prots(struct kvm_vcpu *vcpu,
+						   struct kvm_page_fault *fault)
+{
+	bool may_read, may_write, may_exec;
+	unsigned long attrs;
+
+	attrs = kvm_get_memory_attributes(vcpu->kvm, fault->gfn);
+	if (!attrs)
+		return RET_PF_CONTINUE;
+
+	if (!kvm_mem_attributes_valid(vcpu->kvm, attrs)) {
+		kvm_err("Invalid mem attributes 0x%lx found for address 0x%016llx\n",
+			attrs, fault->addr);
+		return -EFAULT;
+	}
+
+	trace_kvm_mem_attributes_faultin_access_prots(vcpu, fault, attrs);
+
+	may_read = kvm_mem_attributes_may_read(attrs);
+	may_write = kvm_mem_attributes_may_write(attrs);
+	may_exec = kvm_mem_attributes_may_exec(attrs);
+
+	if ((fault->user && !may_read) || (fault->write && !may_write) ||
+	    (fault->exec && !may_exec))
+		return -EFAULT;
+
+	fault->map_writable = may_write;
+	fault->map_executable = may_exec;
+
+	return RET_PF_CONTINUE;
+}
+
 static int __kvm_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 {
 	bool async;
@@ -4375,7 +4416,8 @@ static int kvm_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 	 * Now that we have a snapshot of mmu_invalidate_seq we can check for a
 	 * private vs. shared mismatch.
 	 */
-	if (fault->is_private != kvm_mem_is_private(vcpu->kvm, fault->gfn)) {
+	if (fault->is_private != kvm_mem_is_private(vcpu->kvm, fault->gfn) ||
+	    kvm_mem_attributes_faultin_access_prots(vcpu, fault)) {
 		kvm_mmu_prepare_memory_fault_exit(vcpu, fault);
 		return -EFAULT;
 	}

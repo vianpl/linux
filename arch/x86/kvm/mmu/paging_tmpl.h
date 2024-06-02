@@ -954,7 +954,7 @@ static int FNAME(sync_spte)(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp, int 
 		return 0;
 
 	/* Update the shadowed access bits in case they changed. */
-	kvm_mmu_page_set_access(sp, i, pte_access);
+	kvm_mmu_page_set_access(vcpu->kvm, sp, i, pte_access);
 
 	sptep = &sp->spt[i];
 	spte = *sptep;
