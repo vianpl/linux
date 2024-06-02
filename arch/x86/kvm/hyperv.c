@@ -2217,16 +2217,20 @@ static void kvm_hv_send_ipi_to_many(struct kvm *kvm, u32 vector,
 
 static u64 kvm_hv_send_ipi(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 {
+	bool vsm_enabled = kvm_hv_cpuid_vsm_enabled(vcpu);
 	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
 	u64 *sparse_banks = hv_vcpu->sparse_banks;
 	struct kvm *kvm = vcpu->kvm;
 	struct hv_send_ipi_ex send_ipi_ex;
 	struct hv_send_ipi send_ipi;
+	union hv_input_vtl *in_vtl;
 	u64 valid_bank_mask;
+	int rsvd_shift;
 	u32 vector;
 	bool all_cpus;
 
 	if (hc->code == HVCALL_SEND_IPI) {
+		in_vtl = &send_ipi.in_vtl;
 		if (!hc->fast) {
 			if (unlikely(kvm_read_guest(kvm, hc->ingpa, &send_ipi,
 						    sizeof(send_ipi))))
@@ -2235,16 +2239,22 @@ static u64 kvm_hv_send_ipi(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 			vector = send_ipi.vector;
 		} else {
 			/* 'reserved' part of hv_send_ipi should be 0 */
-			if (unlikely(hc->ingpa >> 32 != 0))
+			rsvd_shift = vsm_enabled ? 40 : 32;
+			if (unlikely(hc->ingpa >> rsvd_shift != 0))
 				return HV_STATUS_INVALID_HYPERCALL_INPUT;
+			in_vtl->as_uint8 = (u8)(hc->ingpa >> 32);
 			sparse_banks[0] = hc->outgpa;
 			vector = (u32)hc->ingpa;
 		}
 		all_cpus = false;
 		valid_bank_mask = BIT_ULL(0);
 
+		if (in_vtl->use_target_vtl)
+			return -ENODEV;
+
 		trace_kvm_hv_send_ipi(vector, sparse_banks[0]);
 	} else {
+		in_vtl = &send_ipi_ex.in_vtl;
 		if (!hc->fast) {
 			if (unlikely(kvm_read_guest(kvm, hc->ingpa, &send_ipi_ex,
 						    sizeof(send_ipi_ex))))
@@ -2253,7 +2263,11 @@ static u64 kvm_hv_send_ipi(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 			send_ipi_ex.vector = (u32)hc->ingpa;
 			send_ipi_ex.vp_set.format = hc->outgpa;
 			send_ipi_ex.vp_set.valid_bank_mask = sse128_lo(hc->xmm[0]);
+			in_vtl->as_uint8 = (u8)(hc->ingpa >> 32);
 		}
+
+		if (vsm_enabled && in_vtl->use_target_vtl)
+			return -ENODEV;
 
 		trace_kvm_hv_send_ipi_ex(send_ipi_ex.vector,
 					 send_ipi_ex.vp_set.format,
@@ -2641,6 +2655,9 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 			break;
 		}
 		ret = kvm_hv_send_ipi(vcpu, &hc);
+		/* VTL-enabled ipi, let user-space handle it */
+		if (ret == -ENODEV)
+			goto hypercall_userspace_exit;
 		break;
 	case HVCALL_POST_DEBUG_DATA:
 	case HVCALL_RETRIEVE_DEBUG_DATA:
