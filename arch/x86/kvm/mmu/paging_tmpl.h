@@ -422,6 +422,12 @@ retry_walk:
 			goto error;
 		}
 
+		/* Convert to ACC_*_MASK flags for struct guest_walker.  */
+		walker->pte_access = FNAME(gpte_access)(pte_access ^ walk_nx_mask);
+		errcode = permission_fault(vcpu, mmu, walker->pte_access, pte_pkey, access);
+		if (unlikely(errcode))
+			goto error;
+
 		walker->ptes[walker->level - 1] = pte;
 
 		/* Convert to ACC_*_MASK flags for struct guest_walker.  */
@@ -430,12 +436,6 @@ retry_walk:
 
 	pte_pkey = FNAME(gpte_pkeys)(vcpu, pte);
 	accessed_dirty = have_ad ? pte_access & PT_GUEST_ACCESSED_MASK : 0;
-
-	/* Convert to ACC_*_MASK flags for struct guest_walker.  */
-	walker->pte_access = FNAME(gpte_access)(pte_access ^ walk_nx_mask);
-	errcode = permission_fault(vcpu, mmu, walker->pte_access, pte_pkey, access);
-	if (unlikely(errcode))
-		goto error;
 
 	gfn = gpte_to_gfn_lvl(pte, walker->level);
 	gfn += (addr & PT_LVL_OFFSET_MASK(walker->level)) >> PAGE_SHIFT;
