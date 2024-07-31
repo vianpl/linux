@@ -512,6 +512,37 @@ struct kvm_translation {
 	__u8  pad[5];
 };
 
+/* for KVM_TRANSLATE2 */
+struct kvm_translation2 {
+	/* in */
+	__u64 linear_address;
+#define KVM_TRANSLATE_FLAGS_SET_ACCESSED	(1 << 0)
+#define KVM_TRANSLATE_FLAGS_SET_DIRTY	(1 << 1)
+#define KVM_TRANSLATE_FLAGS_FORCE_SET_ACCESSED	(1 << 2)
+	__u16 flags;
+#define KVM_TRANSLATE_ACCESS_WRITE	(1 << 0)
+#define KVM_TRANSLATE_ACCESS_USER	(1 << 1)
+#define KVM_TRANSLATE_ACCESS_EXEC	(1 << 2)
+#define KVM_TRANSLATE_ACCESS_ALL      \
+	(KVM_TRANSLATE_ACCESS_WRITE | \
+	KVM_TRANSLATE_ACCESS_USER |   \
+	KVM_TRANSLATE_ACCESS_EXEC)
+	__u16 access;
+	__u8  padding[4];
+
+	/* out */
+	__u64 physical_address;
+	__u8  valid;
+#define KVM_TRANSLATE_FAULT_NOT_PRESENT	1
+#define KVM_TRANSLATE_FAULT_PRIVILEGE_VIOLATION	2
+#define KVM_TRANSLATE_FAULT_RESERVED_BITS	3
+#define KVM_TRANSLATE_FAULT_INVALID_GVA	4
+#define KVM_TRANSLATE_FAULT_INVALID_GPA	5
+	__u16 error_code;
+	__u8  set_bits_succeeded;
+	__u8  padding2[4];
+};
+
 /* for KVM_INTERRUPT */
 struct kvm_interrupt {
 	/* in */
@@ -933,6 +964,7 @@ struct kvm_enable_cap {
 #define KVM_CAP_PRE_FAULT_MEMORY 236
 #define KVM_CAP_X86_APIC_BUS_CYCLES_NS 237
 #define KVM_CAP_X86_GUEST_MODE 238
+#define KVM_CAP_TRANSLATE2 239
 
 struct kvm_irq_routing_irqchip {
 	__u32 irqchip;
@@ -1269,6 +1301,7 @@ struct kvm_vfio_spapr_tce {
 #define KVM_SET_SREGS             _IOW(KVMIO,  0x84, struct kvm_sregs)
 #define KVM_TRANSLATE             _IOWR(KVMIO, 0x85, struct kvm_translation)
 #define KVM_INTERRUPT             _IOW(KVMIO,  0x86, struct kvm_interrupt)
+#define KVM_TRANSLATE2            _IOWR(KVMIO, 0x87, struct kvm_translation2)
 #define KVM_GET_MSRS              _IOWR(KVMIO, 0x88, struct kvm_msrs)
 #define KVM_SET_MSRS              _IOW(KVMIO,  0x89, struct kvm_msrs)
 #define KVM_SET_CPUID             _IOW(KVMIO,  0x8a, struct kvm_cpuid)
