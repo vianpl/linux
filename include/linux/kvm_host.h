@@ -84,6 +84,10 @@
 #define KVM_MAX_NR_ADDRESS_SPACES	1
 #endif
 
+#define KVM_TRANSLATE_FLAGS_ALL                \
+	(KVM_TRANSLATE_FLAGS_SET_ACCESSED |     \
+	KVM_TRANSLATE_FLAGS_SET_DIRTY |         \
+	KVM_TRANSLATE_FLAGS_FORCE_SET_ACCESSED)
 /*
  * For the normal pfn, the highest 12 bits should be zero,
  * so we can mask bit 62 ~ bit 52  to indicate the error pfn,
