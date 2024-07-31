@@ -1814,6 +1814,12 @@ int kvm_arch_vcpu_ioctl_translate(struct kvm_vcpu *vcpu,
 	return r;
 }
 
+int kvm_arch_vcpu_ioctl_translate2(struct kvm_vcpu *vcpu,
+				  struct kvm_translation2 *tr)
+{
+	return -EOPNOTSUPP;
+}
+
 void kvm_arch_sync_dirty_log(struct kvm *kvm, struct kvm_memory_slot *memslot)
 {
 

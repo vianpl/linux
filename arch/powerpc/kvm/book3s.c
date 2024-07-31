@@ -814,6 +814,12 @@ int kvm_arch_vcpu_ioctl_translate(struct kvm_vcpu *vcpu,
 	return 0;
 }
 
+int kvm_arch_vcpu_ioctl_translate2(struct kvm_vcpu *vcpu,
+				  struct kvm_translation2 *tr)
+{
+	return -EOPNOTSUPP;
+}
+
 int kvm_arch_vcpu_ioctl_set_guest_debug(struct kvm_vcpu *vcpu,
 					struct kvm_guest_debug *dbg)
 {

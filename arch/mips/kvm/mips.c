@@ -1152,6 +1152,12 @@ int kvm_arch_vcpu_ioctl_translate(struct kvm_vcpu *vcpu,
 	return 0;
 }
 
+int kvm_arch_vcpu_ioctl_translate2(struct kvm_vcpu *vcpu,
+				  struct kvm_translation2 *tr)
+{
+	return -ENOIOCTLCMD;
+}
+
 static void kvm_mips_set_c0_status(void)
 {
 	u32 status = read_c0_status();
