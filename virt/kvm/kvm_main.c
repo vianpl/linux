@@ -4442,6 +4442,32 @@ static int kvm_vcpu_pre_fault_memory(struct kvm_vcpu *vcpu,
 }
 #endif
 
+int __weak kvm_arch_vcpu_ioctl_translate2(struct kvm_vcpu *vcpu,
+					  struct kvm_translation2 *tr)
+{
+	return -EINVAL;
+}
+
+static int kvm_vcpu_ioctl_translate2(struct kvm_vcpu *vcpu,
+				     struct kvm_translation2 *tr)
+{
+	/* Don't allow FORCE_SET_ACCESSED and SET_BITS without SET_ACCESSED */
+	if (!(tr->flags & KVM_TRANSLATE_FLAGS_SET_ACCESSED) &&
+	    (tr->flags & KVM_TRANSLATE_FLAGS_FORCE_SET_ACCESSED ||
+	     tr->flags & KVM_TRANSLATE_FLAGS_SET_DIRTY))
+		return -EINVAL;
+
+	if (tr->flags & KVM_TRANSLATE_FLAGS_SET_DIRTY &&
+	    !(tr->access & KVM_TRANSLATE_ACCESS_WRITE))
+		return -EINVAL;
+
+	if (tr->flags & ~KVM_TRANSLATE_FLAGS_ALL ||
+	    tr->access & ~KVM_TRANSLATE_ACCESS_ALL)
+		return -EINVAL;
+
+	return kvm_arch_vcpu_ioctl_translate2(vcpu, tr);
+}
+
 static long kvm_vcpu_ioctl(struct file *filp,
 			   unsigned int ioctl, unsigned long arg)
 {
@@ -4577,6 +4603,21 @@ out_free1:
 		if (copy_from_user(&tr, argp, sizeof(tr)))
 			goto out;
 		r = kvm_arch_vcpu_ioctl_translate(vcpu, &tr);
+		if (r)
+			goto out;
+		r = -EFAULT;
+		if (copy_to_user(argp, &tr, sizeof(tr)))
+			goto out;
+		r = 0;
+		break;
+	}
+	case KVM_TRANSLATE2: {
+		struct kvm_translation2 tr;
+
+		r = -EFAULT;
+		if (copy_from_user(&tr, argp, sizeof(tr)))
+			goto out;
+		r = kvm_vcpu_ioctl_translate2(vcpu, &tr);
 		if (r)
 			goto out;
 		r = -EFAULT;
