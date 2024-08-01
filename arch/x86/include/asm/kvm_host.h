@@ -281,6 +281,14 @@ enum x86_intercept_stage;
 #define PFERR_PRIVATE_ACCESS   BIT_ULL(49)
 #define PFERR_SYNTHETIC_MASK   (PFERR_IMPLICIT_ACCESS | PFERR_PRIVATE_ACCESS)
 
+#define PFERR_NESTED_GUEST_PAGE (PFERR_GUEST_PAGE_MASK |	\
+				 PFERR_WRITE_MASK |		\
+				 PFERR_PRESENT_MASK)
+
+#define PWALK_SET_ACCESSED	BIT(0)
+#define PWALK_SET_DIRTY	BIT(1)
+#define PWALK_SET_ALL	(PWALK_SET_ACCESSED | PWALK_SET_DIRTY)
+
 /* apic attention bits */
 #define KVM_APIC_CHECK_VAPIC	0
 /*
@@ -450,7 +458,7 @@ struct kvm_mmu {
 	void (*inject_page_fault)(struct kvm_vcpu *vcpu,
 				  struct x86_exception *fault);
 	gpa_t (*gva_to_gpa)(struct kvm_vcpu *vcpu, struct kvm_mmu *mmu,
-			    gpa_t gva_or_gpa, u64 access,
+			    gpa_t gva_or_gpa, u64 access, u64 flags,
 			    struct x86_exception *exception);
 	int (*sync_spte)(struct kvm_vcpu *vcpu,
 			 struct kvm_mmu_page *sp, int i);
