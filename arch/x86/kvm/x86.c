@@ -7577,6 +7577,17 @@ gpa_t translate_nested_gpa(struct kvm_vcpu *vcpu, gpa_t gpa, u64 access,
 	return t_gpa;
 }
 
+gpa_t kvm_mmu_gva_to_gpa(struct kvm_vcpu *vcpu, gva_t gva, u64 access,
+			 u64 flags, struct x86_exception *exception,
+			 u16 *status)
+{
+	struct kvm_mmu *mmu = vcpu->arch.walk_mmu;
+
+	return mmu->gva_to_gpa(vcpu, mmu, gva, access, flags, exception,
+			       status);
+}
+EXPORT_SYMBOL_GPL(kvm_mmu_gva_to_gpa);
+
 gpa_t kvm_mmu_gva_to_gpa_read(struct kvm_vcpu *vcpu, gva_t gva,
 			      struct x86_exception *exception)
 {

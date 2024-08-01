@@ -2160,6 +2160,9 @@ static inline bool kvm_mmu_unprotect_gfn_and_retry(struct kvm_vcpu *vcpu,
 void kvm_mmu_free_roots(struct kvm *kvm, struct kvm_mmu *mmu,
 			ulong roots_to_free);
 void kvm_mmu_free_guest_mode_roots(struct kvm *kvm, struct kvm_mmu *mmu);
+gpa_t kvm_mmu_gva_to_gpa(struct kvm_vcpu *vcpu, gva_t gva, u64 access,
+			 u64 flags, struct x86_exception *exception,
+			 u16 *status);
 gpa_t kvm_mmu_gva_to_gpa_read(struct kvm_vcpu *vcpu, gva_t gva,
 			      struct x86_exception *exception);
 gpa_t kvm_mmu_gva_to_gpa_write(struct kvm_vcpu *vcpu, gva_t gva,
