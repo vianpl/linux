@@ -933,6 +933,7 @@ struct kvm_enable_cap {
 #define KVM_CAP_PRE_FAULT_MEMORY 236
 #define KVM_CAP_X86_APIC_BUS_CYCLES_NS 237
 #define KVM_CAP_X86_GUEST_MODE 238
+#define KVM_CAP_HYPERV_TLB_FLUSH_INHIBIT 239
 
 struct kvm_irq_routing_irqchip {
 	__u32 irqchip;
@@ -1571,6 +1572,20 @@ struct kvm_pre_fault_memory {
 	__u64 size;
 	__u64 flags;
 	__u64 padding[5];
+};
+
+/* Available with KVM_CAP_HYPERV_TLBFLUSH */
+#define KVM_HYPERV_SET_TLB_FLUSH_INHIBIT \
+	_IOW(KVMIO,  0xd6, struct kvm_hyperv_tlb_flush_inhibit)
+
+/* for KVM_HYPERV_SET_TLB_FLUSH_INHIBIT */
+struct kvm_hyperv_tlb_flush_inhibit {
+	/* in */
+	__u16 flags;
+#define KVM_HYPERV_UNINHIBIT_TLB_FLUSH 0
+#define KVM_HYPERV_INHIBIT_TLB_FLUSH 1
+	__u8  inhibit;
+	__u8  reserved[5];
 };
 
 #endif /* __LINUX_KVM_H */
