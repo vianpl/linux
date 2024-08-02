@@ -6443,6 +6443,47 @@ the capability to be present.
 `flags` must currently be zero.
 
 
+4.144 KVM_HYPERV_SET_TLB_FLUSH_INHIBIT
+--------------------------------------
+
+:Capability: KVM_CAP_HYPERV_TLB_FLUSH_INHIBIT
+:Architectures: x86
+:Type: vcpu ioctl
+:Parameters: struct kvm_hyperv_tlb_flush_inhibit
+:returnReturns: 0 on success, this ioctl can't fail
+
+KVM_HYPERV_SET_TLB_FLUSH_INHIBIT allows userspace to prevent Hyper-V hyper-calls
+that remotely flush a vCPU's TLB, i.e. HvFlushVirtualAddressSpace(Ex)/
+HvFlushVirtualAddressList(Ex). When the flag is set, a vCPU attempting to flush
+an inhibited vCPU will be suspended and will only resume once the flag is
+cleared again using this ioctl. During suspension, the vCPU will not finish the
+hyper-call, but may enter the guest to retry it. Because it is caused by a
+hyper-call, the suspension naturally happens on a guest instruction boundary.
+This behaviour and the suspend state itself are specified in Microsoft's
+"Hypervisor Top Level Functional Specification" (TLFS).
+
+::
+
+  /* for KVM_HYPERV_SET_TLB_FLUSH_INHIBIT */
+  struct kvm_hyperv_tlb_flush_inhibit {
+      /* in */
+      __u16 flags;
+  #define KVM_HYPERV_UNINHIBIT_TLB_FLUSH 0
+  #define KVM_HYPERV_INHIBIT_TLB_FLUSH 1
+      __u8  inhibit;
+      __u8 padding[5];
+  };
+
+No flags are specified so far, the corresponding field must be set to zero,
+otherwise the ioctl will fail with exit code -EINVAL.
+
+The suspension is transparent to userspace. It won't cause KVM_RUN to return or
+the MP state to be changed. The suspension cannot be manually induced or exited
+apart from changing the TLB flush inhibit flag of a targeted processor.
+
+There is no way for userspace to query the state of the flush inhibit flag.
+Userspace must keep track of the required state itself.
+
 5. The kvm_run structure
 ========================
 
