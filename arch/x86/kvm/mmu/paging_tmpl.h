@@ -485,6 +485,7 @@ error:
 	walker->fault.vector = PF_VECTOR;
 	walker->fault.error_code_valid = true;
 	walker->fault.error_code = errcode;
+	walker->fault.gpa_page_fault = real_gpa;
 
 #if PTTYPE == PTTYPE_EPT
 	/*

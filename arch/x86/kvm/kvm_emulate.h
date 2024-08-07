@@ -25,6 +25,12 @@ struct x86_exception {
 	u16 error_code;
 	bool nested_page_fault;
 	u64 address; /* cr2 or nested page fault gpa */
+	/*
+	 * If error_code is a page fault, this will be the address of the last
+	 * visited page table, or the fully translated address if it caused the
+	 * failure. Otherwise, it will not hold a meaningful value.
+	 */
+	u64 gpa_page_fault;
 	u8 async_page_fault;
 	unsigned long exit_qualification;
 #define KVM_X86_UNMAPPED_PTE_GPA	BIT(0)
