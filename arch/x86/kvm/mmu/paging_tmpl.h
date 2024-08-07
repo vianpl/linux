@@ -339,6 +339,8 @@ retry_walk:
 #endif
 	walker->max_level = walker->level;
 
+	walker->fault.flags = 0;
+
 	/*
 	 * FIXME: on Intel processors, loads of the PDPTE registers for PAE paging
 	 * by the MOV to CR instruction are treated as reads and do not cause the
@@ -393,8 +395,10 @@ retry_walk:
 			return 0;
 
 		slot = kvm_vcpu_gfn_to_memslot(vcpu, gpa_to_gfn(real_gpa));
-		if (!kvm_is_visible_memslot(slot))
+		if (!kvm_is_visible_memslot(slot)) {
+			walker->fault.flags = KVM_X86_UNMAPPED_PTE_GPA;
 			goto error;
+		}
 
 		host_addr = gfn_to_hva_memslot_prot(slot, gpa_to_gfn(real_gpa),
 					    &walker->pte_writable[walker->level - 1]);
