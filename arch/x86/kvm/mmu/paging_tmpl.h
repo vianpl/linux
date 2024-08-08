@@ -319,6 +319,7 @@ static int FNAME(walk_addr_generic)(struct guest_walker *walker,
 	const int fetch_fault = access & PFERR_FETCH_MASK;
 	const int set_accessed = flags & PWALK_SET_ACCESSED;
 	const int set_dirty = flags & PWALK_SET_DIRTY;
+	const int force_set = flags & PWALK_FORCE_SET_ACCESSED;
 	u16 errcode = 0;
 	gpa_t real_gpa;
 	gfn_t gfn;
@@ -395,7 +396,7 @@ retry_walk:
 		 * fields.
 		 */
 		if (unlikely(real_gpa == INVALID_GPA))
-			return 0;
+			goto late_exit;
 
 		slot = kvm_vcpu_gfn_to_memslot(vcpu, gpa_to_gfn(real_gpa));
 		if (!kvm_is_visible_memslot(slot)) {
@@ -455,7 +456,7 @@ retry_walk:
 	real_gpa = kvm_translate_gpa(vcpu, mmu, gfn_to_gpa(gfn), access,
 								 flags, &walker->fault);
 	if (real_gpa == INVALID_GPA)
-		return 0;
+		goto late_exit;
 
 	walker->gfn = real_gpa >> PAGE_SHIFT;
 
@@ -528,6 +529,18 @@ error:
 	walker->fault.async_page_fault = false;
 
 	trace_kvm_mmu_walker_error(walker->fault.error_code);
+
+late_exit:
+	if (force_set) {
+		/*
+		 * Don't set the accessed bit for the page table that caused the
+		 * walk to fail.
+		 */
+		++walker->level;
+		FNAME(update_accessed_dirty_bits)(vcpu, mmu, walker, addr,
+		 false);
+		--walker->level;
+	}
 	return 0;
 }
 
