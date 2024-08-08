@@ -318,6 +318,7 @@ static int FNAME(walk_addr_generic)(struct guest_walker *walker,
 	const int user_fault  = access & PFERR_USER_MASK;
 	const int fetch_fault = access & PFERR_FETCH_MASK;
 	const int set_accessed = flags & PWALK_SET_ACCESSED;
+	const int set_dirty = flags & PWALK_SET_DIRTY;
 	u16 errcode = 0;
 	gpa_t real_gpa;
 	gfn_t gfn;
@@ -471,7 +472,7 @@ retry_walk:
 
 	if (unlikely(set_accessed && !accessed_dirty)) {
 		ret = FNAME(update_accessed_dirty_bits)(vcpu, mmu, walker, addr,
-							write_fault);
+							write_fault && set_dirty);
 		if (unlikely(ret < 0))
 			goto error;
 		else if (ret)
