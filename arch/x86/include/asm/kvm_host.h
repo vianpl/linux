@@ -287,6 +287,7 @@ enum x86_intercept_stage;
 
 #define PWALK_SET_ACCESSED	BIT(0)
 #define PWALK_SET_DIRTY	BIT(1)
+#define PWALK_FORCE_SET_ACCESSED	BIT(2)
 #define PWALK_SET_ALL	(PWALK_SET_ACCESSED | PWALK_SET_DIRTY)
 
 /* apic attention bits */
