@@ -9043,3 +9043,22 @@ Ordering of KVM_GET_*/KVM_SET_* ioctls
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 TBD
+
+10. Hyper-V CPUIDs
+==================
+
+This section only applies to x86.
+
+New Hyper-V feature support is no longer being tracked through KVM
+capabilities.  Userspace can check if a particular version of KVM supports a
+feature using KMV_GET_SUPPORTED_HV_CPUID.  This section documents how Hyper-V
+CPUIDs map to KVM functionality.
+
+10.1 HV_X64_HYPERCALL_XMM_OUTPUT_AVAILABLE
+------------------------------------------
+
+:Location: CPUID.40000003H:EDX[bit 15]
+
+This CPUID indicates that KVM supports retuning data to the guest in response
+to a hypercall using the XMM registers. It also extends ``struct
+kvm_hyperv_exit`` to allow passing the XMM data from userspace.
