@@ -90,10 +90,16 @@ struct kvm_pit_config {
 
 #define KVM_PIT_SPEAKER_DUMMY     1
 
+struct kvm_hyperv_xmm_reg {
+	__u64 low;
+	__u64 high;
+};
+
 struct kvm_hyperv_exit {
 #define KVM_EXIT_HYPERV_SYNIC          1
 #define KVM_EXIT_HYPERV_HCALL          2
 #define KVM_EXIT_HYPERV_SYNDBG         3
+#define KVM_EXIT_HYPERV_HCALL_XMM      4
 	__u32 type;
 	__u32 pad1;
 	union {
@@ -108,6 +114,8 @@ struct kvm_hyperv_exit {
 			__u64 input;
 			__u64 result;
 			__u64 params[2];
+			/* TLFS allows using the first 6 XMM registers */
+			struct kvm_hyperv_xmm_reg xmm[6];
 		} hcall;
 		struct {
 			__u32 msr;
@@ -933,6 +941,7 @@ struct kvm_enable_cap {
 #define KVM_CAP_PRE_FAULT_MEMORY 236
 #define KVM_CAP_X86_APIC_BUS_CYCLES_NS 237
 #define KVM_CAP_X86_GUEST_MODE 238
+#define KVM_CAP_HYPERV_XMM_EXIT 239
 
 struct kvm_irq_routing_irqchip {
 	__u32 irqchip;
