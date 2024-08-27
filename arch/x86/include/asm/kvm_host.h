@@ -696,6 +696,9 @@ struct kvm_vcpu_hv {
 		u64 vm_id;
 		u32 vp_id;
 	} nested;
+
+	bool suspended;
+	int waiting_on;
 };
 
 struct kvm_hypervisor_cpuid {

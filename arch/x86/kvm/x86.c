@@ -135,6 +135,8 @@ static void store_regs(struct kvm_vcpu *vcpu);
 static int sync_regs(struct kvm_vcpu *vcpu);
 static int kvm_vcpu_do_singlestep(struct kvm_vcpu *vcpu);
 
+static inline bool kvm_hv_vcpu_suspended(struct kvm_vcpu *vcpu);
+
 static int __set_sregs2(struct kvm_vcpu *vcpu, struct kvm_sregs2 *sregs2);
 static void __get_sregs2(struct kvm_vcpu *vcpu, struct kvm_sregs2 *sregs2);
 
@@ -11109,7 +11111,7 @@ out:
 static bool kvm_vcpu_running(struct kvm_vcpu *vcpu)
 {
 	return (vcpu->arch.mp_state == KVM_MP_STATE_RUNNABLE &&
-		!vcpu->arch.apf.halted);
+		!vcpu->arch.apf.halted && !kvm_hv_vcpu_suspended(vcpu));
 }
 
 static bool kvm_vcpu_has_events(struct kvm_vcpu *vcpu)
