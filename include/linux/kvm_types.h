@@ -59,7 +59,8 @@ struct gfn_to_hva_cache {
 };
 
 struct gfn_to_pfn_cache {
-	u64 generation;
+	u64 slots_generation;
+	u64 attrs_generation;
 	gpa_t gpa;
 	unsigned long uhva;
 	struct kvm_memory_slot *memslot;
