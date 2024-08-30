@@ -50,7 +50,8 @@ typedef u64            hfn_t;
 typedef hfn_t kvm_pfn_t;
 
 struct gfn_to_hva_cache {
-	u64 generation;
+	u64 slots_generation;
+	u64 attrs_generation;
 	gpa_t gpa;
 	unsigned long hva;
 	unsigned long len;

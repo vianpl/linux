@@ -2507,6 +2507,13 @@ static inline bool kvm_mem_is_private(struct kvm *kvm, gfn_t gfn)
 	       kvm_get_memory_attributes(kvm, gfn) & KVM_MEMORY_ATTRIBUTE_PRIVATE;
 }
 #else
+static inline bool kvm_range_has_memory_attributes(struct kvm *kvm, gfn_t start,
+						   gfn_t end,
+						   unsigned long mask,
+						   unsigned long attrs)
+{
+	return false;
+}
 static inline bool kvm_memory_attributes_valid(struct kvm *kvm,
 					       unsigned long attrs)
 {
