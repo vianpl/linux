@@ -2449,6 +2449,35 @@ static inline unsigned long kvm_get_memory_attributes(struct kvm *kvm, gfn_t gfn
 	return xa_to_value(xa_load(&kvm->mem_attrs.array, gfn));
 }
 
+static inline int kvm_memory_attributes_read_allowed(struct kvm *kvm, gfn_t gfn)
+{
+	unsigned long attrs;
+
+	attrs = kvm_get_memory_attributes(kvm, gfn);
+	if (!attrs)
+		return true;
+
+	if (kvm_memory_attribute_may_read(attrs))
+		return true;
+
+	return false;
+}
+
+
+static inline int kvm_memory_attributes_write_allowed(struct kvm *kvm, gfn_t gfn)
+{
+	unsigned long attrs;
+
+	attrs = kvm_get_memory_attributes(kvm, gfn);
+	if (!attrs)
+		return true;
+
+	if (kvm_memory_attribute_may_write(attrs))
+		return true;
+
+	return false;
+}
+
 static inline bool kvm_memory_attributes_changed(struct kvm *kvm, u64 generation)
 {
 	return kvm->mem_attrs.generation != generation;
@@ -2502,6 +2531,14 @@ static inline bool kvm_memory_attributes_changed(struct kvm *kvm, u64 generation
 static inline u64 kvm_memory_attributes_generation(struct kvm *kvm)
 {
 	return 0;
+}
+static inline int kvm_memory_attributes_read_allowed(struct kvm *kvm, gfn_t gfn)
+{
+	return true;
+}
+static inline int kvm_memory_attributes_write_allowed(struct kvm *kvm, gfn_t gfn)
+{
+	return true;
 }
 
 #endif /* CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES */
