@@ -3693,7 +3693,8 @@ static void record_steal_time(struct kvm_vcpu *vcpu)
 
 	slots = kvm_memslots(vcpu->kvm);
 
-	if (unlikely(slots->generation != ghc->generation ||
+	if (unlikely(slots->generation != ghc->slots_generation ||
+		     kvm_memory_attributes_changed(vcpu->kvm, ghc->attrs_generation) ||
 		     gpa != ghc->gpa ||
 		     kvm_is_error_hva(ghc->hva) || !ghc->memslot)) {
 		/* We rely on the fact that it fits in a single page. */
@@ -5073,7 +5074,8 @@ static void kvm_steal_time_set_preempted(struct kvm_vcpu *vcpu)
 
 	slots = kvm_memslots(vcpu->kvm);
 
-	if (unlikely(slots->generation != ghc->generation ||
+	if (unlikely(slots->generation != ghc->slots_generation ||
+		     kvm_memory_attributes_changed(vcpu->kvm, ghc->attrs_generation) ||
 		     gpa != ghc->gpa ||
 		     kvm_is_error_hva(ghc->hva) || !ghc->memslot))
 		return;
