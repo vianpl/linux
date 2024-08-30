@@ -3642,8 +3642,8 @@ int kvm_read_guest_offset_cached(struct kvm *kvm, struct gfn_to_hva_cache *ghc,
 	if (WARN_ON_ONCE(len + offset > ghc->len))
 		return -EINVAL;
 
-	if (slots->generation != ghc->slots_generation ||
-	    kvm_memory_attributes_changed(kvm, ghc->attrs_generation)) {
+	if ((slots->generation != ghc->slots_generation ||
+	    kvm_memory_attributes_changed(kvm, ghc->attrs_generation))) {
 		if (__kvm_gfn_to_hva_cache_init(kvm, slots, ghc, ghc->gpa, ghc->len))
 			return -EFAULT;
 	}
