@@ -78,10 +78,12 @@ bool kvm_gpc_check(struct gfn_to_pfn_cache *gpc, unsigned long len)
 		return false;
 
 	/*
-	 * If the page was cached from a memslot, make sure the memslots have
-	 * not been re-configured.
+	 * If the page was cached from a memslot, make sure the memslots nor
+	 * memory attributes have not been re-configured.
 	 */
-	if (!kvm_is_error_gpa(gpc->gpa) && gpc->generation != slots->generation)
+	if (!kvm_is_error_gpa(gpc->gpa) &&
+	    (gpc->slots_generation != slots->generation ||
+	     kvm_memory_attributes_changed(gpc->kvm, gpc->attrs_generation)))
 		return false;
 
 	if (kvm_is_error_hva(gpc->uhva))
@@ -247,6 +249,7 @@ out_error:
 
 static int __kvm_gpc_refresh(struct gfn_to_pfn_cache *gpc, gpa_t gpa, unsigned long uhva)
 {
+	struct kvm *kvm = gpc->kvm;
 	unsigned long page_offset;
 	bool unmap_old = false;
 	unsigned long old_uhva;
@@ -286,12 +289,21 @@ static int __kvm_gpc_refresh(struct gfn_to_pfn_cache *gpc, gpa_t gpa, unsigned l
 
 		page_offset = offset_in_page(gpa);
 
-		if (gpc->gpa != gpa || gpc->generation != slots->generation ||
-		    kvm_is_error_hva(gpc->uhva)) {
+		if (gpc->gpa != gpa || kvm_is_error_hva(gpc->uhva) ||
+		    gpc->slots_generation != slots->generation ||
+		    kvm_memory_attributes_changed(gpc->kvm, gpc->attrs_generation)) {
 			gfn_t gfn = gpa_to_gfn(gpa);
 
+			/* Memory attributes are incompatible with GPC */
+			gpc->attrs_generation = kvm_memory_attributes_generation(kvm);
+			if (kvm_get_memory_attributes(kvm, gfn)) {
+				gpc->uhva = KVM_HVA_ERR_BAD;
+				ret = -EFAULT;
+				goto out;
+			}
+
 			gpc->gpa = gpa;
-			gpc->generation = slots->generation;
+			gpc->slots_generation = slots->generation;
 			gpc->memslot = __gfn_to_memslot(slots, gfn);
 			gpc->uhva = gfn_to_hva_memslot(gpc->memslot, gfn);
 
