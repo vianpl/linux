@@ -848,6 +848,7 @@ struct kvm {
 	struct {
 		/* Protected by slots_locks (for writes) and RCU (for reads) */
 		struct xarray array;
+		u64 generation;
 	} mem_attrs;
 #endif
 	char stats_id[KVM_STATS_NAME_SIZE];
@@ -2439,9 +2440,23 @@ static inline bool kvm_memory_attribute_may_exec(u64 attrs)
 }
 
 #ifdef CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES
+#define KVM_MEMORY_ATTRIBUTE_NEEDS_SYNC_MASK                 \
+	(KVM_MEMORY_ATTRIBUTE_NR | KVM_MEMORY_ATTRIBUTE_NW | \
+	 KVM_MEMORY_ATTRIBUTE_NX)
+
 static inline unsigned long kvm_get_memory_attributes(struct kvm *kvm, gfn_t gfn)
 {
 	return xa_to_value(xa_load(&kvm->mem_attrs.array, gfn));
+}
+
+static inline bool kvm_memory_attributes_changed(struct kvm *kvm, u64 generation)
+{
+	return kvm->mem_attrs.generation != generation;
+}
+
+static inline u64 kvm_memory_attributes_generation(struct kvm *kvm)
+{
+	return kvm->mem_attrs.generation;
 }
 
 bool kvm_range_has_memory_attributes(struct kvm *kvm, gfn_t start, gfn_t end,
@@ -2480,6 +2495,15 @@ static inline unsigned long kvm_get_memory_attributes(struct kvm *kvm, gfn_t gfn
 {
 	return 0;
 }
+static inline bool kvm_memory_attributes_changed(struct kvm *kvm, u64 generation)
+{
+	return false;
+}
+static inline u64 kvm_memory_attributes_generation(struct kvm *kvm)
+{
+	return 0;
+}
+
 #endif /* CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES */
 
 #ifdef CONFIG_KVM_PRIVATE_MEM
