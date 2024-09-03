@@ -244,8 +244,11 @@ static int FNAME(update_accessed_dirty_bits)(struct kvm_vcpu *vcpu,
 		 * overwrite the read-only memory to set the accessed and dirty
 		 * bits.
 		 */
-		if (unlikely(!walker->pte_writable[level - 1]))
+		if (unlikely(!walker->pte_writable[level - 1])) {
+			if (status)
+				*status |= PWALK_STATUS_READ_ONLY_PTE_GPA;
 			continue;
+		}
 
 		ret = __try_cmpxchg_user(ptep_user, &orig_pte, pte, fault);
 		if (ret)
