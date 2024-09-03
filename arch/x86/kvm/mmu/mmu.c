@@ -4103,11 +4103,12 @@ void kvm_mmu_sync_prev_roots(struct kvm_vcpu *vcpu)
 
 static gpa_t nonpaging_gva_to_gpa(struct kvm_vcpu *vcpu, struct kvm_mmu *mmu,
 				  gpa_t vaddr, u64 access, u64 flags,
-				  struct x86_exception *exception)
+				  struct x86_exception *exception, u16 *status)
 {
 	if (exception)
 		exception->error_code = 0;
-	return kvm_translate_gpa(vcpu, mmu, vaddr, access, flags, exception);
+	return kvm_translate_gpa(vcpu, mmu, vaddr, access, flags, exception,
+				 status);
 }
 
 static bool mmio_info_in_cache(struct kvm_vcpu *vcpu, u64 addr, bool direct)
