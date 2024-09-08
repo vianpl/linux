@@ -4391,6 +4391,42 @@ static int kvm_faultin_pfn_private(struct kvm_vcpu *vcpu,
 	return RET_PF_CONTINUE;
 }
 
+static int kvm_faultin_memory_protections(struct kvm_vcpu *vcpu,
+					  struct kvm_page_fault *fault)
+{
+	bool may_read, may_write, may_exec;
+	unsigned long attrs;
+
+	/* Memory attributes don't apply to MMIO regions */
+	if (unlikely(!fault->slot))
+		return RET_PF_CONTINUE;
+
+	attrs = kvm_get_memory_attributes(vcpu->kvm, fault->gfn);
+	if (!attrs)
+		return RET_PF_CONTINUE;
+
+	if (!kvm_memory_attributes_valid(vcpu->kvm, attrs)) {
+		kvm_err("Invalid mem attributes 0x%lx found for address 0x%016llx\n",
+			attrs, fault->addr);
+		return -EFAULT;
+	}
+
+	trace_kvm_faultin_memory_protections(vcpu, fault, attrs);
+
+	may_read = kvm_memory_attribute_may_read(attrs);
+	may_write = kvm_memory_attribute_may_write(attrs);
+	may_exec = kvm_memory_attribute_may_exec(attrs);
+
+	if (!may_read || (fault->write && !may_write) ||
+	    (fault->exec && !may_exec))
+		return -EFAULT;
+
+	fault->map_writable = may_write;
+	fault->map_executable = may_exec;
+
+	return RET_PF_CONTINUE;
+}
+
 static int __kvm_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 {
 	bool async;
@@ -4531,6 +4567,11 @@ static int kvm_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 	if (mmu_invalidate_retry_gfn_unsafe(vcpu->kvm, fault->mmu_seq, fault->gfn)) {
 		kvm_release_pfn_clean(fault->pfn);
 		return RET_PF_RETRY;
+	}
+
+	if (kvm_faultin_memory_protections(vcpu, fault)) {
+		kvm_mmu_prepare_memory_fault_exit(vcpu, fault);
+		return -EFAULT;
 	}
 
 	return RET_PF_CONTINUE;
