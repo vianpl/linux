@@ -41,3 +41,8 @@ void arch_write_return_insn(struct kvm_vm *vm, vm_paddr_t vaddr)
 {
 	memset(addr_gva2hva(vm, vaddr), 0xc3, 1);
 }
+
+void arch_guest_init(void)
+{
+	x2apic_enable();
+}
