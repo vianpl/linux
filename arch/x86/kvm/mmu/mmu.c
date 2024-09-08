@@ -7636,6 +7636,8 @@ bool kvm_arch_post_set_memory_attributes(struct kvm *kvm,
 	unsigned long attrs = range->arg.attributes;
 	bool priv_attr = attrs & KVM_MEMORY_ATTRIBUTE_PRIVATE;
 	struct kvm_memory_slot *slot = range->slot;
+	bool gen_update = false;
+	struct kvm_mmu_page *sp;
 	int level;
 
 	lockdep_assert_held_write(&kvm->mmu_lock);
@@ -7695,6 +7697,34 @@ bool kvm_arch_post_set_memory_attributes(struct kvm *kvm,
 				hugepage_set_mixed(slot, gfn, level);
 		}
 	}
+
+	/*
+	 * There are special considerations when applying an memory protection
+	 * attibute against a GPTE page. If set read-only, access/dirty bits
+	 * within that page shouldn't be updated. If set non-accesible,
+	 * accessing a virtual address that requires traversing that GPTE page
+	 * should fault.
+	 *
+	 * On TDP enabled guests, the CPU faults on the GPTE address upon
+	 * detecting such a situation.
+	 *
+	 * On non-TDP, upon detecting this situation, and based on the fact it
+	 * should be a rare occasion, invalidate all the mmu roots.
+	 */
+	for (gfn_t gfn = range->start; gfn < range->end; gfn++) {
+		for_each_gfn_valid_sp_with_gptes(kvm, sp, gfn) {
+			gen_update = true;
+			trace_printk("needs gen update! %llx\n", gfn);
+			goto exit_loop;
+		}
+	}
+exit_loop:
+	if (gen_update) {
+		kvm->arch.mmu_valid_gen = kvm->arch.mmu_valid_gen ? 0 : 1;
+		kvm_make_all_cpus_request(kvm, KVM_REQ_MMU_FREE_OBSOLETE_ROOTS);
+		kvm_zap_obsolete_pages(kvm);
+	}
+
 	return false;
 }
 
