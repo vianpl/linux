@@ -20,12 +20,13 @@ uint64_t arch_controlled_read(vm_vaddr_t addr)
 	return val;
 }
 
-void arch_controlled_write(vm_vaddr_t addr)
+void arch_controlled_write(vm_vaddr_t addr, uint64_t val)
 {
 	asm volatile("mov %[addr], %%rax \n\r"
-		     "mov %%rax, (%%rax) \n\r"
-		     :: [addr] "m"(addr)
-		     : "memory", "rax");
+		     "mov %[val], %%rbx \n\r"
+		     "mov %%rbx, (%%rax) \n\r"
+		     :: [addr] "m" (addr), [val] "m" (val)
+		     : "memory", "rax", "rbx");
 }
 
 void arch_controlled_exec(vm_vaddr_t addr)
