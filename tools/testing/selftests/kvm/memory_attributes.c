@@ -22,11 +22,16 @@
 #define MMIO_GPA	0x700000000
 #define MMIO_GVA	MMIO_GPA
 
+#define PT_WRITABLE_MASK	BIT_ULL(1)
+#define PT_ACCESSED_MASK	BIT_ULL(5)
+#define PTE_VADDR		0x1000000000
+
 enum {
 	TEST_OP_NOP,
 	TEST_OP_READ,
 	TEST_OP_WRITE,
 	TEST_OP_EXEC,
+	TEST_OP_INVPLG,
 	TEST_OP_EXIT,
 };
 
@@ -35,6 +40,7 @@ const char *test_op_names[] =
 	[TEST_OP_READ] = "Read",
 	[TEST_OP_WRITE] = "Write",
 	[TEST_OP_EXEC] = "Exec",
+	[TEST_OP_INVPLG] = "Invplg",
 	[TEST_OP_EXIT] = "Exit",
 };
 
@@ -53,7 +59,7 @@ __weak uint64_t arch_controlled_read(vm_vaddr_t addr)
 {
 	return 0;
 }
-__weak void arch_controlled_write(vm_vaddr_t addr) { }
+__weak void arch_controlled_write(vm_vaddr_t addr, uint64_t val) { }
 __weak void arch_controlled_exec(vm_vaddr_t addr) { }
 __weak void arch_write_return_insn(struct kvm_vm *vm, vm_vaddr_t addr) { }
 
@@ -72,13 +78,20 @@ static void guest_code(void *data)
 			GUEST_SYNC(stage++);
 			break;
 		case TEST_OP_WRITE:
-			arch_controlled_write(vaddr);
+			arch_controlled_write(vaddr, expected_val);
 			GUEST_SYNC(stage++);
 			break;
 		case TEST_OP_EXEC:
 			arch_controlled_exec(vaddr);
 			GUEST_SYNC(stage++);
 			break;
+#ifdef __x86_64__
+		case TEST_OP_INVPLG:
+			asm volatile("invlpg (%0)"
+				     :: "b" (vaddr): "memory");
+			GUEST_SYNC(stage++);
+			break;
+#endif
 		default:
 			goto exit;
 		};
@@ -111,6 +124,21 @@ static void vcpu_run_and_inc_stage(struct kvm_vcpu *vcpu)
 	test_data->stage++;
 }
 
+static int test_page(struct kvm_vcpu *vcpu, int op, vm_vaddr_t vaddr)
+{
+	int rc;
+
+	test_data->op = op;
+	test_data->vaddr = vaddr;
+
+	rc = _vcpu_run(vcpu);
+
+	if (rc >= 0)
+		test_data->stage++;
+
+	return rc < 0 ? -errno : rc;
+}
+
 static void test_page_restricted(struct kvm_vcpu *vcpu, int op,
 				 vm_vaddr_t vaddr, vm_paddr_t fault_paddr,
 				 uint64_t fault_reason)
@@ -127,7 +155,8 @@ static void test_page_restricted(struct kvm_vcpu *vcpu, int op,
 		    test_op_names[op], rc, errno);
 	TEST_ASSERT_KVM_EXIT_REASON(vcpu, KVM_EXIT_MEMORY_FAULT);
 	TEST_ASSERT_EQ(vcpu->run->memory_fault.gpa, fault_paddr);
-	TEST_ASSERT_EQ(vcpu->run->memory_fault.flags, fault_reason);
+	if (fault_reason)
+		TEST_ASSERT_EQ(vcpu->run->memory_fault.flags, fault_reason);
 	TEST_ASSERT_EQ(vcpu->run->memory_fault.size, vm->page_size);
 }
 
@@ -246,6 +275,140 @@ static void test_memattrs_ignore_mmio(struct kvm_vcpu *vcpu)
 	vm_set_memory_attributes(vm, MMIO_GPA, vm->page_size, 0);
 }
 
+#ifdef __x86_64__
+/*
+ * This test validates that, during a page walk, if the page a PTE is placed in
+ * is read-only the accesss and dirty bits will not be written. Note There's a
+ * slight variation in behaviour between TDP and non-TDP VMs:
+ *  - With TDP enabled, KVM issues a fault exit upon observing the non-writable
+ *  page.
+ *  - With non-TDP, the access bit is not set, but the walk succeeds.
+ *
+ *  This is aligned with read-only memslots' behaviour.
+ */
+static void test_memory_access_pte_ro(struct kvm_vcpu *vcpu, vm_vaddr_t vaddr)
+{
+	struct kvm_vm *vm = vcpu->vm;
+	int level = PG_LEVEL_4K;
+	vm_paddr_t paddr;
+	uint64_t *pte;
+
+	pte = __vm_get_page_table_entry(vm, vaddr, &level);
+	TEST_ASSERT_EQ(level, PG_LEVEL_4K);
+	paddr = addr_hva2gpa(vm, pte) & GENMASK(61, vm->page_shift);
+
+	*pte &= ~PTE_ACCESSED_MASK;
+	vm_set_memory_attributes(vm, paddr, vm->page_size, KVM_MEMORY_ATTRIBUTE_NW);
+	if (test_page(vcpu, TEST_OP_READ, vaddr) < 0) {
+		test_page_restricted(vcpu, TEST_OP_READ, vaddr, paddr,
+				     /* write PTE's accessed bit */
+				     KVM_MEMORY_EXIT_FLAG_WRITE);
+
+		vm_set_memory_attributes(vm, paddr, vm->page_size, 0);
+		test_page_accessible(vcpu, TEST_OP_READ, vaddr);
+		TEST_ASSERT_EQ(*pte & PTE_ACCESSED_MASK, PTE_ACCESSED_MASK);
+
+		/* Re-run the test, now vaddr is backed by an EPT. */
+		*pte &= ~PTE_ACCESSED_MASK;
+		vm_set_memory_attributes(vm, paddr, vm->page_size,
+					 KVM_MEMORY_ATTRIBUTE_NW);
+		test_page_restricted(vcpu, TEST_OP_READ, vaddr, paddr,
+				     /* write PTE's accessed bit */
+				     KVM_MEMORY_EXIT_FLAG_WRITE);
+		vm_set_memory_attributes(vm, paddr, vm->page_size, 0);
+		test_page_accessible(vcpu, TEST_OP_READ, vaddr);
+	} else {
+		TEST_ASSERT_EQ(*pte & PTE_ACCESSED_MASK, 0);
+		vm_set_memory_attributes(vm, paddr, vm->page_size, 0);
+	}
+}
+
+/*
+ * This test validates that, during a page walk, if the page a PTE is placed in
+ * is maked as non-accesible, KVM issues a fault exit.
+ */
+static void test_memory_access_pte_nr(struct kvm_vcpu *vcpu, vm_vaddr_t vaddr)
+{
+	struct kvm_vm *vm = vcpu->vm;
+	int level = PG_LEVEL_4K;
+	vm_paddr_t paddr;
+	uint64_t *pte;
+
+	pte = __vm_get_page_table_entry(vm, vaddr, &level);
+	TEST_ASSERT_EQ(level, PG_LEVEL_4K);
+	paddr = addr_hva2gpa(vm, pte) & GENMASK(61, vm->page_shift);
+
+	vm_set_memory_attributes(vm, paddr, vm->page_size,
+				 KVM_MEMORY_ATTRIBUTE_NO_ACCESS);
+
+	test_page_restricted(vcpu, TEST_OP_READ, vaddr, paddr, 0);
+
+	vm_set_memory_attributes(vm, paddr, vm->page_size, 0);
+	test_page_accessible(vcpu, TEST_OP_READ, vaddr);
+
+	/* Re-run the test, now vaddr is backed by an SPTE. */
+	vm_set_memory_attributes(vm, paddr, vm->page_size,
+				 KVM_MEMORY_ATTRIBUTE_NO_ACCESS);
+	test_page_restricted(vcpu, TEST_OP_READ, vaddr, paddr, 0);
+	vm_set_memory_attributes(vm, paddr, vm->page_size, 0);
+	test_page_accessible(vcpu, TEST_OP_READ, vaddr);
+}
+
+static void test_memory_access_sync_spte(struct kvm_vcpu *vcpu, vm_vaddr_t vaddr)
+{
+	struct kvm_vm *vm = vcpu->vm;
+	vm_paddr_t paddr = addr_gva2gpa(vm, vaddr);
+	uint64_t *pte, old_pte, new_pte;
+	int level = PG_LEVEL_4K;
+
+	pte = __vm_get_page_table_entry(vm, vaddr, &level);
+	TEST_ASSERT_EQ(level, PG_LEVEL_4K);
+	vm_paddr_t pte_paddr = addr_hva2gpa(vm, pte);
+	vm_paddr_t pte_page_paddr = pte_paddr & GENMASK(61, vm->page_shift);
+	int pte_offset = pte_paddr - pte_page_paddr;
+	virt_pg_map(vm, PTE_VADDR, pte_page_paddr);
+	old_pte = *pte;
+
+	/* Set vmaddr as non-executable */
+	vm_set_memory_attributes(vm, paddr, vm->page_size, KVM_MEMORY_ATTRIBUTE_NX);
+	printf("paddr %lx, vaddr %lx, pteaddr%lx\n", paddr, vaddr, pte_paddr);
+
+	/*
+	 * Make sure SPTEs are populated as previous op might have destroyed
+	 * them. We new have a non-executable SPTE.
+	 */
+	test_page_accessible(vcpu, TEST_OP_READ, vaddr);
+
+	/*
+	 * Update PTE, make it non-writable and flush TLBs to make sure we go
+	 * through the sync_spte path. This should update the SPTE and make it
+	 * read-only.
+	 */
+	new_pte = (old_pte & ~PT_WRITABLE_MASK) | PT_ACCESSED_MASK;
+	test_data->expected_val = new_pte;
+	test_page_accessible(vcpu, TEST_OP_WRITE, PTE_VADDR + pte_offset);
+	TEST_ASSERT_EQ(*pte, new_pte);
+	test_page_accessible(vcpu, TEST_OP_INVPLG, vaddr);
+
+	/* The not executable attrs remain valid */
+	arch_write_return_insn(vm, vaddr);
+	test_page_restricted(vcpu, TEST_OP_EXEC, vaddr, paddr,
+			     KVM_MEMORY_EXIT_FLAG_EXEC);
+
+	/* Cleanup */
+	*pte = old_pte;
+	vm_set_memory_attributes(vm, paddr, vm->page_size, 0);
+	test_page_accessible(vcpu, TEST_OP_EXEC, vaddr);
+}
+
+static void test_memory_access_pte(struct kvm_vcpu *vcpu, vm_vaddr_t vaddr)
+{
+	test_memory_access_pte_nr(vcpu, vaddr);
+	test_memory_access_pte_ro(vcpu, vaddr);
+	test_memory_access_sync_spte(vcpu, vaddr);
+}
+#endif
+
 static void test_input_validation(struct kvm_vm *vm)
 {
 	uint64_t flags, gpa = 0, size = 0, attrs = 0;
@@ -346,6 +509,10 @@ int main(int argc, char *argv[])
 	test_input_validation(vm);
 	test_memory_access(vcpu, test_mem, size);
 	test_memattrs_ignore_mmio(vcpu);
+#ifdef __x86_64__
+	test_side_channels(vcpu, test_mem, size);
+	test_memory_access_pte(vcpu, test_mem);
+#endif
 	test_finalize(vcpu);
 
 	kvm_vm_free(vm);
