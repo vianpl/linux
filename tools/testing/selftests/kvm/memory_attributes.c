@@ -19,6 +19,8 @@
 	(KVM_MEMORY_ATTRIBUTE_NR | KVM_MEMORY_ATTRIBUTE_NW | \
 	 KVM_MEMORY_ATTRIBUTE_NX)
 
+#define HV_STATUS_INVALID_HYPERCALL_INPUT	3
+
 #define MMIO_GPA	0x700000000
 #define MMIO_GVA	MMIO_GPA
 
@@ -26,12 +28,35 @@
 #define PT_ACCESSED_MASK	BIT_ULL(5)
 #define PTE_VADDR		0x1000000000
 
+static volatile uint64_t ipis_rcvd;
+
+static pthread_t vcpu_thread;
+
+struct hv_vpset {
+	u64 format;
+	u64 valid_bank_mask;
+	u64 bank_contents[2];
+};
+
+enum HV_GENERIC_SET_FORMAT {
+	HV_GENERIC_SET_SPARSE_4K,
+	HV_GENERIC_SET_ALL,
+};
+
+struct hv_send_ipi_ex {
+	u32 vector;
+	u32 reserved;
+	struct hv_vpset vp_set;
+};
+
 enum {
 	TEST_OP_NOP,
 	TEST_OP_READ,
 	TEST_OP_WRITE,
 	TEST_OP_EXEC,
 	TEST_OP_INVPLG,
+	TEST_OP_HYPERV_HYPERCALL_INPUT,
+	TEST_OP_MONITOR_ADDRESS,
 	TEST_OP_EXIT,
 };
 
@@ -41,6 +66,8 @@ const char *test_op_names[] =
 	[TEST_OP_WRITE] = "Write",
 	[TEST_OP_EXEC] = "Exec",
 	[TEST_OP_INVPLG] = "Invplg",
+	[TEST_OP_HYPERV_HYPERCALL_INPUT] = "HvHcall input",
+	[TEST_OP_MONITOR_ADDRESS] = "Monitor address",
 	[TEST_OP_EXIT] = "Exit",
 };
 
@@ -48,6 +75,9 @@ struct test_data {
 	uint8_t op;
 	int stage;
 	vm_vaddr_t vaddr;
+	vm_paddr_t paddr;
+	uint8_t confirm_read;
+	uint64_t expected_val;
 
 	struct kvm_vcpu *vcpu;
 };
@@ -63,18 +93,28 @@ __weak void arch_controlled_write(vm_vaddr_t addr, uint64_t val) { }
 __weak void arch_controlled_exec(vm_vaddr_t addr) { }
 __weak void arch_write_return_insn(struct kvm_vm *vm, vm_vaddr_t addr) { }
 
+/* Arch-specific implementation optional */
+__weak void arch_guest_init(void) { }
+
 static void guest_code(void *data)
 {
 	struct test_data *test_data = data;
 	int stage = 1;
 	uint32_t val;
 
+	arch_guest_init();
+
 	while (true) {
+		uint64_t expected_val = READ_ONCE(test_data->expected_val);
+		bool confirm_read = READ_ONCE(test_data->confirm_read);
 		vm_vaddr_t vaddr = READ_ONCE(test_data->vaddr);
+		vm_paddr_t paddr = READ_ONCE(test_data->paddr);
 
 		switch(READ_ONCE(test_data->op)) {
 		case TEST_OP_READ:
 			val = arch_controlled_read(vaddr);
+			if (confirm_read)
+				GUEST_ASSERT_EQ(expected_val, val);
 			GUEST_SYNC(stage++);
 			break;
 		case TEST_OP_WRITE:
@@ -91,6 +131,34 @@ static void guest_code(void *data)
 				     :: "b" (vaddr): "memory");
 			GUEST_SYNC(stage++);
 			break;
+		case TEST_OP_HYPERV_HYPERCALL_INPUT: {
+			uint64_t hv_status;
+			uint8_t vector;
+
+			vector = __hyperv_hypercall(HVCALL_SEND_IPI_EX,
+						    paddr, 0, &hv_status);
+			GUEST_ASSERT_EQ(vector, 0);
+			GUEST_ASSERT_EQ(hv_status, HV_STATUS_INVALID_HYPERCALL_INPUT);
+			GUEST_SYNC(stage++);
+
+			hyperv_hypercall(HVCALL_SEND_IPI_EX, paddr, 0);
+			asm volatile ("sti; hlt; cli;");
+			GUEST_ASSERT_EQ(ipis_rcvd, 1);
+			GUEST_SYNC(stage++);
+			break;
+		}
+		case TEST_OP_MONITOR_ADDRESS: {
+			uint64_t *pval = (uint64_t *)vaddr;
+			uint64_t val = READ_ONCE(*pval);
+
+			while (READ_ONCE(*pval) == val &&
+			       /* So host can force the op out of the loop */
+			       READ_ONCE(test_data->op) == TEST_OP_MONITOR_ADDRESS)
+				asm volatile("nop");
+
+			GUEST_SYNC(stage++);
+			break;
+		}
 #endif
 		default:
 			goto exit;
@@ -407,6 +475,217 @@ static void test_memory_access_pte(struct kvm_vcpu *vcpu, vm_vaddr_t vaddr)
 	test_memory_access_pte_ro(vcpu, vaddr);
 	test_memory_access_sync_spte(vcpu, vaddr);
 }
+
+#define IPI_VECTOR	 0xfe
+
+static void guest_ipi_handler_hv(struct ex_regs *regs)
+{
+	ipis_rcvd++;
+	wrmsr(HV_X64_MSR_EOI, 1);
+}
+
+/*
+ * This test verifies that the Hyper-V hypercall exit handler takes memory
+ * attributes into account before accessing input data. It coordinates with the
+ * guest through the 'TEST_OP_HYPERV_HYPERCALL_INPUT' operation and instructs
+ * the guest to issue two PV IPIs. The first PV IPI fails because the input
+ * data is held in read-protected memory. Subsequently, the memory protection
+ * is lifted, and the second PV IPI succeeds.
+ */
+static void test_side_channel_hyperv_hypercall_inputs(struct kvm_vcpu *vcpu,
+						      vm_vaddr_t test_vm_addr,
+						      size_t size)
+{
+	struct hv_send_ipi_ex *ipi_ex = addr_gva2hva(vcpu->vm, test_vm_addr);
+	struct kvm_vm *vm = vcpu->vm;
+	vm_paddr_t paddr;
+
+	if (!kvm_has_cap(KVM_CAP_HYPERV_SEND_IPI))
+		return;
+
+	ipis_rcvd = 0;
+	vm_install_exception_handler(vm, IPI_VECTOR, guest_ipi_handler_hv);
+	vcpu_set_msr(vcpu, HV_X64_MSR_GUEST_OS_ID, HYPERV_LINUX_OS_ID);
+
+	test_data->op = TEST_OP_HYPERV_HYPERCALL_INPUT;
+	test_data->vaddr = test_vm_addr;
+	paddr = addr_gva2gpa(vm, test_data->vaddr);
+	test_data->paddr = paddr;
+	ipi_ex->vector = IPI_VECTOR;
+	ipi_ex->vp_set.format = HV_GENERIC_SET_ALL;
+	vm_set_memory_attributes(vm, paddr, vm->page_size, KVM_MEMORY_ATTRIBUTE_NO_ACCESS);
+	vcpu_run_and_inc_stage(vcpu);
+	vm_set_memory_attributes(vm, paddr, vm->page_size, 0);
+	vcpu_run_and_inc_stage(vcpu);
+}
+
+/*
+ * Verifies that the guest page table walker fails the walk if it encounters a
+ * page table entry address read-protected by a memory attribute.
+ */
+static void test_side_channel_emul_page_walks(struct kvm_vcpu *vcpu,
+					      vm_vaddr_t test_vm_addr,
+					      size_t size)
+{
+	const uint64_t pte_addr_mask = GENMASK(51, 12);
+	struct kvm_vm *vm = vcpu->vm;
+	struct kvm_translation tr;
+	int level = PG_LEVEL_1G;
+	vm_paddr_t paddr;
+	uint64_t *pte;
+
+	pte = __vm_get_page_table_entry(vm, test_vm_addr, &level);
+	TEST_ASSERT_EQ(level, PG_LEVEL_1G);
+	paddr = *pte & pte_addr_mask;
+
+	tr = vcpu_translate(vcpu, test_vm_addr);
+	TEST_ASSERT_EQ(tr.valid, true);
+	TEST_ASSERT_EQ(tr.physical_address, addr_gva2gpa(vm, test_vm_addr));
+
+	vm_set_memory_attributes(vm, paddr, vm->page_size, KVM_MEMORY_ATTRIBUTE_NO_ACCESS);
+	tr = vcpu_translate(vcpu, test_vm_addr);
+	TEST_ASSERT_EQ(tr.valid, false);
+
+	vm_set_memory_attributes(vm, paddr, vm->page_size, 0);
+}
+
+static void vm_set_vapic_addr(struct kvm_vcpu *vcpu, uint64_t addr)
+{
+	struct kvm_vapic_addr va;
+
+	va.vapic_addr = addr;
+	vcpu_ioctl(vcpu, KVM_SET_VAPIC_ADDR, &va);
+}
+
+/*
+ * Perform a dummy regs update to issue a KVM_REQ_EVENT. This forces
+ * vapic to be synced before entering the guest.
+ */
+static void vcpu_force_vapic_update(struct kvm_vcpu *vcpu)
+{
+	struct kvm_regs regs;
+
+	vcpu_regs_get(vcpu, &regs);
+	vcpu_regs_set(vcpu, &regs);
+}
+
+/*
+ * Setup the vapic address on a GPA that is write-protected. Force an vapic
+ * update and validate its contents were not changes. Then, lift the write
+ * restriction and validate the page's contents are updated.
+ */
+static void test_side_channel_vapic_addr(struct kvm_vcpu *vcpu)
+{
+	struct kvm_vm *vm = vcpu->vm;
+	vm_vaddr_t vaddr = vm_vaddr_alloc_page(vm);
+	vm_paddr_t paddr = addr_gva2gpa(vm, vaddr);
+
+	vm_set_vapic_addr(vcpu, paddr);
+	test_data->op = TEST_OP_READ;
+	test_data->vaddr = vaddr;
+	test_data->confirm_read = 1;
+	test_data->expected_val = ~0ULL >> 32;
+	memset(addr_gva2hva(vm, vaddr), 0xff, sizeof(uint32_t));
+	vm_set_memory_attributes(vm, paddr, vm->page_size, KVM_MEMORY_ATTRIBUTE_NW);
+	vcpu_run_and_inc_stage(vcpu);
+
+	vm_set_memory_attributes(vm, paddr, vm->page_size, 0);
+	vcpu_force_vapic_update(vcpu);
+	test_data->expected_val = 0ULL;
+	vcpu_run_and_inc_stage(vcpu);
+
+	vm_set_vapic_addr(vcpu, 0);
+	test_data->confirm_read = 0;
+}
+
+static void *vcpu_worker(void *data)
+{
+	struct test_data *test_data = data;
+	struct kvm_vcpu *vcpu = test_data->vcpu;
+
+	vcpu_run_and_inc_stage(vcpu);
+
+	return NULL;
+}
+
+/*
+ * Set up the pvclock page and validate that KVM periodically updates the
+ * 'tsc_timestamp' field. Subsequently, make the pvclock page non-writable and
+ * verify that the 'tsc_timestamp' field is no longer updated.
+ */
+static void test_side_channel_pvclock(struct kvm_vcpu *vcpu)
+{
+	struct kvm_vm *vm = vcpu->vm;
+	vm_vaddr_t vaddr = vm_vaddr_alloc_page(vm);
+	vm_paddr_t paddr = addr_gva2gpa(vm, vaddr);
+	vcpu_set_msr(vcpu, MSR_KVM_SYSTEM_TIME_NEW, paddr | 0x1);
+
+	test_data->op = TEST_OP_MONITOR_ADDRESS;
+	test_data->vaddr = vaddr + offsetof(struct pvclock_vcpu_time_info, tsc_timestamp);
+
+	pthread_create(&vcpu_thread, NULL, vcpu_worker, test_data);
+	usleep(msecs_to_usecs(1000));
+	TEST_ASSERT_EQ(pthread_tryjoin_np(vcpu_thread, NULL), 0);
+
+	vm_set_memory_attributes(vm, paddr, vm->page_size, KVM_MEMORY_ATTRIBUTE_NW);
+	pthread_create(&vcpu_thread, NULL, vcpu_worker, test_data);
+	usleep(msecs_to_usecs(1000));
+	TEST_ASSERT_EQ(pthread_tryjoin_np(vcpu_thread, NULL), EBUSY);
+
+	/* Force the 'monitor_address' guest operation to finish */
+	test_data->op = TEST_OP_NOP;
+	TEST_ASSERT_EQ(pthread_join(vcpu_thread, NULL), 0);
+	vm_set_memory_attributes(vm, paddr, vm->page_size, 0);
+	vcpu_set_msr(vcpu, MSR_KVM_SYSTEM_TIME_NEW, 0);
+}
+
+/*
+ * Write to MSR_KVM_WALL_CLOCK_NEW and verify that the struct's 'version' field
+ * is updated. Subsequently, make the target guest physical address
+ * non-writable, and verify the 'version' field isn't updated anymore.
+ */
+static void test_side_channel_wallclock(struct kvm_vcpu *vcpu)
+{
+	struct kvm_vm *vm = vcpu->vm;
+	vm_vaddr_t vaddr = vm_vaddr_alloc_page(vm);
+	vm_paddr_t paddr = addr_gva2gpa(vm, vaddr);
+	struct pvclock_wall_clock *wc = addr_gva2hva(vm, vaddr);
+
+	wc->version = 0x0;
+	vcpu_set_msr(vcpu, MSR_KVM_WALL_CLOCK_NEW, paddr);
+	TEST_ASSERT_EQ(wc->version, 2);
+
+	vm_set_memory_attributes(vm, paddr, vm->page_size, KVM_MEMORY_ATTRIBUTE_NW);
+	vcpu_set_msr(vcpu, MSR_KVM_WALL_CLOCK_NEW, paddr);
+	TEST_ASSERT_EQ(wc->version, 2);
+
+	vm_set_memory_attributes(vm, paddr, vm->page_size, 0);
+}
+
+/*
+ * Memory attributes are vulnerable to side-channel attacks. This means that
+ * any KVM operation initiated by the guest that requires guest memory access
+ * (which is the case for most pv-interfaces) needs to consider memory
+ * attributes.
+ *
+ * The following tests validate that this requirement is upheld for a variety
+ * of use-cases. These test cases were selected to exercise specific approaches
+ * to accessing guest memory, including:
+ *
+ *  - kvm_read/write_guest()
+ *  - gfn_to_hva_cache
+ *  - gfn_to_pfn_cache
+ *  - Guest page walker
+ */
+static void test_side_channels(struct kvm_vcpu *vcpu, vm_vaddr_t test_vm_addr,
+			       size_t size)
+{
+	test_side_channel_hyperv_hypercall_inputs(vcpu, test_vm_addr, size);
+	test_side_channel_emul_page_walks(vcpu, test_vm_addr, size);
+	test_side_channel_vapic_addr(vcpu);
+	test_side_channel_pvclock(vcpu);
+	test_side_channel_wallclock(vcpu);
+}
 #endif
 
 static void test_input_validation(struct kvm_vm *vm)
@@ -505,13 +784,16 @@ int main(int argc, char *argv[])
 	test_mem = vm_vaddr_alloc(vm, size, KVM_UTIL_MIN_VADDR);
 	virt_map(vcpu->vm, MMIO_GVA, MMIO_GPA, 1);
 	test_data = init_test_data(vcpu);
+#ifdef __x86_64__
+	vcpu_set_hv_cpuid(vcpu);
+#endif
 
 	test_input_validation(vm);
 	test_memory_access(vcpu, test_mem, size);
 	test_memattrs_ignore_mmio(vcpu);
 #ifdef __x86_64__
-	test_side_channels(vcpu, test_mem, size);
 	test_memory_access_pte(vcpu, test_mem);
+	test_side_channels(vcpu, test_mem, size);
 #endif
 	test_finalize(vcpu);
 

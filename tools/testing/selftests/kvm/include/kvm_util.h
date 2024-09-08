@@ -756,6 +756,16 @@ static inline int vcpu_get_stats_fd(struct kvm_vcpu *vcpu)
 	return fd;
 }
 
+static inline struct kvm_translation vcpu_translate(struct kvm_vcpu *vcpu,
+						    uint64_t gva)
+{
+	struct kvm_translation tr;
+
+	tr.linear_address = gva;
+	vcpu_ioctl(vcpu, KVM_TRANSLATE, &tr);
+	return tr;
+}
+
 int __kvm_has_device_attr(int dev_fd, uint32_t group, uint64_t attr);
 
 static inline void kvm_has_device_attr(int dev_fd, uint32_t group, uint64_t attr)
