@@ -89,6 +89,7 @@ struct guest_walker {
 	unsigned int pt_access[PT_MAX_FULL_LEVELS];
 	unsigned int pte_access;
 	gfn_t gfn;
+	bool mem_attr_fault;
 	struct x86_exception fault;
 };
 
@@ -326,6 +327,7 @@ retry_walk:
 	walker->level = mmu->cpu_role.base.level;
 	pte           = kvm_mmu_get_guest_pgd(vcpu, mmu);
 	have_ad       = PT_HAVE_ACCESSED_DIRTY(mmu);
+	walker->mem_attr_fault = false;
 
 #if PTTYPE == 64
 	walk_nx_mask = 1ULL << PT64_NX_SHIFT;
@@ -401,8 +403,11 @@ retry_walk:
 		if (unlikely(kvm_is_error_hva(host_addr)))
 			goto error;
 
-		if (!kvm_memory_attributes_read_allowed(vcpu->kvm, gpa_to_gfn(real_gpa)))
+		if (!kvm_memory_attributes_read_allowed(vcpu->kvm, gpa_to_gfn(real_gpa))) {
+			walker->mem_attr_fault = true;
+			addr = real_gpa;
 			goto error;
+		}
 
 		if (!kvm_memory_attributes_write_allowed(vcpu->kvm, gpa_to_gfn(real_gpa)))
 			walker->pte_writable[walker->level - 1] = false;
@@ -803,6 +808,12 @@ static int FNAME(page_fault)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 	 * The page is not mapped by the guest.  Let the guest handle it.
 	 */
 	if (!r) {
+		if (walker.mem_attr_fault) {
+			fault->gfn = gpa_to_gfn(walker.fault.address);
+			kvm_mmu_prepare_memory_fault_exit(vcpu, fault);
+			return -EFAULT;
+		}
+
 		if (!fault->prefetch)
 			kvm_inject_emulated_page_fault(vcpu, &walker.fault);
 
