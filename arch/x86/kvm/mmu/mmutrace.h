@@ -441,6 +441,35 @@ TRACE_EVENT(
 		  __entry->gfn, __entry->spte, __entry->level, __entry->errno)
 );
 
+TRACE_EVENT(kvm_faultin_memory_protections,
+	TP_PROTO(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
+		 u64 mem_attrs),
+	TP_ARGS(vcpu, fault, mem_attrs),
+
+	TP_STRUCT__entry(
+		__field(unsigned int, vcpu_id)
+		__field(unsigned long, guest_rip)
+		__field(u64, fault_address)
+		__field(bool, write)
+		__field(bool, exec)
+		__field(u64, mem_attrs)
+	),
+
+	TP_fast_assign(
+		__entry->vcpu_id = vcpu->vcpu_id;
+		__entry->guest_rip = kvm_rip_read(vcpu);
+		__entry->fault_address = fault->gfn;
+		__entry->write = fault->write;
+		__entry->exec = fault->exec;
+		__entry->mem_attrs = mem_attrs;
+	),
+
+	TP_printk("vcpu %d rip 0x%lx gfn 0x%016llx access %s mem_attrs 0x%llx",
+		  __entry->vcpu_id, __entry->guest_rip, __entry->fault_address,
+		  __entry->exec ? "X" : (__entry->write ? "W" : "R"),
+		  __entry->mem_attrs)
+);
+
 #endif /* _TRACE_KVMMMU_H */
 
 #undef TRACE_INCLUDE_PATH
