@@ -137,6 +137,7 @@ static int kvm_vcpu_do_singlestep(struct kvm_vcpu *vcpu);
 
 static int __set_sregs2(struct kvm_vcpu *vcpu, struct kvm_sregs2 *sregs2);
 static void __get_sregs2(struct kvm_vcpu *vcpu, struct kvm_sregs2 *sregs2);
+static inline bool kvm_vcpu_has_events(struct kvm_vcpu *vcpu);
 
 static DEFINE_MUTEX(vendor_module_lock);
 struct kvm_x86_ops kvm_x86_ops __read_mostly;
@@ -4642,6 +4643,7 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 	case KVM_CAP_HYPERV_CPUID:
 	case KVM_CAP_HYPERV_ENFORCE_CPUID:
 	case KVM_CAP_SYS_HYPERV_CPUID:
+	case KVM_CAP_HYPERV_XMM_EXIT:
 #endif
 	case KVM_CAP_PCI_SEGMENT:
 	case KVM_CAP_DEBUGREGS:
@@ -4685,6 +4687,7 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 	case KVM_CAP_MEMORY_FAULT_INFO:
 	case KVM_CAP_X86_GUEST_MODE:
 	case KVM_CAP_TRANSLATE2:
+	case KVM_CAP_FAULT_EXIT_INSN_LEN:
 		r = 1;
 		break;
 	case KVM_CAP_PRE_FAULT_MEMORY:
@@ -11206,7 +11209,8 @@ static inline int vcpu_block(struct kvm_vcpu *vcpu)
 			kvm_lapic_switch_to_sw_timer(vcpu);
 
 		kvm_vcpu_srcu_read_unlock(vcpu);
-		if (vcpu->arch.mp_state == KVM_MP_STATE_HALTED)
+		if (vcpu->arch.mp_state == KVM_MP_STATE_HALTED ||
+		    kvm_hv_vcpu_is_idle_vtl(vcpu))
 			kvm_vcpu_halt(vcpu);
 		else
 			kvm_vcpu_block(vcpu);
@@ -11251,6 +11255,7 @@ static inline int vcpu_block(struct kvm_vcpu *vcpu)
 		vcpu->arch.apf.halted = false;
 		break;
 	case KVM_MP_STATE_INIT_RECEIVED:
+	case KVM_MP_STATE_HV_INACTIVE_VTL:
 		break;
 	default:
 		WARN_ON_ONCE(1);
@@ -11289,6 +11294,13 @@ static int vcpu_run(struct kvm_vcpu *vcpu)
 
 		if (kvm_cpu_has_pending_timer(vcpu))
 			kvm_inject_pending_timer_irqs(vcpu);
+
+		if (kvm_hv_vcpu_is_idle_vtl(vcpu) && kvm_vcpu_has_events(vcpu)) {
+			r = 0;
+			vcpu->run->exit_reason = KVM_EXIT_SYSTEM_EVENT;
+			vcpu->run->system_event.type = KVM_SYSTEM_EVENT_WAKEUP;
+			break;
+		}
 
 		if (dm_request_for_irq_injection(vcpu) &&
 			kvm_vcpu_ready_for_interrupt_injection(vcpu)) {
@@ -11821,6 +11833,10 @@ int kvm_arch_vcpu_ioctl_set_mpstate(struct kvm_vcpu *vcpu,
 			goto out;
 		break;
 
+	case KVM_MP_STATE_HV_INACTIVE_VTL:
+		if (is_guest_mode(vcpu) || !kvm_hv_cpuid_vsm_enabled(vcpu))
+			goto out;
+		break;
 	case KVM_MP_STATE_RUNNABLE:
 		break;
 

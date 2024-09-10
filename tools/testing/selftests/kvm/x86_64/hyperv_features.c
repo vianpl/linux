@@ -32,6 +32,7 @@ struct hcall_data {
 	uint64_t control;
 	uint64_t expect;
 	bool ud_expected;
+	bool hv_exit_expected;
 };
 
 static bool is_write_only_msr(uint32_t msr)
@@ -654,6 +655,36 @@ static void guest_test_hcalls_access(void)
 			hcall->expect = HV_STATUS_INVALID_PARAMETER;
 			break;
 		case 21:
+			hcall->control = HVCALL_GET_VP_REGISTERS;
+			hcall->expect = HV_STATUS_ACCESS_DENIED;
+			break;
+		case 22:
+			vcpu_set_cpuid_feature(vcpu, HV_ACCCESS_VP_REGISTERS);
+			hcall->control = HVCALL_GET_VP_REGISTERS;
+			hcall->expect = HV_STATUS_SUCCESS;
+			hcall->hv_exit_expected = true;
+			break;
+		case 23:
+			hcall->control = HVCALL_MODIFY_VTL_PROTECTION_MASK;
+			hcall->expect = HV_STATUS_ACCESS_DENIED;
+			break;
+		case 24:
+			vcpu_set_cpuid_feature(vcpu, HV_ACCCESS_VSM);
+			hcall->control = HVCALL_MODIFY_VTL_PROTECTION_MASK;
+			hcall->expect = HV_STATUS_SUCCESS;
+			hcall->hv_exit_expected = true;
+			break;
+		case 25:
+			hcall->control = HVCALL_GET_VP_ID_FROM_APIC_ID;
+			hcall->expect = HV_STATUS_ACCESS_DENIED;
+			break;
+		case 26:
+			vcpu_set_cpuid_feature(vcpu, HV_START_VIRTUAL_PROCESSOR);
+			hcall->control = HVCALL_GET_VP_ID_FROM_APIC_ID;
+			hcall->expect = HV_STATUS_SUCCESS;
+			hcall->hv_exit_expected = true;
+			break;
+		case 27:
 			kvm_vm_free(vm);
 			return;
 		}
@@ -665,6 +696,13 @@ static void guest_test_hcalls_access(void)
 		pr_debug("Stage %d: testing hcall: 0x%lx\n", stage, hcall->control);
 
 		vcpu_run(vcpu);
+
+		if (hcall->hv_exit_expected) {
+			TEST_ASSERT_KVM_EXIT_REASON(vcpu, KVM_EXIT_HYPERV);
+			vcpu->run->hyperv.u.hcall.result = HV_STATUS_SUCCESS;
+			vcpu_run(vcpu);
+		}
+
 		TEST_ASSERT_KVM_EXIT_REASON(vcpu, KVM_EXIT_IO);
 
 		switch (get_ucall(vcpu, &uc)) {

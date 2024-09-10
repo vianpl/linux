@@ -1866,6 +1866,7 @@ struct kvm_hv_hcall {
 	u16 rep_idx;
 	bool fast;
 	bool rep;
+	bool xmm_dirty;
 	sse128_t xmm[HV_HYPERCALL_MAX_XMM_REGISTERS];
 
 	/*
@@ -2218,16 +2219,20 @@ static void kvm_hv_send_ipi_to_many(struct kvm *kvm, u32 vector,
 
 static u64 kvm_hv_send_ipi(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 {
+	bool vsm_enabled = kvm_hv_cpuid_vsm_enabled(vcpu);
 	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
 	u64 *sparse_banks = hv_vcpu->sparse_banks;
 	struct kvm *kvm = vcpu->kvm;
 	struct hv_send_ipi_ex send_ipi_ex;
 	struct hv_send_ipi send_ipi;
+	union hv_input_vtl *in_vtl;
 	u64 valid_bank_mask;
+	int rsvd_shift;
 	u32 vector;
 	bool all_cpus;
 
 	if (hc->code == HVCALL_SEND_IPI) {
+		in_vtl = &send_ipi.in_vtl;
 		if (!hc->fast) {
 			if (unlikely(kvm_read_guest(kvm, hc->ingpa, &send_ipi,
 						    sizeof(send_ipi))))
@@ -2236,16 +2241,22 @@ static u64 kvm_hv_send_ipi(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 			vector = send_ipi.vector;
 		} else {
 			/* 'reserved' part of hv_send_ipi should be 0 */
-			if (unlikely(hc->ingpa >> 32 != 0))
+			rsvd_shift = vsm_enabled ? 40 : 32;
+			if (unlikely(hc->ingpa >> rsvd_shift != 0))
 				return HV_STATUS_INVALID_HYPERCALL_INPUT;
+			in_vtl->as_uint8 = (u8)(hc->ingpa >> 32);
 			sparse_banks[0] = hc->outgpa;
 			vector = (u32)hc->ingpa;
 		}
 		all_cpus = false;
 		valid_bank_mask = BIT_ULL(0);
 
+		if (in_vtl->use_target_vtl)
+			return -ENODEV;
+
 		trace_kvm_hv_send_ipi(vector, sparse_banks[0]);
 	} else {
+		in_vtl = &send_ipi_ex.in_vtl;
 		if (!hc->fast) {
 			if (unlikely(kvm_read_guest(kvm, hc->ingpa, &send_ipi_ex,
 						    sizeof(send_ipi_ex))))
@@ -2254,7 +2265,11 @@ static u64 kvm_hv_send_ipi(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 			send_ipi_ex.vector = (u32)hc->ingpa;
 			send_ipi_ex.vp_set.format = hc->outgpa;
 			send_ipi_ex.vp_set.valid_bank_mask = sse128_lo(hc->xmm[0]);
+			in_vtl->as_uint8 = (u8)(hc->ingpa >> 32);
 		}
+
+		if (vsm_enabled && in_vtl->use_target_vtl)
+			return -ENODEV;
 
 		trace_kvm_hv_send_ipi_ex(send_ipi_ex.vector,
 					 send_ipi_ex.vp_set.format,
@@ -2375,7 +2390,12 @@ static void kvm_hv_hypercall_set_result(struct kvm_vcpu *vcpu, u64 result)
 	}
 }
 
-static int kvm_hv_hypercall_complete(struct kvm_vcpu *vcpu, u64 result)
+static inline bool kvm_hv_is_vtl_call_return(u16 code)
+{
+	return code == HVCALL_VTL_CALL || code == HVCALL_VTL_RETURN;
+}
+
+static int kvm_hv_hypercall_complete(struct kvm_vcpu *vcpu, u16 code, u64 result)
 {
 	u32 tlb_lock_count = 0;
 	int ret;
@@ -2387,8 +2407,11 @@ static int kvm_hv_hypercall_complete(struct kvm_vcpu *vcpu, u64 result)
 		result = HV_STATUS_INVALID_HYPERCALL_INPUT;
 
 	trace_kvm_hv_hypercall_done(result);
-	kvm_hv_hypercall_set_result(vcpu, result);
 	++vcpu->stat.hypercalls;
+
+	/* VTL call and return don't set a hcall result */
+	if (!kvm_hv_is_vtl_call_return(code))
+		kvm_hv_hypercall_set_result(vcpu, result);
 
 	ret = kvm_skip_emulated_instruction(vcpu);
 
@@ -2398,9 +2421,57 @@ static int kvm_hv_hypercall_complete(struct kvm_vcpu *vcpu, u64 result)
 	return ret;
 }
 
+static void kvm_hv_write_xmm(struct kvm_hyperv_xmm_reg *xmm)
+{
+	int reg;
+
+	kvm_fpu_get();
+	for (reg = 0; reg < HV_HYPERCALL_MAX_XMM_REGISTERS; reg++) {
+		const sse128_t data = sse128(xmm[reg].low, xmm[reg].high);
+		_kvm_write_sse_reg(reg, &data);
+	}
+	kvm_fpu_put();
+}
+
+static bool kvm_hv_is_xmm_output_hcall(struct kvm_vcpu *vcpu, u16 code)
+{
+	if (!(vcpu->run->hyperv.u.hcall.input & HV_HYPERCALL_FAST_BIT))
+		return false;
+
+	switch (code) {
+	case HVCALL_GET_VP_REGISTERS:
+	case HVCALL_TRANSLATE_VIRTUAL_ADDRESS:
+		return true;
+	}
+
+	return false;
+}
+
+static bool kvm_hv_xmm_output_allowed(struct kvm_vcpu *vcpu)
+{
+	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
+
+	return !hv_vcpu->enforce_cpuid ||
+	       hv_vcpu->cpuid_cache.features_edx &
+		       HV_X64_HYPERCALL_XMM_OUTPUT_AVAILABLE;
+}
+
 static int kvm_hv_hypercall_complete_userspace(struct kvm_vcpu *vcpu)
 {
-	return kvm_hv_hypercall_complete(vcpu, vcpu->run->hyperv.u.hcall.result);
+	u16 code = vcpu->run->hyperv.u.hcall.input & 0xffff;
+	u64 result = vcpu->run->hyperv.u.hcall.result;
+
+	if (hv_result_success(result) &&
+	    kvm_hv_is_xmm_output_hcall(vcpu, code)) {
+		if (unlikely(!kvm_hv_xmm_output_allowed(vcpu))) {
+			kvm_queue_exception(vcpu, UD_VECTOR);
+			return 1;
+		}
+
+		kvm_hv_write_xmm(vcpu->run->hyperv.u.hcall.xmm);
+	}
+
+	return kvm_hv_hypercall_complete(vcpu, code, result);
 }
 
 static u16 kvm_hvcall_signal_event(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
@@ -2452,6 +2523,10 @@ static bool is_xmm_fast_hypercall(struct kvm_hv_hcall *hc)
 	case HVCALL_FLUSH_VIRTUAL_ADDRESS_LIST_EX:
 	case HVCALL_FLUSH_VIRTUAL_ADDRESS_SPACE_EX:
 	case HVCALL_SEND_IPI_EX:
+	case HVCALL_GET_VP_REGISTERS:
+	case HVCALL_SET_VP_REGISTERS:
+	case HVCALL_MODIFY_VTL_PROTECTION_MASK:
+	case HVCALL_TRANSLATE_VIRTUAL_ADDRESS:
 		return true;
 	}
 
@@ -2490,6 +2565,20 @@ static bool hv_check_hypercall_access(struct kvm_vcpu_hv *hv_vcpu, u16 code)
 		 */
 		return !kvm_hv_is_syndbg_enabled(hv_vcpu->vcpu) ||
 			hv_vcpu->cpuid_cache.features_ebx & HV_DEBUGGING;
+	case HVCALL_MODIFY_VTL_PROTECTION_MASK:
+	case HVCALL_ENABLE_PARTITION_VTL:
+	case HVCALL_ENABLE_VP_VTL:
+	case HVCALL_VTL_CALL:
+	case HVCALL_VTL_RETURN:
+		return hv_vcpu->cpuid_cache.features_ebx & HV_ACCESS_VSM;
+	case HVCALL_GET_VP_REGISTERS:
+	case HVCALL_SET_VP_REGISTERS:
+		return hv_vcpu->cpuid_cache.features_ebx &
+			HV_ACCESS_VP_REGISTERS;
+	case HVCALL_START_VP:
+	case HVCALL_GET_VP_ID_FROM_APIC_ID:
+		return hv_vcpu->cpuid_cache.features_ebx &
+			HV_START_VIRTUAL_PROCESSOR;
 	case HVCALL_FLUSH_VIRTUAL_ADDRESS_LIST_EX:
 	case HVCALL_FLUSH_VIRTUAL_ADDRESS_SPACE_EX:
 		if (!(hv_vcpu->cpuid_cache.enlightenments_eax &
@@ -2555,6 +2644,7 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 	hc.rep_cnt = (hc.param >> HV_HYPERCALL_REP_COMP_OFFSET) & 0xfff;
 	hc.rep_idx = (hc.param >> HV_HYPERCALL_REP_START_OFFSET) & 0xfff;
 	hc.rep = !!(hc.rep_cnt || hc.rep_idx);
+	hc.xmm_dirty = false;
 
 	trace_kvm_hv_hypercall(hc.code, hc.fast, hc.var_cnt, hc.rep_cnt,
 			       hc.rep_idx, hc.ingpa, hc.outgpa);
@@ -2642,6 +2732,9 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 			break;
 		}
 		ret = kvm_hv_send_ipi(vcpu, &hc);
+		/* VTL-enabled ipi, let user-space handle it */
+		if (ret == -ENODEV)
+			goto hypercall_userspace_exit;
 		break;
 	case HVCALL_POST_DEBUG_DATA:
 	case HVCALL_RETRIEVE_DEBUG_DATA:
@@ -2670,20 +2763,43 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 			break;
 		}
 		goto hypercall_userspace_exit;
+	case HVCALL_MODIFY_VTL_PROTECTION_MASK:
+	case HVCALL_ENABLE_PARTITION_VTL:
+	case HVCALL_ENABLE_VP_VTL:
+	case HVCALL_VTL_CALL:
+	case HVCALL_VTL_RETURN:
+	case HVCALL_GET_VP_REGISTERS:
+	case HVCALL_SET_VP_REGISTERS:
+	case HVCALL_TRANSLATE_VIRTUAL_ADDRESS:
+	case HVCALL_START_VP:
+	case HVCALL_GET_VP_ID_FROM_APIC_ID:
+		goto hypercall_userspace_exit;
 	default:
 		ret = HV_STATUS_INVALID_HYPERCALL_CODE;
 		break;
 	}
 
+	if (hv_result_success(ret) && hc.xmm_dirty) {
+		if (unlikely(!kvm_hv_xmm_output_allowed(vcpu))) {
+			kvm_queue_exception(vcpu, UD_VECTOR);
+			return 1;
+		}
+
+		kvm_hv_write_xmm((struct kvm_hyperv_xmm_reg *)hc.xmm);
+	}
+
 hypercall_complete:
-	return kvm_hv_hypercall_complete(vcpu, ret);
+	return kvm_hv_hypercall_complete(vcpu, hc.code, ret);
 
 hypercall_userspace_exit:
 	vcpu->run->exit_reason = KVM_EXIT_HYPERV;
-	vcpu->run->hyperv.type = KVM_EXIT_HYPERV_HCALL;
+	vcpu->run->hyperv.type = hc.fast ? KVM_EXIT_HYPERV_HCALL_XMM :
+					   KVM_EXIT_HYPERV_HCALL;
 	vcpu->run->hyperv.u.hcall.input = hc.param;
 	vcpu->run->hyperv.u.hcall.params[0] = hc.ingpa;
 	vcpu->run->hyperv.u.hcall.params[1] = hc.outgpa;
+	if (hc.fast)
+		memcpy(vcpu->run->hyperv.u.hcall.xmm, hc.xmm, sizeof(hc.xmm));
 	vcpu->arch.complete_userspace_io = kvm_hv_hypercall_complete_userspace;
 	return 0;
 }
@@ -2830,8 +2946,12 @@ int kvm_get_hv_cpuid(struct kvm_vcpu *vcpu, struct kvm_cpuid2 *cpuid,
 			ent->ebx |= HV_POST_MESSAGES;
 			ent->ebx |= HV_SIGNAL_EVENTS;
 			ent->ebx |= HV_ENABLE_EXTENDED_HYPERCALLS;
+			ent->ebx |= HV_ACCESS_VSM;
+			ent->ebx |= HV_ACCESS_VP_REGISTERS;
+			ent->ebx |= HV_START_VIRTUAL_PROCESSOR;
 
 			ent->edx |= HV_X64_HYPERCALL_XMM_INPUT_AVAILABLE;
+			ent->edx |= HV_X64_HYPERCALL_XMM_OUTPUT_AVAILABLE;
 			ent->edx |= HV_FEATURE_FREQUENCY_MSRS_AVAILABLE;
 			ent->edx |= HV_FEATURE_GUEST_CRASH_MSR_AVAILABLE;
 

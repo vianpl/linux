@@ -1523,6 +1523,8 @@ Possible values are:
                                  [s390]
    KVM_MP_STATE_SUSPENDED        the vcpu is in a suspend state and is waiting
                                  for a wakeup event [arm64]
+   KVM_MP_STATE_HV_INACTIVE_VTL  the vcpu is an inactive VTL and is waiting for
+                                 a wakeup event [x86]
    ==========================    ===============================================
 
 On x86, this ioctl is only useful after KVM_CREATE_IRQCHIP. Without an
@@ -1564,6 +1566,23 @@ KVM_MP_STATE_RUNNABLE which reflect if the vcpu is paused or not.
 
 On LoongArch, only the KVM_MP_STATE_RUNNABLE state is used to reflect
 whether the vcpu is runnable.
+
+For x86:
+^^^^^^^^
+
+KVM_MP_STATE_HV_INACTIVE_VTL is only available to a VM if Hyper-V's
+HV_ACCESS_VSM CPUID is exposed to the guest.  This processor state models the
+behavior of an inactive VTL and should only be used for this purpose. A
+userspace process should only switch a vCPU into this MP state in response to a
+HvCallVtlCall, HvCallVtlReturn.
+
+If a vCPU is in KVM_MP_STATE_HV_INACTIVE_VTL, KVM will emulate the
+architectural execution of a HLT instruction with the caveat that RFLAGS.IF is
+ignored when deciding whether to wake up (TLFS 12.12.2.1).  If a wakeup is
+recognized, KVM will exit to userspace with a KVM_SYSTEM_EVENT exit, where the
+event type is KVM_SYSTEM_EVENT_WAKEUP. Userspace has the responsibility to
+switch the vCPU back into KVM_MP_STATE_RUNNABLE state. Calling KVM_RUN on a
+KVM_MP_STATE_HV_INACTIVE_VTL vCPU with pending events will exit immediately.
 
 4.39 KVM_SET_MP_STATE
 ---------------------
@@ -7235,11 +7254,15 @@ spec refer, https://github.com/riscv/riscv-sbi-doc.
 			__u64 flags;
 			__u64 gpa;
 			__u64 size;
+                        __u8 insn_len;
 		} memory_fault;
 
 KVM_EXIT_MEMORY_FAULT indicates the vCPU has encountered a memory fault that
 could not be resolved by KVM.  The 'gpa' and 'size' (in bytes) describe the
-guest physical address range [gpa, gpa + size) of the fault.  The 'flags' field
+guest physical address range [gpa, gpa + size) of the fault.  The
+'insn_len' field describes the size (in bytes) of the instruction
+that caused the fault. It is only available if the underlying HW exposes that
+information on guest exit, otherwise it's set to 0.  The 'flags' field
 describes properties of the faulting access that are likely pertinent:
 
  - KVM_MEMORY_EXIT_FLAG_READ/WRITE/EXEC - When set, indicates that the memory
@@ -9168,3 +9191,66 @@ Ordering of KVM_GET_*/KVM_SET_* ioctls
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 TBD
+
+10. Hyper-V CPUIDs
+==================
+
+This section only applies to x86.
+
+New Hyper-V feature support is no longer being tracked through KVM
+capabilities.  Userspace can check if a particular version of KVM supports a
+feature using KMV_GET_SUPPORTED_HV_CPUID.  This section documents how Hyper-V
+CPUIDs map to KVM functionality.
+
+10.1 HV_X64_HYPERCALL_XMM_OUTPUT_AVAILABLE
+------------------------------------------
+
+:Location: CPUID.40000003H:EDX[bit 15]
+
+This CPUID indicates that KVM supports retuning data to the guest in response
+to a hypercall using the XMM registers. It also extends ``struct
+kvm_hyperv_exit`` to allow passing the XMM data from userspace.
+
+10.2 HV_ACCESS_VP_REGISTERS
+---------------------------
+
+:Location: CPUID.40000003H:EBX[bit 17]
+
+This CPUID indicates that KVM supports HvGetVpRegisters and HvSetVpRegisters.
+Currently, it is only used in conjunction with HV_ACCESS_VSM, and immediately
+exits to userspace with KVM_EXIT_HYPERV_HCALL as the reason. Userspace is
+expected to complete the hypercall before resuming execution.
+
+10.3 HV_START_VIRTUAL_PROCESSOR
+-------------------------------
+
+:Location: CPUID.40000003H:EBX[bit 21]
+
+This CPUID indicates that KVM supports HvCallStartVirtualProcessor and
+HvCallGetVpIndexFromApicId. Currently, it is only used in conjunction with
+HV_ACCESS_VSM, and immediately exits to userspace with KVM_EXIT_HYPERV_HCALL as
+the reason. Userspace is expected to complete the hypercall before resuming
+execution.
+
+10.4 HV_ACCESS_VSM
+------------------
+
+:Location: CPUID.40000003H:EBX[bit 16]
+
+This CPUID indicates that KVM supports HvCallModifyVtlProtectionMask,
+HvCallEnablePartitionVtl, HvCallEnableVpVtl, HvCallVtlCall, and
+HvCallVtlReturn.  Additionally, as a prerequirsite to being able to implement
+Hyper-V VSM, it also identifies the availability of HvTranslateVirtualAddress,
+as well as the VTL-aware aspects of HvCallSendSyntheticClusterIpi and
+HvCallSendSyntheticClusterIpiEx.
+
+All these hypercalls immediately exit with KVM_EXIT_HYPERV_HCALL as the reason.
+Userspace is expected to complete the hypercall before resuming execution.
+Note that both IPI hypercalls will only exit to userspace if the request is
+VTL-aware, which will only happen if HV_ACCESS_VSM is exposed to the guest.
+
+Access restriction memory attributes (4.141) are available to simplify
+HvCallModifyVtlProtectionMask's implementation.
+
+Ultimately this CPUID also indicates that KVM_MP_STATE_HV_INACTIVE_VTL is
+available.
