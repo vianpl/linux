@@ -2447,6 +2447,39 @@ bool kvm_range_has_memory_attributes(struct kvm *kvm, gfn_t start, gfn_t end,
 	return true;
 }
 
+/*
+ * Returns true if _any_ gfns in the range [@start, @end) have attributes that
+ * match _any_ bit in @mask.
+ */
+bool kvm_range_match_memmory_attributes(struct kvm *kvm, gfn_t start, gfn_t end,
+					unsigned long mask)
+{
+	XA_STATE(xas, &kvm->mem_attrs.array, start);
+	void *entry;
+
+	mask &= kvm_supported_mem_attributes(kvm);
+	if (!mask)
+		return false;
+
+	if (end == start + 1)
+		return !!(kvm_get_memory_attributes(kvm, start) & mask);
+
+	guard(rcu)();
+	for (;;) {
+		do {
+			entry = xas_next(&xas);
+		} while (xas_retry(&xas, entry));
+
+		if (xas.xa_index >= end)
+			break;
+
+		if (xa_to_value(entry) & mask)
+			return true;
+	}
+
+	return false;
+}
+
 static __always_inline void kvm_handle_gfn_range(struct kvm *kvm,
 						 struct kvm_mmu_notifier_range *range)
 {
