@@ -89,6 +89,7 @@ struct guest_walker {
 	unsigned int pt_access[PT_MAX_FULL_LEVELS];
 	unsigned int pte_access;
 	gfn_t gfn;
+	bool mem_attr_fault;
 	struct x86_exception fault;
 };
 
@@ -334,6 +335,7 @@ retry_walk:
 	walker->level = mmu->cpu_role.base.level;
 	pte           = kvm_mmu_get_guest_pgd(vcpu, mmu);
 	have_ad       = PT_HAVE_ACCESSED_DIRTY(mmu);
+	walker->mem_attr_fault = false;
 
 #if PTTYPE == 64
 	walk_nx_mask = 1ULL << PT64_NX_SHIFT;
@@ -416,6 +418,15 @@ retry_walk:
 					    &walker->pte_writable[walker->level - 1]);
 		if (unlikely(kvm_is_error_hva(host_addr)))
 			goto error;
+
+		if (!kvm_memory_attributes_read_allowed(vcpu->kvm, gpa_to_gfn(real_gpa))) {
+			walker->mem_attr_fault = true;
+			addr = real_gpa;
+			goto error;
+		}
+
+		if (!kvm_memory_attributes_write_allowed(vcpu->kvm, gpa_to_gfn(real_gpa)))
+			walker->pte_writable[walker->level - 1] = false;
 
 		ptep_user = (pt_element_t __user *)((void *)host_addr + offset);
 		if (unlikely(__get_user(pte, ptep_user)))
@@ -583,6 +594,9 @@ FNAME(prefetch_gpte)(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp,
 	pfn = gfn_to_pfn_memslot_atomic(slot, gfn);
 	if (is_error_pfn(pfn))
 		return false;
+
+	if (kvm_get_memory_attributes(vcpu->kvm, gfn))
+		return true;
 
 	mmu_set_spte(vcpu, slot, spte, pte_access, gfn, pfn, NULL);
 	kvm_release_pfn_clean(pfn);
@@ -826,6 +840,12 @@ static int FNAME(page_fault)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 	 * The page is not mapped by the guest.  Let the guest handle it.
 	 */
 	if (!r) {
+		if (walker.mem_attr_fault) {
+			fault->gfn = gpa_to_gfn(walker.fault.address);
+			kvm_mmu_prepare_memory_fault_exit(vcpu, fault);
+			return -EFAULT;
+		}
+
 		if (!fault->prefetch)
 			kvm_inject_emulated_page_fault(vcpu, &walker.fault);
 
@@ -941,6 +961,7 @@ static int FNAME(sync_spte)(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp, int 
 	struct kvm_memory_slot *slot;
 	unsigned pte_access;
 	pt_element_t gpte;
+	bool host_exec;
 	gpa_t pte_gpa;
 	gfn_t gfn;
 
@@ -993,10 +1014,11 @@ static int FNAME(sync_spte)(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp, int 
 	sptep = &sp->spt[i];
 	spte = *sptep;
 	host_writable = spte & shadow_host_writable_mask;
+	host_exec = spte & shadow_host_exec_mask;
 	slot = kvm_vcpu_gfn_to_memslot(vcpu, gfn);
 	make_spte(vcpu, sp, slot, pte_access, gfn,
 		  spte_to_pfn(spte), spte, true, false,
-		  host_writable, &spte);
+		  host_writable, host_exec, &spte);
 
 	return mmu_spte_update(sptep, spte);
 }

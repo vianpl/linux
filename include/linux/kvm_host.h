@@ -849,8 +849,11 @@ struct kvm {
 	struct notifier_block pm_notifier;
 #endif
 #ifdef CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES
-	/* Protected by slots_locks (for writes) and RCU (for reads) */
-	struct xarray mem_attr_array;
+	struct {
+		/* Protected by slots_locks (for writes) and RCU (for reads) */
+		struct xarray array;
+		u64 generation;
+	} mem_attrs;
 #endif
 	char stats_id[KVM_STATS_NAME_SIZE];
 };
@@ -1263,7 +1266,8 @@ int kvm_gfn_to_hva_cache_init(struct kvm *kvm, struct gfn_to_hva_cache *ghc,
 	typeof(v) __user *__uaddr = (typeof(__uaddr))(__addr + offset);	\
 	int __ret = -EFAULT;						\
 									\
-	if (!kvm_is_error_hva(__addr))					\
+	if (!kvm_is_error_hva(__addr) &&                                \
+	    kvm_memory_attributes_read_allowed(kvm, gfn))		\
 		__ret = get_user(v, __uaddr);				\
 	__ret;								\
 })
@@ -1283,7 +1287,8 @@ int kvm_gfn_to_hva_cache_init(struct kvm *kvm, struct gfn_to_hva_cache *ghc,
 	typeof(v) __user *__uaddr = (typeof(__uaddr))(__addr + offset);	\
 	int __ret = -EFAULT;						\
 									\
-	if (!kvm_is_error_hva(__addr))					\
+	if (!kvm_is_error_hva(__addr) &&                                \
+	    kvm_memory_attributes_write_allowed(kvm, gfn))		\
 		__ret = put_user(v, __uaddr);				\
 	if (!__ret)							\
 		mark_page_dirty(kvm, gfn);				\
@@ -2414,16 +2419,81 @@ static inline void kvm_prepare_memory_fault_exit(struct kvm_vcpu *vcpu,
 	vcpu->run->memory_fault.gpa = gpa;
 	vcpu->run->memory_fault.size = size;
 
-	/* RWX flags are not (yet) defined or communicated to userspace. */
 	vcpu->run->memory_fault.flags = 0;
+
+	if (is_write)
+		vcpu->run->memory_fault.flags |= KVM_MEMORY_EXIT_FLAG_WRITE;
+	else if (is_exec)
+		vcpu->run->memory_fault.flags |= KVM_MEMORY_EXIT_FLAG_EXEC;
+	else
+		vcpu->run->memory_fault.flags |= KVM_MEMORY_EXIT_FLAG_READ;
+
 	if (is_private)
 		vcpu->run->memory_fault.flags |= KVM_MEMORY_EXIT_FLAG_PRIVATE;
 }
 
+static inline bool kvm_memory_attribute_may_read(u64 attrs)
+{
+	return !(attrs & KVM_MEMORY_ATTRIBUTE_NR);
+}
+
+static inline bool kvm_memory_attribute_may_write(u64 attrs)
+{
+	return !(attrs & KVM_MEMORY_ATTRIBUTE_NW);
+}
+
+static inline bool kvm_memory_attribute_may_exec(u64 attrs)
+{
+	return !(attrs & KVM_MEMORY_ATTRIBUTE_NX);
+}
+
 #ifdef CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES
+#define KVM_MEMORY_ATTRIBUTE_NEEDS_SYNC_MASK                 \
+	(KVM_MEMORY_ATTRIBUTE_NR | KVM_MEMORY_ATTRIBUTE_NW | \
+	 KVM_MEMORY_ATTRIBUTE_NX)
+
 static inline unsigned long kvm_get_memory_attributes(struct kvm *kvm, gfn_t gfn)
 {
-	return xa_to_value(xa_load(&kvm->mem_attr_array, gfn));
+	return xa_to_value(xa_load(&kvm->mem_attrs.array, gfn));
+}
+
+static inline int kvm_memory_attributes_read_allowed(struct kvm *kvm, gfn_t gfn)
+{
+	unsigned long attrs;
+
+	attrs = kvm_get_memory_attributes(kvm, gfn);
+	if (!attrs)
+		return true;
+
+	if (kvm_memory_attribute_may_read(attrs))
+		return true;
+
+	return false;
+}
+
+
+static inline int kvm_memory_attributes_write_allowed(struct kvm *kvm, gfn_t gfn)
+{
+	unsigned long attrs;
+
+	attrs = kvm_get_memory_attributes(kvm, gfn);
+	if (!attrs)
+		return true;
+
+	if (kvm_memory_attribute_may_write(attrs))
+		return true;
+
+	return false;
+}
+
+static inline bool kvm_memory_attributes_changed(struct kvm *kvm, u64 generation)
+{
+	return kvm->mem_attrs.generation != generation;
+}
+
+static inline u64 kvm_memory_attributes_generation(struct kvm *kvm)
+{
+	return kvm->mem_attrs.generation;
 }
 
 bool kvm_range_has_memory_attributes(struct kvm *kvm, gfn_t start, gfn_t end,
@@ -2432,6 +2502,12 @@ bool kvm_arch_pre_set_memory_attributes(struct kvm *kvm,
 					struct kvm_gfn_range *range);
 bool kvm_arch_post_set_memory_attributes(struct kvm *kvm,
 					 struct kvm_gfn_range *range);
+bool kvm_memory_attributes_valid(struct kvm *kvm, unsigned long attrs);
+
+static inline bool kvm_memory_attributes_in_use(struct kvm *kvm)
+{
+	return !xa_empty(&kvm->mem_attrs.array);
+}
 
 static inline bool kvm_mem_is_private(struct kvm *kvm, gfn_t gfn)
 {
@@ -2439,10 +2515,47 @@ static inline bool kvm_mem_is_private(struct kvm *kvm, gfn_t gfn)
 	       kvm_get_memory_attributes(kvm, gfn) & KVM_MEMORY_ATTRIBUTE_PRIVATE;
 }
 #else
+static inline bool kvm_range_has_memory_attributes(struct kvm *kvm, gfn_t start,
+						   gfn_t end,
+						   unsigned long mask,
+						   unsigned long attrs)
+{
+	return false;
+}
+static inline bool kvm_memory_attributes_valid(struct kvm *kvm,
+					       unsigned long attrs)
+{
+	return false;
+}
+static inline bool kvm_memory_attributes_in_use(struct kvm *kvm)
+{
+	return false;
+}
 static inline bool kvm_mem_is_private(struct kvm *kvm, gfn_t gfn)
 {
 	return false;
 }
+static inline unsigned long kvm_get_memory_attributes(struct kvm *kvm, gfn_t gfn)
+{
+	return 0;
+}
+static inline bool kvm_memory_attributes_changed(struct kvm *kvm, u64 generation)
+{
+	return false;
+}
+static inline u64 kvm_memory_attributes_generation(struct kvm *kvm)
+{
+	return 0;
+}
+static inline int kvm_memory_attributes_read_allowed(struct kvm *kvm, gfn_t gfn)
+{
+	return true;
+}
+static inline int kvm_memory_attributes_write_allowed(struct kvm *kvm, gfn_t gfn)
+{
+	return true;
+}
+
 #endif /* CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES */
 
 #ifdef CONFIG_KVM_PRIVATE_MEM

@@ -2903,8 +2903,9 @@ static int mmu_set_spte(struct kvm_vcpu *vcpu, struct kvm_memory_slot *slot,
 	bool wrprot;
 	u64 spte;
 
-	/* Prefetching always gets a writable pfn.  */
+	/* Prefetching always gets a writable and executable pfn.  */
 	bool host_writable = !fault || fault->map_writable;
+	bool host_exec = !fault || fault->map_executable;
 	bool prefetch = !fault || fault->prefetch;
 	bool write_fault = fault && fault->write;
 
@@ -2934,7 +2935,7 @@ static int mmu_set_spte(struct kvm_vcpu *vcpu, struct kvm_memory_slot *slot,
 	}
 
 	wrprot = make_spte(vcpu, sp, slot, pte_access, gfn, pfn, *sptep, prefetch,
-			   true, host_writable, &spte);
+			   true, host_writable, host_exec, &spte);
 
 	if (*sptep == spte) {
 		ret = RET_PF_SPURIOUS;
@@ -2980,6 +2981,9 @@ static int direct_pte_prefetch_many(struct kvm_vcpu *vcpu,
 		return -1;
 
 	for (i = 0; i < ret; i++, gfn++, start++) {
+		if (kvm_get_memory_attributes(vcpu->kvm, gfn))
+			continue;
+
 		mmu_set_spte(vcpu, slot, start, access, gfn,
 			     page_to_pfn(pages[i]), NULL);
 		put_page(pages[i]);
@@ -3223,6 +3227,7 @@ void disallowed_hugepage_adjust(struct kvm_page_fault *fault, u64 spte, int cur_
 static int direct_map(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 {
 	struct kvm_shadow_walk_iterator it;
+	unsigned int access = ACC_ALL;
 	struct kvm_mmu_page *sp;
 	int ret;
 	gfn_t base_gfn = fault->gfn;
@@ -3255,7 +3260,7 @@ static int direct_map(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 	if (WARN_ON_ONCE(it.level != fault->goal_level))
 		return -EFAULT;
 
-	ret = mmu_set_spte(vcpu, fault->slot, it.sptep, ACC_ALL,
+	ret = mmu_set_spte(vcpu, fault->slot, it.sptep, access,
 			   base_gfn, fault->pfn, fault);
 	if (ret == RET_PF_SPURIOUS)
 		return ret;
@@ -4390,6 +4395,42 @@ static int kvm_faultin_pfn_private(struct kvm_vcpu *vcpu,
 	return RET_PF_CONTINUE;
 }
 
+static int kvm_faultin_memory_protections(struct kvm_vcpu *vcpu,
+					  struct kvm_page_fault *fault)
+{
+	bool may_read, may_write, may_exec;
+	unsigned long attrs;
+
+	/* Memory attributes don't apply to MMIO regions */
+	if (unlikely(!fault->slot))
+		return RET_PF_CONTINUE;
+
+	attrs = kvm_get_memory_attributes(vcpu->kvm, fault->gfn);
+	if (!attrs)
+		return RET_PF_CONTINUE;
+
+	if (!kvm_memory_attributes_valid(vcpu->kvm, attrs)) {
+		kvm_err("Invalid mem attributes 0x%lx found for address 0x%016llx\n",
+			attrs, fault->addr);
+		return -EFAULT;
+	}
+
+	trace_kvm_faultin_memory_protections(vcpu, fault, attrs);
+
+	may_read = kvm_memory_attribute_may_read(attrs);
+	may_write = kvm_memory_attribute_may_write(attrs);
+	may_exec = kvm_memory_attribute_may_exec(attrs);
+
+	if (!may_read || (fault->write && !may_write) ||
+	    (fault->exec && !may_exec))
+		return -EFAULT;
+
+	fault->map_writable = may_write;
+	fault->map_executable = may_exec;
+
+	return RET_PF_CONTINUE;
+}
+
 static int __kvm_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 {
 	bool async;
@@ -4530,6 +4571,11 @@ static int kvm_faultin_pfn(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault,
 	if (mmu_invalidate_retry_gfn_unsafe(vcpu->kvm, fault->mmu_seq, fault->gfn)) {
 		kvm_release_pfn_clean(fault->pfn);
 		return RET_PF_RETRY;
+	}
+
+	if (kvm_faultin_memory_protections(vcpu, fault)) {
+		kvm_mmu_prepare_memory_fault_exit(vcpu, fault);
+		return -EFAULT;
 	}
 
 	return RET_PF_CONTINUE;
@@ -7524,18 +7570,27 @@ void kvm_mmu_pre_destroy_vm(struct kvm *kvm)
 bool kvm_arch_pre_set_memory_attributes(struct kvm *kvm,
 					struct kvm_gfn_range *range)
 {
+	unsigned long attrs = range->arg.attributes;
+	bool priv_attr = attrs & KVM_MEMORY_ATTRIBUTE_PRIVATE;
+
 	/*
-	 * Zap SPTEs even if the slot can't be mapped PRIVATE.  KVM x86 only
-	 * supports KVM_MEMORY_ATTRIBUTE_PRIVATE, and so it *seems* like KVM
-	 * can simply ignore such slots.  But if userspace is making memory
-	 * PRIVATE, then KVM must prevent the guest from accessing the memory
-	 * as shared.  And if userspace is making memory SHARED and this point
-	 * is reached, then at least one page within the range was previously
-	 * PRIVATE, i.e. the slot's possible hugepage ranges are changing.
-	 * Zapping SPTEs in this case ensures KVM will reassess whether or not
-	 * a hugepage can be used for affected ranges.
+	 * For KVM_MEMORY_ATTRIBUTE_PRIVATE:
+	 *  Zap SPTEs even if the slot can't be mapped PRIVATE.  KVM x86 only
+	 *  supports KVM_MEMORY_ATTRIBUTE_PRIVATE, and so it *seems* like KVM
+	 *  can simply ignore such slots.  But if userspace is making memory
+	 *  PRIVATE, then KVM must prevent the guest from accessing the memory
+	 *  as shared.  And if userspace is making memory SHARED and this point
+	 *  is reached, then at least one page within the range was previously
+	 *  PRIVATE, i.e. the slot's possible hugepage ranges are changing.
+	 *  Zapping SPTEs in this case ensures KVM will reassess whether or not
+	 *  a hugepage can be used for affected ranges.
+	 *
+	 * For KVM_MEMORY_ATTRIBUTE_NR/NW/NX:
+	 *  Zap even when loosening restrictions R=>RW, which is nost strictly
+	 *  necessary, but will allow KVM to reasses whether a hugepage can be
+	 *  used for the affected pages.
 	 */
-	if (WARN_ON_ONCE(!kvm_arch_has_private_mem(kvm)))
+	if (WARN_ON_ONCE(priv_attr && !kvm_arch_has_private_mem(kvm)))
 		return false;
 
 	return kvm_unmap_gfn_range(kvm, range);
@@ -7580,7 +7635,10 @@ bool kvm_arch_post_set_memory_attributes(struct kvm *kvm,
 					 struct kvm_gfn_range *range)
 {
 	unsigned long attrs = range->arg.attributes;
+	bool priv_attr = attrs & KVM_MEMORY_ATTRIBUTE_PRIVATE;
 	struct kvm_memory_slot *slot = range->slot;
+	bool gen_update = false;
+	struct kvm_mmu_page *sp;
 	int level;
 
 	lockdep_assert_held_write(&kvm->mmu_lock);
@@ -7592,7 +7650,7 @@ bool kvm_arch_post_set_memory_attributes(struct kvm *kvm,
 	 * a range that has PRIVATE GFNs, and conversely converting a range to
 	 * SHARED may now allow hugepages.
 	 */
-	if (WARN_ON_ONCE(!kvm_arch_has_private_mem(kvm)))
+	if (WARN_ON_ONCE(priv_attr && !kvm_arch_has_private_mem(kvm)))
 		return false;
 
 	/*
@@ -7640,6 +7698,34 @@ bool kvm_arch_post_set_memory_attributes(struct kvm *kvm,
 				hugepage_set_mixed(slot, gfn, level);
 		}
 	}
+
+	/*
+	 * There are special considerations when applying an memory protection
+	 * attibute against a GPTE page. If set read-only, access/dirty bits
+	 * within that page shouldn't be updated. If set non-accesible,
+	 * accessing a virtual address that requires traversing that GPTE page
+	 * should fault.
+	 *
+	 * On TDP enabled guests, the CPU faults on the GPTE address upon
+	 * detecting such a situation.
+	 *
+	 * On non-TDP, upon detecting this situation, and based on the fact it
+	 * should be a rare occasion, invalidate all the mmu roots.
+	 */
+	for (gfn_t gfn = range->start; gfn < range->end; gfn++) {
+		for_each_gfn_valid_sp_with_gptes(kvm, sp, gfn) {
+			gen_update = true;
+			trace_printk("needs gen update! %llx\n", gfn);
+			goto exit_loop;
+		}
+	}
+exit_loop:
+	if (gen_update) {
+		kvm->arch.mmu_valid_gen = kvm->arch.mmu_valid_gen ? 0 : 1;
+		kvm_make_all_cpus_request(kvm, KVM_REQ_MMU_FREE_OBSOLETE_ROOTS);
+		kvm_zap_obsolete_pages(kvm);
+	}
+
 	return false;
 }
 
@@ -7648,7 +7734,7 @@ void kvm_mmu_init_memslot_memory_attributes(struct kvm *kvm,
 {
 	int level;
 
-	if (!kvm_arch_has_private_mem(kvm))
+	if (!kvm_memory_attributes_in_use(kvm))
 		return;
 
 	for (level = PG_LEVEL_2M; level <= KVM_MAX_HUGEPAGE_LEVEL; level++) {

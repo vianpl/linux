@@ -149,6 +149,7 @@ TEST_GEN_PROGS_x86_64 += steal_time
 TEST_GEN_PROGS_x86_64 += kvm_binary_stats_test
 TEST_GEN_PROGS_x86_64 += system_counter_offset_test
 TEST_GEN_PROGS_x86_64 += pre_fault_memory_test
+TEST_GEN_PROGS_x86_64 += memory_attributes
 
 # Compiled outputs used by test targets
 TEST_GEN_PROGS_EXTENDED_x86_64 += x86_64/nx_huge_pages_test
@@ -214,6 +215,7 @@ TEST_GEN_PROGS_riscv += steal_time
 
 SPLIT_TESTS += arch_timer
 SPLIT_TESTS += get-reg-list
+SPLIT_TESTS += memory_attributes
 
 TEST_PROGS += $(TEST_PROGS_$(ARCH_DIR))
 TEST_GEN_PROGS += $(TEST_GEN_PROGS_$(ARCH_DIR))
