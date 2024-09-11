@@ -7136,6 +7136,110 @@ long kvm_arch_vm_compat_ioctl(struct file *filp, unsigned int ioctl,
 }
 #endif
 
+static void kvm_set_all_cr0_guest_host_masks(struct kvm *kvm) {
+	struct kvm_vcpu *vcpu;
+	unsigned long i;
+
+	kvm_for_each_vcpu(i, vcpu, kvm) {
+		static_call(kvm_x86_filter_cr0)(vcpu);
+	}
+}
+
+static void kvm_set_all_cr4_guest_host_masks(struct kvm *kvm) {
+	struct kvm_vcpu *vcpu;
+	unsigned long i;
+
+	kvm_for_each_vcpu(i, vcpu, kvm) {
+		static_call(kvm_x86_filter_cr4)(vcpu);
+	}
+}
+
+static void kvm_filter_all_desc(struct kvm *kvm) {
+	struct kvm_vcpu *vcpu;
+	unsigned long i;
+
+	kvm_for_each_vcpu(i, vcpu, kvm) {
+		static_call(kvm_x86_filter_desc)(vcpu);
+	}
+}
+
+int kvm_arch_vm_ioctl_set_register_filter(struct kvm *kvm,
+					  struct kvm_register_filter *filter)
+{
+	struct kvm_x86_reg_filter old_filter = kvm->arch.reg_filter;
+	int r = 0;
+
+	u64 *regs = memdup_user(filter->regs, filter->nmregs * 8);
+
+	for (u64 i = 0; i < filter->nmregs; i++) {
+		u64 reg = regs[i];
+		u32 index = reg & KVM_X86_REG_INDEX_MASK;
+
+		switch ((reg & KVM_X86_REG_TYPE_MASK) >> KVM_X86_REG_TYPE_SHIFT) {
+		case KVM_X86_REG_TYPE_CR: {
+			if (reg == 1 ||
+			    (index > 4 && index != 8)) {
+				r = -EINVAL;
+				goto fail;
+			}
+
+			if ((reg == 0 || reg == 4) &&
+			    (filter->mask & KVM_X86_REG_READ)) {
+				r = -EOPNOTSUPP;
+				goto fail;
+			}
+
+			kvm->arch.reg_filter.crs[index] = filter->mask & 0x3;
+
+			if (index == 0)
+				kvm_set_all_cr0_guest_host_masks(kvm);
+			else if (index == 4)
+				kvm_set_all_cr4_guest_host_masks(kvm);
+
+			break;
+		}
+		case KVM_X86_REG_TYPE_XCR: {
+			kvm->arch.reg_filter.xcr0 = filter->mask;
+			break;
+		}
+		case KVM_X86_REG_TYPE_DESCRIPTOR_TABLE: {
+			if (index == 0)
+				kvm->arch.reg_filter.ldtr = filter->mask;
+			else if (index == 1)
+				kvm->arch.reg_filter.tr = filter->mask;
+			else if (index == 2)
+				kvm->arch.reg_filter.gdtr = filter->mask;
+			else if (index == 3)
+				kvm->arch.reg_filter.idtr = filter->mask;
+
+			kvm_filter_all_desc(kvm);
+			break;
+		}
+		case KVM_X86_REG_TYPE_DR: {
+			if (index == 4 || index == 5) {
+				r = -EINVAL;
+				goto fail;
+			}
+
+			kvm->arch.reg_filter.drs[index] = filter->mask & 0x3;
+
+			break;
+		}
+		default: {
+			r = -EOPNOTSUPP;
+			goto fail;
+		}
+		}
+	}
+
+	kfree(regs);
+
+	return r;
+fail:
+	kvm->arch.reg_filter = old_filter;
+	return r;
+}
+
 #ifdef CONFIG_HAVE_KVM_PM_NOTIFIER
 static int kvm_arch_suspend_notifier(struct kvm *kvm)
 {
