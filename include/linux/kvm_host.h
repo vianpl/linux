@@ -2542,6 +2542,14 @@ bool kvm_range_has_memory_attributes(struct kvm *kvm, gfn_t start, gfn_t end,
 				     unsigned long mask, unsigned long attrs);
 bool kvm_range_match_memmory_attributes(struct kvm *kvm, gfn_t start, gfn_t end,
 					unsigned long mask);
+
+static inline bool kvm_range_has_rw_memory_protections(struct kvm *kvm,
+						       gfn_t start, gfn_t end)
+{
+	return kvm_range_match_memmory_attributes(kvm, start, end,
+			KVM_MEMORY_ATTRIBUTE_NR | KVM_MEMORY_ATTRIBUTE_NW);
+}
+
 bool kvm_arch_pre_set_memory_attributes(struct kvm *kvm,
 					struct kvm_gfn_range *range);
 bool kvm_arch_post_set_memory_attributes(struct kvm *kvm,
@@ -2595,6 +2603,11 @@ static inline int kvm_memory_attributes_write_allowed(struct kvm *kvm, gfn_t gfn
 static inline int kvm_memory_attributes_exec_allowed(struct kvm *kvm, gfn_t gfn)
 {
 	return true;
+}
+static inline bool kvm_range_has_rw_memory_protections(struct kvm *kvm,
+						       gfn_t start, gfn_t end)
+{
+	return false;
 }
 
 #endif /* CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES */
