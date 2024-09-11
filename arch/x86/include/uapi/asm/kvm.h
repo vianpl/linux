@@ -411,6 +411,53 @@ struct kvm_xcrs {
 	__u64 padding[16];
 };
 
+#define KVM_X86_REG_TYPE_GP	1ull
+#define KVM_X86_REG_TYPE_MSR	2ull
+#define KVM_X86_REG_TYPE_SYNTHETIC_MSR	3ull
+#define KVM_X86_REG_TYPE_SEGMENT	4ull
+#define KVM_X86_REG_TYPE_CR	5ull
+#define KVM_X86_REG_TYPE_XCR	6ull
+#define KVM_X86_REG_TYPE_DESCRIPTOR_TABLE	7ull
+#define KVM_X86_REG_TYPE_DR	8ull
+
+#define KVM_X86_REG_INDEX_SHIFT	0
+#define KVM_X86_REG_INDEX_MASK	__GENMASK(KVM_X86_REG_INDEX_SHIFT + 32, \
+					  KVM_X86_REG_INDEX_SHIFT)
+
+#define KVM_X86_REG_TYPE_SHIFT 	32
+#define KVM_X86_REG_TYPE_MASK	__GENMASK(KVM_X86_REG_TYPE_SHIFT + 8, \
+					  KVM_X86_REG_TYPE_SHIFT)
+
+
+#define KVM_X86_REG_TYPE_SIZE(type)                                          \
+	((type) << KVM_X86_REG_TYPE_SHIFT |                                  \
+	 (-((type) == KVM_X86_REG_TYPE_GP) & KVM_REG_SIZE_U64) |               \
+	 (-((type) == KVM_X86_REG_TYPE_MSR) & KVM_REG_SIZE_U64) |              \
+	 (-((type) == KVM_X86_REG_TYPE_SYNTHETIC_MSR) & KVM_REG_SIZE_U64) |    \
+	 (-((type) == KVM_X86_REG_TYPE_SEGMENT) & KVM_REG_SIZE_U16) |          \
+	 (-((type) == KVM_X86_REG_TYPE_CR) & KVM_REG_SIZE_U64) |               \
+	 (-((type) == KVM_X86_REG_TYPE_XCR) & KVM_REG_SIZE_U64) |              \
+	 (-((type) == KVM_X86_REG_TYPE_DESCRIPTOR_TABLE) & KVM_REG_SIZE_U64) | \
+	 (-((type) == KVM_X86_REG_TYPE_DR) & KVM_REG_SIZE_U64) | 0ull)
+
+#define KVM_X86_REG_ENCODE(type, index)                         \
+        (KVM_REG_X86 | KVM_X86_REG_TYPE_SIZE(type) | (index))
+
+#define KVM_X86_REG_GP(index) KVM_X86_REG_ENCODE(KVM_X86_REG_TYPE_GP, index)
+#define KVM_X86_REG_MSR(index) KVM_X86_REG_ENCODE(KVM_X86_REG_TYPE_MSR, index)
+#define KVM_X86_REG_SYNTHETIC_MSR(index) \
+	KVM_X86_REG_ENCODE(KVM_X86_REG_TYPE_SYNTHETIC_MSR, index)
+#define KVM_X86_REG_CR(index) KVM_X86_REG_ENCODE(KVM_X86_REG_TYPE_CR, index)
+#define KVM_X86_REG_XCR(index) KVM_X86_REG_ENCODE(KVM_X86_REG_TYPE_XCR, index)
+#define KVM_X86_REG_DESCRIPTOR_TABLE(index) \
+	KVM_X86_REG_ENCODE(KVM_X86_REG_TYPE_DESCRIPTOR_TABLE, index)
+#define KVM_X86_REG_DR(index) KVM_X86_REG_ENCODE(KVM_X86_REG_TYPE_DR, index)
+
+#define KVM_X86_REG_LDT	KVM_X86_REG_DESCRIPTOR_TABLE(0)
+#define KVM_X86_REG_TR	KVM_X86_REG_DESCRIPTOR_TABLE(1)
+#define KVM_X86_REG_GDT	KVM_X86_REG_DESCRIPTOR_TABLE(2)
+#define KVM_X86_REG_IDT	KVM_X86_REG_DESCRIPTOR_TABLE(3)
+
 #define KVM_SYNC_X86_REGS      (1UL << 0)
 #define KVM_SYNC_X86_SREGS     (1UL << 1)
 #define KVM_SYNC_X86_EVENTS    (1UL << 2)
