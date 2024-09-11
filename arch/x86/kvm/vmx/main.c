@@ -67,6 +67,9 @@ struct kvm_x86_ops vt_x86_ops __initdata = {
 	.set_rflags = vmx_set_rflags,
 	.get_if_flag = vmx_get_if_flag,
 
+	.filter_cr0 = vmx_filter_cr0,
+	.filter_cr4 = vmx_filter_cr4,
+
 	.flush_tlb_all = vmx_flush_tlb_all,
 	.flush_tlb_current = vmx_flush_tlb_current,
 	.flush_tlb_gva = vmx_flush_tlb_gva,

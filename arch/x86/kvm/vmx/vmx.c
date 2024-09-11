@@ -1591,6 +1591,18 @@ bool vmx_get_if_flag(struct kvm_vcpu *vcpu)
 	return vmx_get_rflags(vcpu) & X86_EFLAGS_IF;
 }
 
+void vmx_filter_cr0(struct kvm_vcpu *vcpu)
+{
+	vcpu->arch.cr0_guest_owned_bits = 0;
+	vmcs_writel(CR0_GUEST_HOST_MASK, ~vcpu->arch.cr0_guest_owned_bits);
+}
+
+void vmx_filter_cr4(struct kvm_vcpu *vcpu)
+{
+	vcpu->arch.cr4_guest_owned_bits = 0;
+	vmcs_writel(CR4_GUEST_HOST_MASK, ~vcpu->arch.cr4_guest_owned_bits);
+}
+
 u32 vmx_get_interrupt_shadow(struct kvm_vcpu *vcpu)
 {
 	u32 interruptibility = vmcs_read32(GUEST_INTERRUPTIBILITY_INFO);

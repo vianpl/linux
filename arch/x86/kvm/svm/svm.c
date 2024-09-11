@@ -347,6 +347,14 @@ int svm_set_efer(struct kvm_vcpu *vcpu, u64 efer)
 	return 0;
 }
 
+static void svm_filter_cr0(struct kvm_vcpu *vcpu)
+{
+}
+
+static void svm_filter_cr4(struct kvm_vcpu *vcpu)
+{
+}
+
 static u32 svm_get_interrupt_shadow(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_svm *svm = to_svm(vcpu);
@@ -5048,6 +5056,9 @@ static struct kvm_x86_ops svm_x86_ops __initdata = {
 	.get_rflags = svm_get_rflags,
 	.set_rflags = svm_set_rflags,
 	.get_if_flag = svm_get_if_flag,
+
+	.filter_cr0 = svm_filter_cr0,
+	.filter_cr4 = svm_filter_cr4,
 
 	.flush_tlb_all = svm_flush_tlb_all,
 	.flush_tlb_current = svm_flush_tlb_current,

@@ -1676,6 +1676,9 @@ struct kvm_x86_ops {
 	void (*set_rflags)(struct kvm_vcpu *vcpu, unsigned long rflags);
 	bool (*get_if_flag)(struct kvm_vcpu *vcpu);
 
+	void (*filter_cr0)(struct kvm_vcpu *vcpu);
+	void (*filter_cr4)(struct kvm_vcpu *vcpu);
+
 	void (*flush_tlb_all)(struct kvm_vcpu *vcpu);
 	void (*flush_tlb_current)(struct kvm_vcpu *vcpu);
 #if IS_ENABLED(CONFIG_HYPERV)
