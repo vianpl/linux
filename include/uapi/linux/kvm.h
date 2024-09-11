@@ -1585,4 +1585,16 @@ struct kvm_pre_fault_memory {
 	__u64 padding[5];
 };
 
+#define KVM_SET_REGISTER_FILTER	_IOW(KVMIO,  0xd6, struct kvm_register_filter)
+
+struct kvm_register_filter {
+	__u64 nmregs;
+#define KVM_REG_READ 0b01
+#define KVM_REG_WRITE 0b10
+	__u8  mask;
+	__u8  padding[7];
+
+	__u64 *regs;
+};
+
 #endif /* __LINUX_KVM_H */

@@ -5140,6 +5140,12 @@ do {										\
 		     sizeof_field(struct kvm_userspace_memory_region2, field));	\
 } while (0)
 
+int __weak kvm_arch_vm_ioctl_set_register_filter(struct kvm *kvm,
+						 struct kvm_register_filter *filter)
+{
+	return -EINVAL;
+}
+
 static long kvm_vm_ioctl(struct file *filp,
 			   unsigned int ioctl, unsigned long arg)
 {
@@ -5372,6 +5378,21 @@ static long kvm_vm_ioctl(struct file *filp,
 		break;
 	}
 #endif
+	case KVM_SET_REGISTER_FILTER: {
+		struct kvm_register_filter filter;
+
+		if (copy_from_user(&filter, argp, sizeof(filter)))
+			return -EFAULT;
+
+		r = kvm_arch_vm_ioctl_set_register_filter(kvm, &filter);
+		break;
+
+		r = -EFAULT;
+		if (copy_from_user(&filter, argp, sizeof(filter)))
+			goto out;
+		r = kvm_arch_vm_ioctl_set_register_filter(kvm, &filter);
+		break;
+	}
 	default:
 		r = kvm_arch_vm_ioctl(filp, ioctl, arg);
 	}
