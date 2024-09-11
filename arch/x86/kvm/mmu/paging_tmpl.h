@@ -409,6 +409,9 @@ retry_walk:
 			goto error;
 		}
 
+		if (!kvm_memory_attributes_write_allowed(vcpu->kvm, gpa_to_gfn(real_gpa)))
+			walker->pte_writable[walker->level - 1] = false;
+
 		ptep_user = (pt_element_t __user *)((void *)host_addr + offset);
 		if (unlikely(__get_user(pte, ptep_user)))
 			goto error;
