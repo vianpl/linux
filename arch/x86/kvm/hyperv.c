@@ -2517,11 +2517,35 @@ static bool hv_check_hypercall_access(struct kvm_vcpu_hv *hv_vcpu, u16 code)
 	return true;
 }
 
+enum {
+	HV_HCALL_READ = BIT(0),
+	HV_HCALL_WRITE = BIT(1),
+};
+
+static unsigned int kvm_hv_hypercall_mem_access(u16 code)
+{
+	switch (code) {
+	case HVCALL_SIGNAL_EVENT:
+	case HVCALL_FLUSH_VIRTUAL_ADDRESS_LIST:
+	case HVCALL_FLUSH_VIRTUAL_ADDRESS_LIST_EX:
+	case HVCALL_FLUSH_VIRTUAL_ADDRESS_SPACE:
+	case HVCALL_FLUSH_VIRTUAL_ADDRESS_SPACE_EX:
+	case HVCALL_SEND_IPI:
+	case HVCALL_SEND_IPI_EX:
+		return HV_HCALL_READ;
+	}
+
+	return 0;
+}
+
 int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 {
 	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
+	struct kvm *kvm = vcpu->kvm;
 	struct kvm_hv_hcall hc;
 	u64 ret = HV_STATUS_SUCCESS;
+	unsigned int access;
+	unsigned long addr;
 
 	/*
 	 * hypercall generates UD from non zero cpl and real mode
@@ -2577,6 +2601,18 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 		}
 
 		kvm_hv_hypercall_read_xmm(&hc);
+	}
+
+	if (!hc.fast && kvm->arch.hyperv.hcall_fault_exit) {
+		access = kvm_hv_hypercall_mem_access(hc.code);
+		addr = kvm_vcpu_gfn_to_hva(vcpu, gpa_to_gfn(hc.ingpa));
+		if (addr == KVM_HVA_ERR_BAD ||
+		    (access & HV_HCALL_WRITE && addr == KVM_HVA_ERR_RO_BAD)) {
+			kvm_prepare_memory_fault_exit(vcpu, hc.ingpa, PAGE_SIZE,
+						      addr == KVM_HVA_ERR_RO_BAD,
+						      false, false);
+			return -EFAULT;
+		}
 	}
 
 	switch (hc.code) {
