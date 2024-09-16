@@ -5587,6 +5587,8 @@ static int handle_dr(struct kvm_vcpu *vcpu)
 	unsigned long exit_qualification;
 	int dr, dr7, reg;
 	int err = 1;
+	int has_filter;
+	int value;
 
 	exit_qualification = vmx_get_exit_qual(vcpu);
 	dr = exit_qualification & DEBUG_REG_ACCESS_NUM;
@@ -5618,7 +5620,9 @@ static int handle_dr(struct kvm_vcpu *vcpu)
 		}
 	}
 
-	if (vcpu->guest_debug == 0) {
+	has_filter = kvm_vm_has_dr_filter(vcpu->kvm);
+
+	if (vcpu->guest_debug == 0 && !has_filter) {
 		exec_controls_clearbit(to_vmx(vcpu), CPU_BASED_MOV_DR_EXITING);
 
 		/*
@@ -5632,10 +5636,24 @@ static int handle_dr(struct kvm_vcpu *vcpu)
 
 	reg = DEBUG_REG_ACCESS_REG(exit_qualification);
 	if (exit_qualification & TYPE_MOV_FROM_DR) {
-		kvm_register_write(vcpu, reg, kvm_get_dr(vcpu, dr));
+		value = kvm_get_dr(vcpu, dr);
+
+		err = kvm_check_dr(vcpu, dr, KVM_X86_REG_READ, value);
+		if (err != 0)
+			return 0;
+
+		if (vcpu->guest_debug)
+			kvm_register_write(vcpu, reg, value);
 		err = 0;
 	} else {
-		err = kvm_set_dr(vcpu, dr, kvm_register_read(vcpu, reg));
+		value = kvm_register_read(vcpu, reg);
+
+		err = kvm_check_dr(vcpu, dr, KVM_X86_REG_WRITE, value);
+		if (err != 0)
+			return 0;
+
+		if (vcpu->guest_debug)
+			err = kvm_set_dr(vcpu, dr, value);
 	}
 
 out:
