@@ -1605,7 +1605,8 @@ void vmx_filter_cr4(struct kvm_vcpu *vcpu)
 
 void vmx_filter_desc(struct kvm_vcpu *vcpu)
 {
-	secondary_exec_controls_setbit(to_vmx(vcpu), SECONDARY_EXEC_DESC);
+	if (cpu_has_secondary_exec_ctrls())
+		secondary_exec_controls_setbit(to_vmx(vcpu), SECONDARY_EXEC_DESC);
 }
 
 u32 vmx_get_interrupt_shadow(struct kvm_vcpu *vcpu)
@@ -5489,14 +5490,72 @@ static int handle_set_cr4(struct kvm_vcpu *vcpu, unsigned long val)
 
 static int handle_desc(struct kvm_vcpu *vcpu)
 {
-	/*
-	 * UMIP emulation relies on intercepting writes to CR4.UMIP, i.e. this
-	 * and other code needs to be updated if UMIP can be guest owned.
-	 */
-	BUILD_BUG_ON(KVM_POSSIBLE_CR4_GUEST_BITS & X86_CR4_UMIP);
+	struct x86_emulate_ctxt *ctxt = vcpu->arch.emulate_ctxt;
+	int r = 0;
 
-	WARN_ON_ONCE(!kvm_is_cr4_bit_set(vcpu, X86_CR4_UMIP));
-	return kvm_emulate_instruction(vcpu, 0);
+	uint8_t instruction[3];
+	// Reading and parsing the instruction manually, because user mode still
+	// needs to have the RIP before it, and I can't figure out a way to step
+	// back an x86_emulate_ctxt
+	kvm_read_guest_virt(vcpu, kvm_rip_read(vcpu), instruction, 3, &ctxt->exception);
+
+	uint8_t rm = instruction[2] & 0x3;
+	uint8_t reg = instruction[2] >> 3 & 0x3;
+	uint8_t mod = instruction[2] >> 6;
+
+	u64 value = 0;
+	u32 offset = 0;
+
+	if (reg == 2 || reg == 3) {
+		// just read the offset and hope we're not on a page boundary for this POC
+		kvm_read_guest_virt(vcpu, kvm_rip_read(vcpu) + 3, &offset, 4,
+				    &ctxt->exception);
+
+		switch (mod) {
+		case 0b00:
+			if (rm <= 0b011) {
+				value = kvm_register_read_raw(vcpu, rm);
+				if (instruction[1] == 0)
+					kvm_read_guest_virt(
+						vcpu,
+						value,
+						&value, 8, &ctxt->exception);
+			} else if (rm == 0b101) {
+				kvm_read_guest_virt(vcpu, offset, &value, 8,
+						    &ctxt->exception);
+			}
+			break;
+		case 0b01:
+			offset &= 0xff;
+			fallthrough;
+		case 0b10:
+			kvm_read_guest_virt(
+				vcpu, kvm_register_read_raw(vcpu, rm) + offset,
+				&value, 8, &ctxt->exception);
+			break;
+		case 0b11:
+			value = kvm_register_read_raw(vcpu, rm);
+			break;
+		}
+	}
+
+	u8 access_mode = reg > 1 ? KVM_X86_REG_WRITE : KVM_X86_REG_READ;
+
+	if (instruction[1] == 0) {
+		r = kvm_check_desc(vcpu, reg % 2, access_mode, value);
+	} else if (instruction[1] == 1) {
+		r = kvm_check_desc(vcpu, (reg % 2) + 2, access_mode, value);
+	}
+
+	if (r == 0)
+		r = kvm_emulate_instruction(vcpu, 0);
+	else
+		r = 0;
+
+	WARN_ON_ONCE(!kvm_is_cr4_bit_set(vcpu, X86_CR4_UMIP) &&
+		     !kvm_vm_has_desc_filter(vcpu->kvm));
+
+	return !!r;
 }
 
 static int handle_cr(struct kvm_vcpu *vcpu)
