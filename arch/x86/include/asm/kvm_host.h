@@ -1693,6 +1693,7 @@ struct kvm_x86_ops {
 
 	void (*filter_cr0)(struct kvm_vcpu *vcpu);
 	void (*filter_cr4)(struct kvm_vcpu *vcpu);
+	void (*filter_desc)(struct kvm_vcpu *vcpu);
 
 	void (*flush_tlb_all)(struct kvm_vcpu *vcpu);
 	void (*flush_tlb_current)(struct kvm_vcpu *vcpu);
@@ -2104,6 +2105,7 @@ int kvm_check_cr(struct kvm_vcpu *vcpu, int cr, u8 mode, u64 value);
 int kvm_check_dr(struct kvm_vcpu *vcpu, int dr, u8 mode, u64 value);
 
 int kvm_vm_has_dr_filter(struct kvm *vm);
+int kvm_vm_has_desc_filter(struct kvm *vm);
 
 void kvm_get_segment(struct kvm_vcpu *vcpu, struct kvm_segment *var, int seg);
 void kvm_set_segment(struct kvm_vcpu *vcpu, struct kvm_segment *var, int seg);

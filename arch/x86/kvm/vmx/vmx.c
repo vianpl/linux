@@ -1603,6 +1603,11 @@ void vmx_filter_cr4(struct kvm_vcpu *vcpu)
 	vmcs_writel(CR4_GUEST_HOST_MASK, ~vcpu->arch.cr4_guest_owned_bits);
 }
 
+void vmx_filter_desc(struct kvm_vcpu *vcpu)
+{
+	secondary_exec_controls_setbit(to_vmx(vcpu), SECONDARY_EXEC_DESC);
+}
+
 u32 vmx_get_interrupt_shadow(struct kvm_vcpu *vcpu)
 {
 	u32 interruptibility = vmcs_read32(GUEST_INTERRUPTIBILITY_INFO);
@@ -3494,8 +3499,10 @@ void vmx_set_cr4(struct kvm_vcpu *vcpu, unsigned long cr4)
 		if (cr4 & X86_CR4_UMIP) {
 			secondary_exec_controls_setbit(vmx, SECONDARY_EXEC_DESC);
 			hw_cr4 &= ~X86_CR4_UMIP;
-		} else if (!is_guest_mode(vcpu) ||
-			!nested_cpu_has2(get_vmcs12(vcpu), SECONDARY_EXEC_DESC)) {
+		} else if (!kvm_vm_has_desc_filter(vcpu->kvm) &&
+			   (!is_guest_mode(vcpu) ||
+			    !nested_cpu_has2(get_vmcs12(vcpu),
+					     SECONDARY_EXEC_DESC))) {
 			secondary_exec_controls_clearbit(vmx, SECONDARY_EXEC_DESC);
 		}
 	}

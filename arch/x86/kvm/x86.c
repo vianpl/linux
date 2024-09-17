@@ -8450,6 +8450,12 @@ int kvm_vm_has_dr_filter(struct kvm *vm)
 	return 0;
 }
 
+int kvm_vm_has_desc_filter(struct kvm *vm)
+{
+	return vm->arch.reg_filter.ldtr || vm->arch.reg_filter.tr ||
+	       vm->arch.reg_filter.gdtr || vm->arch.reg_filter.idtr;
+}
+
 static unsigned long emulator_get_cr(struct x86_emulate_ctxt *ctxt, int cr)
 {
 	struct kvm_vcpu *vcpu = emul_to_vcpu(ctxt);

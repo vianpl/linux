@@ -69,6 +69,7 @@ struct kvm_x86_ops vt_x86_ops __initdata = {
 
 	.filter_cr0 = vmx_filter_cr0,
 	.filter_cr4 = vmx_filter_cr4,
+	.filter_desc = vmx_filter_desc,
 
 	.flush_tlb_all = vmx_flush_tlb_all,
 	.flush_tlb_current = vmx_flush_tlb_current,
