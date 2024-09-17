@@ -2103,6 +2103,7 @@ int kvm_emulate_wbinvd(struct kvm_vcpu *vcpu);
 
 int kvm_check_cr(struct kvm_vcpu *vcpu, int cr, u8 mode, u64 value);
 int kvm_check_dr(struct kvm_vcpu *vcpu, int dr, u8 mode, u64 value);
+int kvm_check_desc(struct kvm_vcpu *vcpu, int desc, u8 mode, u64 value);
 
 int kvm_vm_has_dr_filter(struct kvm *vm);
 int kvm_vm_has_desc_filter(struct kvm *vm);

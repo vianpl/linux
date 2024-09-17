@@ -504,6 +504,10 @@ enum x86_intercept {
 #define X86EMUL_MODE_HOST X86EMUL_MODE_PROT64
 #endif
 
+int load_segment_descriptor(struct x86_emulate_ctxt *ctxt,
+			    u16 selector, int seg);
+int load_descriptor_table(struct x86_emulate_ctxt *ctxt, ulong addr, bool lgdt);
+
 int x86_decode_insn(struct x86_emulate_ctxt *ctxt, void *insn, int insn_len, int emulation_type);
 bool x86_page_table_writing_insn(struct x86_emulate_ctxt *ctxt);
 #define EMULATION_FAILED -1

@@ -985,20 +985,19 @@ static void *decode_register(struct x86_emulate_ctxt *ctxt, u8 modrm_reg,
 	return p;
 }
 
-static int read_descriptor(struct x86_emulate_ctxt *ctxt,
-			   struct segmented_address addr,
-			   u16 *size, unsigned long *address, int op_bytes)
+static int read_descriptor(struct x86_emulate_ctxt *ctxt, ulong addr, u16 *size,
+			   unsigned long *address, int op_bytes)
 {
 	int rc;
 
 	if (op_bytes == 2)
 		op_bytes = 3;
 	*address = 0;
-	rc = segmented_read_std(ctxt, addr, size, 2);
+	rc = linear_read_system(ctxt, addr, size, 2);
 	if (rc != X86EMUL_CONTINUE)
 		return rc;
-	addr.ea += 2;
-	rc = segmented_read_std(ctxt, addr, address, op_bytes);
+	addr += 2;
+	rc = linear_read_system(ctxt, addr, address, op_bytes);
 	return rc;
 }
 
@@ -1754,8 +1753,8 @@ exception:
 	return emulate_exception(ctxt, err_vec, err_code, true);
 }
 
-static int load_segment_descriptor(struct x86_emulate_ctxt *ctxt,
-				   u16 selector, int seg)
+int load_segment_descriptor(struct x86_emulate_ctxt *ctxt,
+			    u16 selector, int seg)
 {
 	u8 cpl = ctxt->ops->cpl(ctxt);
 
@@ -3482,15 +3481,14 @@ static int em_sidt(struct x86_emulate_ctxt *ctxt)
 	return emulate_store_desc_ptr(ctxt, ctxt->ops->get_idt);
 }
 
-static int em_lgdt_lidt(struct x86_emulate_ctxt *ctxt, bool lgdt)
+int load_descriptor_table(struct x86_emulate_ctxt *ctxt, ulong addr, bool lgdt)
 {
 	struct desc_ptr desc_ptr;
 	int rc;
 
 	if (ctxt->mode == X86EMUL_MODE_PROT64)
 		ctxt->op_bytes = 8;
-	rc = read_descriptor(ctxt, ctxt->src.addr.mem,
-			     &desc_ptr.size, &desc_ptr.address,
+	rc = read_descriptor(ctxt, addr, &desc_ptr.size, &desc_ptr.address,
 			     ctxt->op_bytes);
 	if (rc != X86EMUL_CONTINUE)
 		return rc;
@@ -3508,12 +3506,12 @@ static int em_lgdt_lidt(struct x86_emulate_ctxt *ctxt, bool lgdt)
 
 static int em_lgdt(struct x86_emulate_ctxt *ctxt)
 {
-	return em_lgdt_lidt(ctxt, true);
+	return load_descriptor_table(ctxt, ctxt->src.addr.mem.ea, true);
 }
 
 static int em_lidt(struct x86_emulate_ctxt *ctxt)
 {
-	return em_lgdt_lidt(ctxt, false);
+	return load_descriptor_table(ctxt, ctxt->src.addr.mem.ea, false);
 }
 
 static int em_smsw(struct x86_emulate_ctxt *ctxt)
