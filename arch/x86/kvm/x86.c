@@ -128,6 +128,7 @@ static u64 __read_mostly cr4_reserved_bits = CR4_RESERVED_BITS;
 #define KVM_X2APIC_API_VALID_FLAGS (KVM_X2APIC_API_USE_32BIT_IDS | \
                                     KVM_X2APIC_API_DISABLE_BROADCAST_QUIRK)
 
+static int __kvm_set_xcr(struct kvm_vcpu *vcpu, u32 index, u64 xcr);
 static void update_cr8_intercept(struct kvm_vcpu *vcpu);
 static void process_nmi(struct kvm_vcpu *vcpu);
 static void __kvm_set_rflags(struct kvm_vcpu *vcpu, unsigned long rflags);
@@ -1170,6 +1171,16 @@ static int complete_emulated_wrreg(struct kvm_vcpu *vcpu)
 		r = kvm_skip_emulated_instruction(vcpu);
 		break;
 	}
+	case KVM_X86_REG_XCR(0): {
+		if (kvm_x86_call(get_cpl)(vcpu) != 0 ||
+		    __kvm_set_xcr(vcpu, 0, vcpu->run->reg.data)) {
+			kvm_inject_gp(vcpu, 0);
+			r = 1;
+		} else {
+			r = kvm_skip_emulated_instruction(vcpu);
+		}
+		break;
+	}
 	case KVM_X86_REG_DR(0):
 	case KVM_X86_REG_DR(1):
 	case KVM_X86_REG_DR(2):
@@ -1484,9 +1495,22 @@ static int __kvm_set_xcr(struct kvm_vcpu *vcpu, u32 index, u64 xcr)
 
 int kvm_emulate_xsetbv(struct kvm_vcpu *vcpu)
 {
+	int index = kvm_rcx_read(vcpu);
+	u64 value = kvm_read_edx_eax(vcpu);
+
+	if (vcpu->kvm->arch.reg_filter.xcr0 & KVM_X86_REG_WRITE) {
+		if (kvm_reg_user_space(vcpu,
+				       KVM_X86_REG_XCR(index), value,
+				       KVM_EXIT_WRITE_REG,
+				       complete_emulated_wrreg))
+			return 0;
+
+		return 0;
+	}
+
 	/* Note, #UD due to CR4.OSXSAVE=0 has priority over the intercept. */
 	if (kvm_x86_call(get_cpl)(vcpu) != 0 ||
-	    __kvm_set_xcr(vcpu, kvm_rcx_read(vcpu), kvm_read_edx_eax(vcpu))) {
+	    __kvm_set_xcr(vcpu, index, value)) {
 		kvm_inject_gp(vcpu, 0);
 		return 1;
 	}
