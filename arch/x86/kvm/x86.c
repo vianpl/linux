@@ -1067,6 +1067,20 @@ static int complete_emulated_rdreg(struct kvm_vcpu *vcpu)
 		kvm_set_cr8(vcpu, t);
 		break;
 	}
+	case KVM_X86_REG_DR(0):
+	case KVM_X86_REG_DR(1):
+	case KVM_X86_REG_DR(2):
+	case KVM_X86_REG_DR(3):
+	case KVM_X86_REG_DR(6):
+	case KVM_X86_REG_DR(7): {
+		int dr = (vcpu->run->reg.reg & KVM_X86_REG_INDEX_MASK) >> KVM_X86_REG_INDEX_SHIFT;
+
+		ulong t = kvm_get_dr(vcpu, dr);
+		kvm_set_dr(vcpu, dr, vcpu->run->reg.data);
+		r = kvm_emulate_instruction(vcpu, 0);
+		kvm_set_dr(vcpu, dr, t);
+		break;
+	}
 	}
 
 	return r;
@@ -1097,6 +1111,18 @@ static int complete_emulated_wrreg(struct kvm_vcpu *vcpu)
 	}
 	case KVM_X86_REG_CR(8): {
 		kvm_set_cr8(vcpu, vcpu->run->reg.data);
+		r = kvm_skip_emulated_instruction(vcpu);
+		break;
+	}
+	case KVM_X86_REG_DR(0):
+	case KVM_X86_REG_DR(1):
+	case KVM_X86_REG_DR(2):
+	case KVM_X86_REG_DR(3):
+	case KVM_X86_REG_DR(6):
+	case KVM_X86_REG_DR(7): {
+		int dr = (vcpu->run->reg.reg & KVM_X86_REG_INDEX_MASK) >> KVM_X86_REG_INDEX_SHIFT;
+
+		kvm_set_dr(vcpu, dr, vcpu->run->reg.data);
 		r = kvm_skip_emulated_instruction(vcpu);
 		break;
 	}
@@ -8388,6 +8414,39 @@ int kvm_check_cr(struct kvm_vcpu *vcpu, int cr, u8 mode, u64 value)
 		return X86EMUL_PROPAGATE_FAULT;
 	}
 
+	return 0;
+}
+
+int kvm_check_dr(struct kvm_vcpu *vcpu, int dr, u8 mode, u64 value) {
+	struct kvm_x86_reg_filter *filter = &vcpu->kvm->arch.reg_filter;
+
+	if (filter->drs[dr] & mode) {
+		if (mode == KVM_X86_REG_WRITE) {
+			if (kvm_reg_user_space(vcpu,
+					       KVM_X86_REG_DR(dr), value,
+					       KVM_EXIT_WRITE_REG,
+					       complete_emulated_wrreg))
+				return X86EMUL_IO_NEEDED;
+		} else {
+			if (kvm_reg_user_space(vcpu,
+					       KVM_X86_REG_DR(dr), value,
+					       KVM_EXIT_READ_REG,
+					       complete_emulated_rdreg))
+				return X86EMUL_IO_NEEDED;
+		}
+
+		return X86EMUL_PROPAGATE_FAULT;
+	}
+
+	return 0;
+}
+
+int kvm_vm_has_dr_filter(struct kvm *vm)
+{
+	for (int i = 0; i < ARRAY_SIZE(vm->arch.reg_filter.drs); i++) {
+		if (vm->arch.reg_filter.drs[i])
+			return 1;
+	}
 	return 0;
 }
 

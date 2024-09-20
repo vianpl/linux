@@ -1185,7 +1185,8 @@ struct kvm_x86_msr_filter {
 #define KVM_X86_REG_WRITE 0b10
 
 struct kvm_x86_reg_filter {
-	u8  crs[16];
+	u8 crs[16];
+	u8 drs[8];
 	unsigned xcr0:2;
 	unsigned ldtr:2;
 	unsigned tr:2;
@@ -2100,6 +2101,9 @@ int kvm_emulate_ap_reset_hold(struct kvm_vcpu *vcpu);
 int kvm_emulate_wbinvd(struct kvm_vcpu *vcpu);
 
 int kvm_check_cr(struct kvm_vcpu *vcpu, int cr, u8 mode, u64 value);
+int kvm_check_dr(struct kvm_vcpu *vcpu, int dr, u8 mode, u64 value);
+
+int kvm_vm_has_dr_filter(struct kvm *vm);
 
 void kvm_get_segment(struct kvm_vcpu *vcpu, struct kvm_segment *var, int seg);
 void kvm_set_segment(struct kvm_vcpu *vcpu, struct kvm_segment *var, int seg);
