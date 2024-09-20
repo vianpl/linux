@@ -8449,6 +8449,81 @@ static int emulator_set_cr(struct x86_emulate_ctxt *ctxt, int cr, ulong val)
 	return res;
 }
 
+static int emulator_get_cr_with_filter(struct x86_emulate_ctxt *ctxt, int cr,
+				       unsigned long *pdata)
+{
+	struct kvm_vcpu *vcpu = emul_to_vcpu(ctxt);
+	unsigned long value;
+	int res;
+
+	switch (cr) {
+	case 0:
+		value = kvm_read_cr0(vcpu);
+		break;
+	case 2:
+		value = vcpu->arch.cr2;
+		break;
+	case 3:
+		value = kvm_read_cr3(vcpu);
+		break;
+	case 4:
+		value = kvm_read_cr4(vcpu);
+		break;
+	case 8:
+		value = kvm_get_cr8(vcpu);
+		break;
+	default:
+		kvm_err("%s: unexpected cr %u\n", __func__, cr);
+		return X86EMUL_PROPAGATE_FAULT;
+	}
+
+	res = kvm_check_cr(vcpu, cr, KVM_X86_REG_READ, value);
+	if (res != 0) {
+		trace_kvm_cr_read(cr, value);
+		return res;
+	}
+
+	*pdata = value;
+
+	return 0;
+}
+
+static int emulator_set_cr_with_filter(struct x86_emulate_ctxt *ctxt, int cr,
+				       ulong val)
+{
+	struct kvm_vcpu *vcpu = emul_to_vcpu(ctxt);
+	int res = 0;
+
+	res = kvm_check_cr(vcpu, cr, KVM_X86_REG_WRITE, val);
+	if (res != 0) {
+		trace_kvm_cr_write(cr, val);
+		return res;
+	}
+
+	switch (cr) {
+	case 0:
+		res = kvm_set_cr0(vcpu, mk_cr_64(kvm_read_cr0(vcpu), val));
+		break;
+	case 2:
+		vcpu->arch.cr2 = val;
+		break;
+	case 3:
+		res = kvm_set_cr3(vcpu, val);
+		break;
+	case 4:
+		res = kvm_set_cr4(vcpu, mk_cr_64(kvm_read_cr4(vcpu), val));
+		break;
+	case 8:
+		res = kvm_set_cr8(vcpu, val);
+		break;
+	default:
+		kvm_err("%s: unexpected cr %u\n", __func__, cr);
+		res = -1;
+	}
+
+	return res;
+}
+
 static int emulator_get_cpl(struct x86_emulate_ctxt *ctxt)
 {
 	return kvm_x86_call(get_cpl)(emul_to_vcpu(ctxt));
@@ -8732,6 +8807,8 @@ static const struct x86_emulate_ops emulate_ops = {
 	.set_idt	     = emulator_set_idt,
 	.get_cr              = emulator_get_cr,
 	.set_cr              = emulator_set_cr,
+	.get_cr_with_filter = emulator_get_cr_with_filter,
+	.set_cr_with_filter = emulator_set_cr_with_filter,
 	.cpl                 = emulator_get_cpl,
 	.get_dr              = emulator_get_dr,
 	.set_dr              = emulator_set_dr,

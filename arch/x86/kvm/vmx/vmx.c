@@ -5507,6 +5507,11 @@ static int handle_cr(struct kvm_vcpu *vcpu)
 	case 0: /* mov to cr */
 		val = kvm_register_read(vcpu, reg);
 		trace_kvm_cr_write(cr, val);
+
+		ret = kvm_check_cr(vcpu, cr, KVM_X86_REG_WRITE, val);
+		if (ret != 0)
+			return 0;
+
 		switch (cr) {
 		case 0:
 			err = handle_set_cr0(vcpu, val);
@@ -5547,15 +5552,20 @@ static int handle_cr(struct kvm_vcpu *vcpu)
 			WARN_ON_ONCE(enable_unrestricted_guest);
 
 			val = kvm_read_cr3(vcpu);
-			kvm_register_write(vcpu, reg, val);
-			trace_kvm_cr_read(cr, val);
-			return kvm_skip_emulated_instruction(vcpu);
+			break;
+
 		case 8:
 			val = kvm_get_cr8(vcpu);
-			kvm_register_write(vcpu, reg, val);
-			trace_kvm_cr_read(cr, val);
-			return kvm_skip_emulated_instruction(vcpu);
+			break;
 		}
+
+		ret = kvm_check_cr(vcpu, cr, KVM_X86_REG_READ, val);
+		if (ret != 0)
+			return 0;
+
+		kvm_register_write(vcpu, reg, val);
+		trace_kvm_cr_read(cr, val);
+		return kvm_skip_emulated_instruction(vcpu);
 		break;
 	case 3: /* lmsw */
 		val = (exit_qualification >> LMSW_SOURCE_DATA_SHIFT) & 0x0f;

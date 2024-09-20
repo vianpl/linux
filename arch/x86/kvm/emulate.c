@@ -3274,8 +3274,9 @@ static int em_cr_write(struct x86_emulate_ctxt *ctxt)
 	int cr_num = ctxt->modrm_reg;
 	int r;
 
-	if (ctxt->ops->set_cr(ctxt, cr_num, ctxt->src.val))
-		return emulate_gp(ctxt, 0);
+	r = ctxt->ops->set_cr_with_filter(ctxt, cr_num, ctxt->src.val);
+	if (r)
+		return r;
 
 	/* Disable writeback. */
 	ctxt->dst.type = OP_NONE;
@@ -3430,7 +3431,7 @@ static int em_clts(struct x86_emulate_ctxt *ctxt)
 
 	cr0 = ctxt->ops->get_cr(ctxt, 0);
 	cr0 &= ~X86_CR0_TS;
-	ctxt->ops->set_cr(ctxt, 0, cr0);
+	ctxt->ops->set_cr_with_filter(ctxt, 0, cr0);
 	return X86EMUL_CONTINUE;
 }
 
@@ -3517,7 +3518,9 @@ static int em_lidt(struct x86_emulate_ctxt *ctxt)
 
 static int em_smsw(struct x86_emulate_ctxt *ctxt)
 {
-	if ((ctxt->ops->get_cr(ctxt, 4) & X86_CR4_UMIP) &&
+	ulong cr0 = 0;
+	ctxt->ops->get_cr_with_filter(ctxt, 4, &cr0);
+	if ((cr0 & X86_CR4_UMIP) &&
 	    ctxt->ops->cpl(ctxt) > 0)
 		return emulate_gp(ctxt, 0);
 
@@ -3529,8 +3532,8 @@ static int em_smsw(struct x86_emulate_ctxt *ctxt)
 
 static int em_lmsw(struct x86_emulate_ctxt *ctxt)
 {
-	ctxt->ops->set_cr(ctxt, 0, (ctxt->ops->get_cr(ctxt, 0) & ~0x0eul)
-			  | (ctxt->src.val & 0x0f));
+	ctxt->ops->set_cr_with_filter(ctxt, 0,
+				      (ctxt->ops->get_cr(ctxt, 0) & ~0x0eul) | (ctxt->src.val & 0x0f));
 	ctxt->dst.type = OP_NONE;
 	return X86EMUL_CONTINUE;
 }
@@ -5410,7 +5413,8 @@ twobyte_insn:
 	case 0x1f:		/* nop */
 		break;
 	case 0x20: /* mov cr, reg */
-		ctxt->dst.val = ops->get_cr(ctxt, ctxt->modrm_reg);
+		rc = ops->get_cr_with_filter(ctxt, ctxt->modrm_reg,
+					     &ctxt->dst.val);
 		break;
 	case 0x21: /* mov from dr to reg */
 		ctxt->dst.val = ops->get_dr(ctxt, ctxt->modrm_reg);
