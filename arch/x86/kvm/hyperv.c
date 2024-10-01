@@ -2134,26 +2134,21 @@ static u64 kvm_hv_flush_tlb(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 	 * analyze it here, flush TLB regardless of the specified address space.
 	 */
 	if (all_cpus && !is_guest_mode(vcpu)) {
-		kvm_for_each_vcpu(i, v, kvm) {
-			tlb_flush_fifo = kvm_hv_get_tlb_flush_fifo(v, false);
-			hv_tlb_flush_enqueue(v, tlb_flush_fifo,
-					     tlb_flush_entries, hc->rep_cnt);
-		}
+		bitmap_zero(vcpu_mask, KVM_MAX_VCPUS);
 
-		kvm_make_all_cpus_request(kvm, KVM_REQ_HV_TLB_FLUSH);
+		kvm_for_each_vcpu(i, v, kvm) {
+			__set_bit(i, vcpu_mask);
+		}
 	} else if (!is_guest_mode(vcpu)) {
 		sparse_set_to_vcpu_mask(kvm, sparse_banks, valid_bank_mask, vcpu_mask);
 
 		for_each_set_bit(i, vcpu_mask, KVM_MAX_VCPUS) {
 			v = kvm_get_vcpu(kvm, i);
-			if (!v)
+			if (!v) {
+				__clear_bit(i, vcpu_mask);
 				continue;
-			tlb_flush_fifo = kvm_hv_get_tlb_flush_fifo(v, false);
-			hv_tlb_flush_enqueue(v, tlb_flush_fifo,
-					     tlb_flush_entries, hc->rep_cnt);
+			}
 		}
-
-		kvm_make_vcpus_request_mask(kvm, KVM_REQ_HV_TLB_FLUSH, vcpu_mask);
 	} else {
 		struct kvm_vcpu_hv *hv_v;
 
@@ -2181,13 +2176,18 @@ static u64 kvm_hv_flush_tlb(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 				continue;
 
 			__set_bit(i, vcpu_mask);
-			tlb_flush_fifo = kvm_hv_get_tlb_flush_fifo(v, true);
-			hv_tlb_flush_enqueue(v, tlb_flush_fifo,
-					     tlb_flush_entries, hc->rep_cnt);
 		}
-
-		kvm_make_vcpus_request_mask(kvm, KVM_REQ_HV_TLB_FLUSH, vcpu_mask);
 	}
+
+	for_each_set_bit(i, vcpu_mask, KVM_MAX_VCPUS) {
+		v = kvm_get_vcpu(kvm, i);
+
+		tlb_flush_fifo = kvm_hv_get_tlb_flush_fifo(v, is_guest_mode(vcpu));
+		hv_tlb_flush_enqueue(v, tlb_flush_fifo,
+				     tlb_flush_entries, hc->rep_cnt);
+	}
+
+	kvm_make_vcpus_request_mask(kvm, KVM_REQ_HV_TLB_FLUSH, vcpu_mask);
 
 ret_success:
 	/* We always do full TLB flush, set 'Reps completed' = 'Rep Count' */
