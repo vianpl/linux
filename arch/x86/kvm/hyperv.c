@@ -2137,6 +2137,9 @@ static u64 kvm_hv_flush_tlb(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 		bitmap_zero(vcpu_mask, KVM_MAX_VCPUS);
 
 		kvm_for_each_vcpu(i, v, kvm) {
+			if (READ_ONCE(v->arch.hyperv->tlb_flush_inhibit))
+				goto ret_suspend;
+
 			__set_bit(i, vcpu_mask);
 		}
 	} else if (!is_guest_mode(vcpu)) {
@@ -2148,6 +2151,9 @@ static u64 kvm_hv_flush_tlb(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 				__clear_bit(i, vcpu_mask);
 				continue;
 			}
+
+			if (READ_ONCE(v->arch.hyperv->tlb_flush_inhibit))
+				goto ret_suspend;
 		}
 	} else {
 		struct kvm_vcpu_hv *hv_v;
@@ -2175,6 +2181,9 @@ static u64 kvm_hv_flush_tlb(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 						    sparse_banks))
 				continue;
 
+			if (READ_ONCE(v->arch.hyperv->tlb_flush_inhibit))
+				goto ret_suspend;
+
 			__set_bit(i, vcpu_mask);
 		}
 	}
@@ -2193,6 +2202,9 @@ ret_success:
 	/* We always do full TLB flush, set 'Reps completed' = 'Rep Count' */
 	return (u64)HV_STATUS_SUCCESS |
 		((u64)hc->rep_cnt << HV_HYPERCALL_REP_COMP_OFFSET);
+ret_suspend:
+	kvm_hv_vcpu_suspend_tlb_flush(vcpu, v->vcpu_id);
+	return -EBUSY;
 }
 
 static void kvm_hv_send_ipi_to_many(struct kvm *kvm, u32 vector,
@@ -2379,6 +2391,13 @@ static int kvm_hv_hypercall_complete(struct kvm_vcpu *vcpu, u64 result)
 {
 	u32 tlb_lock_count = 0;
 	int ret;
+
+	/*
+	 * Reached when the hyper-call resulted in a suspension of the vCPU.
+	 * The instruction will be re-tried once the vCPU is unsuspended.
+	 */
+	if (kvm_hv_vcpu_suspended(vcpu))
+		return 1;
 
 	if (hv_result_success(result) && is_guest_mode(vcpu) &&
 	    kvm_hv_is_tlb_flush_hcall(vcpu) &&
@@ -2919,6 +2938,9 @@ int kvm_get_hv_cpuid(struct kvm_vcpu *vcpu, struct kvm_cpuid2 *cpuid,
 
 void kvm_hv_vcpu_suspend_tlb_flush(struct kvm_vcpu *vcpu, int vcpu_id)
 {
+	RCU_LOCKDEP_WARN(!srcu_read_lock_held(&vcpu->kvm->srcu),
+			 "Suspicious Hyper-V TLB flush inhibit usage\n");
+
 	/* waiting_on's store should happen before suspended's */
 	WRITE_ONCE(vcpu->arch.hyperv->waiting_on, vcpu_id);
 	WRITE_ONCE(vcpu->arch.hyperv->suspended, true);

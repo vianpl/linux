@@ -699,6 +699,8 @@ struct kvm_vcpu_hv {
 
 	bool suspended;
 	int waiting_on;
+
+	int tlb_flush_inhibit;
 };
 
 struct kvm_hypervisor_cpuid {
