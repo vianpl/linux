@@ -2944,6 +2944,8 @@ void kvm_hv_vcpu_suspend_tlb_flush(struct kvm_vcpu *vcpu, int vcpu_id)
 	/* waiting_on's store should happen before suspended's */
 	WRITE_ONCE(vcpu->arch.hyperv->waiting_on, vcpu_id);
 	WRITE_ONCE(vcpu->arch.hyperv->suspended, true);
+
+	trace_kvm_hv_vcpu_suspend_tlb_flush(vcpu->vcpu_id, vcpu_id);
 }
 
 void kvm_hv_vcpu_unsuspend_tlb_flush(struct kvm_vcpu *vcpu)
@@ -2962,6 +2964,8 @@ void kvm_hv_vcpu_unsuspend_tlb_flush(struct kvm_vcpu *vcpu)
 			WRITE_ONCE(v->arch.hyperv->waiting_on, -1);
 			WRITE_ONCE(v->arch.hyperv->suspended, false);
 			__set_bit(i, vcpu_mask);
+
+			trace_kvm_hv_vcpu_unsuspend_tlb_flush(v->vcpu_id);
 		}
 	}
 

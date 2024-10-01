@@ -1871,6 +1871,45 @@ TRACE_EVENT(kvm_rmp_fault,
 		  __entry->error_code, __entry->rmp_level, __entry->psmash_ret)
 );
 
+/*
+ * Tracepoint for Hyper-V TlbFlushInhibit suspension
+ */
+TRACE_EVENT(kvm_hv_vcpu_suspend_tlb_flush,
+	TP_PROTO(int vcpu_id, int waiting_on),
+	TP_ARGS(vcpu_id, waiting_on),
+
+	TP_STRUCT__entry(
+		__field(int, vcpu_id)
+		__field(int, waiting_on)
+	),
+
+	TP_fast_assign(
+		__entry->vcpu_id  = vcpu_id;
+		__entry->waiting_on = waiting_on;
+	),
+
+	TP_printk("suspending vcpu %u waiting on %u",
+		  __entry->vcpu_id, __entry->waiting_on)
+);
+
+/*
+ * Tracepoint for Hyper-V TlbFlushInhibit unsuspension
+ */
+TRACE_EVENT(kvm_hv_vcpu_unsuspend_tlb_flush,
+	TP_PROTO(int vcpu_id),
+	TP_ARGS(vcpu_id),
+	TP_STRUCT__entry(
+		__field(int, vcpu_id)
+	),
+
+	TP_fast_assign(
+		__entry->vcpu_id  = vcpu_id;
+	),
+
+	TP_printk("unsuspending vcpu %u",
+		  __entry->vcpu_id)
+);
+
 #endif /* _TRACE_KVM_H */
 
 #undef TRACE_INCLUDE_PATH
