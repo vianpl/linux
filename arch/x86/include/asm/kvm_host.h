@@ -1181,6 +1181,18 @@ struct kvm_x86_msr_filter {
 	struct msr_bitmap_range ranges[16];
 };
 
+#define KVM_X86_REG_READ 0b01
+#define KVM_X86_REG_WRITE 0b10
+
+struct kvm_x86_reg_filter {
+	u8  crs[16];
+	unsigned xcr0:2;
+	unsigned ldtr:2;
+	unsigned tr:2;
+	unsigned gdtr:2;
+	unsigned idtr:2;
+};
+
 struct kvm_x86_pmu_event_filter {
 	__u32 action;
 	__u32 nevents;
@@ -1436,6 +1448,8 @@ struct kvm_arch {
 	/* Deflect RDMSR and WRMSR to user space when they trigger a #GP */
 	u32 user_space_msr_mask;
 	struct kvm_x86_msr_filter __rcu *msr_filter;
+
+	struct kvm_x86_reg_filter reg_filter;
 
 	u32 hypercall_exit_enabled;
 
@@ -2084,6 +2098,8 @@ int kvm_emulate_halt(struct kvm_vcpu *vcpu);
 int kvm_emulate_halt_noskip(struct kvm_vcpu *vcpu);
 int kvm_emulate_ap_reset_hold(struct kvm_vcpu *vcpu);
 int kvm_emulate_wbinvd(struct kvm_vcpu *vcpu);
+
+int kvm_check_cr(struct kvm_vcpu *vcpu, int cr, u8 mode, u64 value);
 
 void kvm_get_segment(struct kvm_vcpu *vcpu, struct kvm_segment *var, int seg);
 void kvm_set_segment(struct kvm_vcpu *vcpu, struct kvm_segment *var, int seg);

@@ -1045,6 +1045,79 @@ bool kvm_require_dr(struct kvm_vcpu *vcpu, int dr)
 }
 EXPORT_SYMBOL_GPL(kvm_require_dr);
 
+static int complete_emulated_rdreg(struct kvm_vcpu *vcpu)
+{
+	if (vcpu->run->reg.error)
+		return kvm_skip_emulated_instruction(vcpu);
+
+	int r = 0;
+
+	switch (vcpu->run->reg.reg) {
+	case KVM_X86_REG_CR(3): {
+		ulong t = kvm_read_cr3(vcpu);
+		kvm_set_cr3(vcpu, vcpu->run->reg.data);
+		r = kvm_emulate_instruction(vcpu, 0);
+		kvm_set_cr3(vcpu, t);
+		break;
+	}
+	case KVM_X86_REG_CR(8): {
+		ulong t = kvm_get_cr8(vcpu);
+		kvm_set_cr8(vcpu, vcpu->run->reg.data);
+		r = kvm_emulate_instruction(vcpu, 0);
+		kvm_set_cr8(vcpu, t);
+		break;
+	}
+	}
+
+	return r;
+}
+
+static int complete_emulated_wrreg(struct kvm_vcpu *vcpu)
+{
+	if (vcpu->run->reg.error)
+		return kvm_skip_emulated_instruction(vcpu);
+
+	int r = 0;
+
+	switch (vcpu->run->reg.reg) {
+	case KVM_X86_REG_CR(0): {
+		kvm_set_cr0(vcpu, vcpu->run->reg.data);
+		r = kvm_skip_emulated_instruction(vcpu);
+		break;
+	}
+	case KVM_X86_REG_CR(3): {
+		kvm_set_cr3(vcpu, vcpu->run->reg.data);
+		r = kvm_skip_emulated_instruction(vcpu);
+		break;
+	}
+	case KVM_X86_REG_CR(4): {
+		kvm_set_cr4(vcpu, vcpu->run->reg.data);
+		r = kvm_skip_emulated_instruction(vcpu);
+		break;
+	}
+	case KVM_X86_REG_CR(8): {
+		kvm_set_cr8(vcpu, vcpu->run->reg.data);
+		r = kvm_skip_emulated_instruction(vcpu);
+		break;
+	}
+	}
+
+	return r;
+}
+
+static int kvm_reg_user_space(struct kvm_vcpu *vcpu, u64 reg, u64 value,
+			      u32 exit_reason,
+			      int (*completion)(struct kvm_vcpu *vcpu))
+{
+	vcpu->run->exit_reason = exit_reason;
+	vcpu->run->reg.reason = KVM_REG_EXIT_REASON_FILTER;
+	vcpu->run->reg.reg = reg;
+	vcpu->run->reg.data = value;
+	vcpu->arch.complete_userspace_io = completion;
+
+	return 1;
+}
+
 static inline u64 pdptr_rsvd_bits(struct kvm_vcpu *vcpu)
 {
 	return vcpu->arch.reserved_gpa_bits | rsvd_bits(5, 8) | rsvd_bits(1, 2);
@@ -8291,6 +8364,31 @@ static int emulator_set_dr(struct x86_emulate_ctxt *ctxt, int dr,
 static u64 mk_cr_64(u64 curr_cr, u32 new_val)
 {
 	return (curr_cr & ~((1ULL << 32) - 1)) | new_val;
+}
+
+int kvm_check_cr(struct kvm_vcpu *vcpu, int cr, u8 mode, u64 value)
+{
+	struct kvm_x86_reg_filter *filter = &vcpu->kvm->arch.reg_filter;
+
+	if (filter->crs[cr] & mode) {
+		if (mode == KVM_X86_REG_WRITE) {
+			if (kvm_reg_user_space(vcpu,
+					       KVM_X86_REG_CR(cr), value,
+					       KVM_EXIT_WRITE_REG,
+					       complete_emulated_wrreg))
+				return X86EMUL_IO_NEEDED;
+		} else {
+			if (kvm_reg_user_space(vcpu,
+					       KVM_X86_REG_CR(cr), value,
+					       KVM_EXIT_READ_REG,
+					       complete_emulated_rdreg))
+				return X86EMUL_IO_NEEDED;
+		}
+
+		return X86EMUL_PROPAGATE_FAULT;
+	}
+
+	return 0;
 }
 
 static unsigned long emulator_get_cr(struct x86_emulate_ctxt *ctxt, int cr)
