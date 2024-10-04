@@ -971,6 +971,7 @@ int kvm_hv_vcpu_init(struct kvm_vcpu *vcpu)
 
 	vcpu->arch.hyperv = hv_vcpu;
 	hv_vcpu->vcpu = vcpu;
+	hv_vcpu->waiting_on = -1;
 
 	synic_init(&hv_vcpu->synic);
 
@@ -2134,26 +2135,27 @@ static u64 kvm_hv_flush_tlb(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 	 * analyze it here, flush TLB regardless of the specified address space.
 	 */
 	if (all_cpus && !is_guest_mode(vcpu)) {
-		kvm_for_each_vcpu(i, v, kvm) {
-			tlb_flush_fifo = kvm_hv_get_tlb_flush_fifo(v, false);
-			hv_tlb_flush_enqueue(v, tlb_flush_fifo,
-					     tlb_flush_entries, hc->rep_cnt);
-		}
+		bitmap_zero(vcpu_mask, KVM_MAX_VCPUS);
 
-		kvm_make_all_cpus_request(kvm, KVM_REQ_HV_TLB_FLUSH);
+		kvm_for_each_vcpu(i, v, kvm) {
+			if (READ_ONCE(v->arch.hyperv->tlb_flush_inhibit))
+				goto ret_suspend;
+
+			__set_bit(i, vcpu_mask);
+		}
 	} else if (!is_guest_mode(vcpu)) {
 		sparse_set_to_vcpu_mask(kvm, sparse_banks, valid_bank_mask, vcpu_mask);
 
 		for_each_set_bit(i, vcpu_mask, KVM_MAX_VCPUS) {
 			v = kvm_get_vcpu(kvm, i);
-			if (!v)
+			if (!v) {
+				__clear_bit(i, vcpu_mask);
 				continue;
-			tlb_flush_fifo = kvm_hv_get_tlb_flush_fifo(v, false);
-			hv_tlb_flush_enqueue(v, tlb_flush_fifo,
-					     tlb_flush_entries, hc->rep_cnt);
-		}
+			}
 
-		kvm_make_vcpus_request_mask(kvm, KVM_REQ_HV_TLB_FLUSH, vcpu_mask);
+			if (READ_ONCE(v->arch.hyperv->tlb_flush_inhibit))
+				goto ret_suspend;
+		}
 	} else {
 		struct kvm_vcpu_hv *hv_v;
 
@@ -2180,19 +2182,30 @@ static u64 kvm_hv_flush_tlb(struct kvm_vcpu *vcpu, struct kvm_hv_hcall *hc)
 						    sparse_banks))
 				continue;
 
-			__set_bit(i, vcpu_mask);
-			tlb_flush_fifo = kvm_hv_get_tlb_flush_fifo(v, true);
-			hv_tlb_flush_enqueue(v, tlb_flush_fifo,
-					     tlb_flush_entries, hc->rep_cnt);
-		}
+			if (READ_ONCE(v->arch.hyperv->tlb_flush_inhibit))
+				goto ret_suspend;
 
-		kvm_make_vcpus_request_mask(kvm, KVM_REQ_HV_TLB_FLUSH, vcpu_mask);
+			__set_bit(i, vcpu_mask);
+		}
 	}
+
+	for_each_set_bit(i, vcpu_mask, KVM_MAX_VCPUS) {
+		v = kvm_get_vcpu(kvm, i);
+
+		tlb_flush_fifo = kvm_hv_get_tlb_flush_fifo(v, is_guest_mode(vcpu));
+		hv_tlb_flush_enqueue(v, tlb_flush_fifo,
+				     tlb_flush_entries, hc->rep_cnt);
+	}
+
+	kvm_make_vcpus_request_mask(kvm, KVM_REQ_HV_TLB_FLUSH, vcpu_mask);
 
 ret_success:
 	/* We always do full TLB flush, set 'Reps completed' = 'Rep Count' */
 	return (u64)HV_STATUS_SUCCESS |
 		((u64)hc->rep_cnt << HV_HYPERCALL_REP_COMP_OFFSET);
+ret_suspend:
+	kvm_hv_vcpu_suspend_tlb_flush(vcpu, v->vcpu_id);
+	return -EBUSY;
 }
 
 static void kvm_hv_send_ipi_to_many(struct kvm *kvm, u32 vector,
@@ -2379,6 +2392,13 @@ static int kvm_hv_hypercall_complete(struct kvm_vcpu *vcpu, u64 result)
 {
 	u32 tlb_lock_count = 0;
 	int ret;
+
+	/*
+	 * Reached when the hyper-call resulted in a suspension of the vCPU.
+	 * The instruction will be re-tried once the vCPU is unsuspended.
+	 */
+	if (kvm_hv_vcpu_suspended(vcpu))
+		return 1;
 
 	if (hv_result_success(result) && is_guest_mode(vcpu) &&
 	    kvm_hv_is_tlb_flush_hcall(vcpu) &&
@@ -2951,4 +2971,40 @@ int kvm_get_hv_cpuid(struct kvm_vcpu *vcpu, struct kvm_cpuid2 *cpuid,
 		return -EFAULT;
 
 	return 0;
+}
+
+void kvm_hv_vcpu_suspend_tlb_flush(struct kvm_vcpu *vcpu, int vcpu_id)
+{
+	RCU_LOCKDEP_WARN(!srcu_read_lock_held(&vcpu->kvm->srcu),
+			 "Suspicious Hyper-V TLB flush inhibit usage\n");
+
+	/* waiting_on's store should happen before suspended's */
+	WRITE_ONCE(vcpu->arch.hyperv->waiting_on, vcpu_id);
+	WRITE_ONCE(vcpu->arch.hyperv->suspended, true);
+
+	trace_kvm_hv_vcpu_suspend_tlb_flush(vcpu->vcpu_id, vcpu_id);
+}
+
+void kvm_hv_vcpu_unsuspend_tlb_flush(struct kvm_vcpu *vcpu)
+{
+	DECLARE_BITMAP(vcpu_mask, KVM_MAX_VCPUS);
+	struct kvm_vcpu_hv *vcpu_hv;
+	struct kvm_vcpu *v;
+	unsigned long i;
+
+	kvm_for_each_vcpu(i, v, vcpu->kvm) {
+		vcpu_hv = to_hv_vcpu(v);
+
+		if (kvm_hv_vcpu_suspended(v) &&
+		    READ_ONCE(vcpu_hv->waiting_on) == vcpu->vcpu_id) {
+			/* waiting_on's store should happen before suspended's */
+			WRITE_ONCE(v->arch.hyperv->waiting_on, -1);
+			WRITE_ONCE(v->arch.hyperv->suspended, false);
+			__set_bit(i, vcpu_mask);
+
+			trace_kvm_hv_vcpu_unsuspend_tlb_flush(v->vcpu_id);
+		}
+	}
+
+	kvm_make_vcpus_request_mask(vcpu->kvm, KVM_REQ_EVENT, vcpu_mask);
 }

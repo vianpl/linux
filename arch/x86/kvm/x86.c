@@ -135,6 +135,8 @@ static void store_regs(struct kvm_vcpu *vcpu);
 static int sync_regs(struct kvm_vcpu *vcpu);
 static int kvm_vcpu_do_singlestep(struct kvm_vcpu *vcpu);
 
+static inline bool kvm_hv_vcpu_suspended(struct kvm_vcpu *vcpu);
+
 static int __set_sregs2(struct kvm_vcpu *vcpu, struct kvm_sregs2 *sregs2);
 static void __get_sregs2(struct kvm_vcpu *vcpu, struct kvm_sregs2 *sregs2);
 
@@ -4643,6 +4645,7 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 	case KVM_CAP_HYPERV_ENFORCE_CPUID:
 	case KVM_CAP_SYS_HYPERV_CPUID:
 	case KVM_CAP_HYPERV_HCALL_FAULT_EXIT:
+	case KVM_CAP_HYPERV_TLB_FLUSH_INHIBIT:
 #endif
 	case KVM_CAP_PCI_SEGMENT:
 	case KVM_CAP_DEBUGREGS:
@@ -5856,6 +5859,31 @@ static int kvm_vcpu_ioctl_enable_cap(struct kvm_vcpu *vcpu,
 	}
 }
 
+static int kvm_vcpu_ioctl_set_tlb_flush_inhibit(struct kvm_vcpu *vcpu,
+						struct kvm_hyperv_tlb_flush_inhibit *set)
+{
+	if (set->inhibit == READ_ONCE(vcpu->arch.hyperv->tlb_flush_inhibit))
+		return 0;
+
+	WRITE_ONCE(vcpu->arch.hyperv->tlb_flush_inhibit, set->inhibit);
+
+	/*
+	 * synchronize_srcu() ensures that:
+	 * - On inhibit, all concurrent TLB flushes finished before this ioctl
+	 *   exits.
+	 * - On uninhibit, there are no longer vCPUs being suspended due to this
+	 *   inhibit.
+	 * This function can't race with itself, because vCPU IOCTLs are
+	 * serialized, so if the inhibit bit is already the desired value this
+	 * synchronization has already happened.
+	 */
+	synchronize_srcu(&vcpu->kvm->srcu);
+	if (!set->inhibit)
+		kvm_hv_vcpu_unsuspend_tlb_flush(vcpu);
+
+	return 0;
+}
+
 long kvm_arch_vcpu_ioctl(struct file *filp,
 			 unsigned int ioctl, unsigned long arg)
 {
@@ -6309,6 +6337,17 @@ long kvm_arch_vcpu_ioctl(struct file *filp,
 	case KVM_SET_DEVICE_ATTR:
 		r = kvm_vcpu_ioctl_device_attr(vcpu, ioctl, argp);
 		break;
+#ifdef CONFIG_KVM_HYPERV
+	case KVM_HYPERV_SET_TLB_FLUSH_INHIBIT: {
+		struct kvm_hyperv_tlb_flush_inhibit set;
+
+		r = -EFAULT;
+		if (copy_from_user(&set, argp, sizeof(set)))
+			goto out;
+		r = kvm_vcpu_ioctl_set_tlb_flush_inhibit(vcpu, &set);
+		break;
+	}
+#endif
 	default:
 		r = -EINVAL;
 	}
@@ -11137,7 +11176,7 @@ out:
 static bool kvm_vcpu_running(struct kvm_vcpu *vcpu)
 {
 	return (vcpu->arch.mp_state == KVM_MP_STATE_RUNNABLE &&
-		!vcpu->arch.apf.halted);
+		!vcpu->arch.apf.halted && !kvm_hv_vcpu_suspended(vcpu));
 }
 
 static bool kvm_vcpu_has_events(struct kvm_vcpu *vcpu)

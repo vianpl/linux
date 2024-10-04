@@ -265,6 +265,15 @@ static inline void kvm_hv_nested_transtion_tlb_flush(struct kvm_vcpu *vcpu,
 }
 
 int kvm_hv_vcpu_flush_tlb(struct kvm_vcpu *vcpu);
+
+static inline bool kvm_hv_vcpu_suspended(struct kvm_vcpu *vcpu)
+{
+	return vcpu->arch.hyperv_enabled &&
+	       READ_ONCE(vcpu->arch.hyperv->suspended);
+}
+
+void kvm_hv_vcpu_suspend_tlb_flush(struct kvm_vcpu *vcpu, int vcpu_id);
+void kvm_hv_vcpu_unsuspend_tlb_flush(struct kvm_vcpu *vcpu);
 #else /* CONFIG_KVM_HYPERV */
 static inline void kvm_hv_setup_tsc_page(struct kvm *kvm,
 					 struct pvclock_vcpu_time_info *hv_clock) {}
@@ -321,6 +330,14 @@ static inline u32 kvm_hv_get_vpindex(struct kvm_vcpu *vcpu)
 	return vcpu->vcpu_idx;
 }
 static inline void kvm_hv_nested_transtion_tlb_flush(struct kvm_vcpu *vcpu, bool tdp_enabled) {}
+
+static inline bool kvm_hv_vcpu_suspended(struct kvm_vcpu *vcpu)
+{
+	return false;
+}
+
+static inline void kvm_hv_vcpu_suspend_tlb_flush(struct kvm_vcpu *vcpu, int vcpu_id) {}
+static inline void kvm_hv_vcpu_unsuspend_tlb_flush(struct kvm_vcpu *vcpu) {}
 #endif /* CONFIG_KVM_HYPERV */
 
 #endif /* __ARCH_X86_KVM_HYPERV_H__ */
