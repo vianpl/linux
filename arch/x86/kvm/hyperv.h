@@ -284,6 +284,7 @@ static inline bool kvm_hv_vcpu_suspended(struct kvm_vcpu *vcpu)
 
 void kvm_hv_vcpu_suspend_tlb_flush(struct kvm_vcpu *vcpu, int vcpu_id);
 void kvm_hv_vcpu_unsuspend_tlb_flush(struct kvm_vcpu *vcpu);
+void dump_ftrace_vcpu_hyperv(struct kvm_vcpu *vcpu);
 #else /* CONFIG_KVM_HYPERV */
 static inline void kvm_hv_setup_tsc_page(struct kvm *kvm,
 					 struct pvclock_vcpu_time_info *hv_clock) {}
