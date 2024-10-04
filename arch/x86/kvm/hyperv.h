@@ -265,6 +265,16 @@ static inline void kvm_hv_nested_transtion_tlb_flush(struct kvm_vcpu *vcpu,
 }
 
 int kvm_hv_vcpu_flush_tlb(struct kvm_vcpu *vcpu);
+static inline bool kvm_hv_cpuid_vsm_enabled(struct kvm_vcpu *vcpu)
+{
+	struct kvm_vcpu_hv *hv_vcpu = to_hv_vcpu(vcpu);
+
+	return hv_vcpu && (hv_vcpu->cpuid_cache.features_ebx & HV_ACCESS_VSM);
+}
+static inline bool kvm_hv_vcpu_is_idle_vtl(struct kvm_vcpu *vcpu)
+{
+	return vcpu->arch.mp_state == KVM_MP_STATE_HV_INACTIVE_VTL;
+}
 
 static inline bool kvm_hv_vcpu_suspended(struct kvm_vcpu *vcpu)
 {
@@ -330,6 +340,14 @@ static inline u32 kvm_hv_get_vpindex(struct kvm_vcpu *vcpu)
 	return vcpu->vcpu_idx;
 }
 static inline void kvm_hv_nested_transtion_tlb_flush(struct kvm_vcpu *vcpu, bool tdp_enabled) {}
+static inline bool kvm_hv_cpuid_vsm_enabled(struct kvm_vcpu *vcpu)
+{
+	return false;
+}
+static inline bool kvm_hv_vcpu_is_idle_vtl(struct kvm_vcpu *vcpu)
+{
+	return false;
+}
 
 static inline bool kvm_hv_vcpu_suspended(struct kvm_vcpu *vcpu)
 {
