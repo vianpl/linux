@@ -186,6 +186,8 @@ struct kvm_xen_exit {
 #define KVM_EXIT_NOTIFY           37
 #define KVM_EXIT_LOONGARCH_IOCSR  38
 #define KVM_EXIT_MEMORY_FAULT     39
+#define KVM_EXIT_READ_REG         40
+#define KVM_EXIT_WRITE_REG        41
 
 /* For KVM_EXIT_INTERNAL_ERROR */
 /* Emulate instruction failed. */
@@ -427,6 +429,16 @@ struct kvm_run {
 			__u32 index; /* kernel -> user */
 			__u64 data; /* kernel <-> user */
 		} msr;
+		/* KVM_EXIT_READ_REG / KVM_EXIT_WRITE_REG */
+		struct {
+			__u8  error; /* user -> kernel */
+			__u8  pad0[7];
+			__u64 data; /* kernel -> user */
+			__u64 reg; /* kernel -> user */
+#define KVM_REG_EXIT_REASON_FILTER	(1 << 0)
+			__u32 reason; /* kernel -> user */
+			__u32 pad1;
+		} reg;
 		/* KVM_EXIT_XEN */
 		struct kvm_xen_exit xen;
 		/* KVM_EXIT_RISCV_SBI */
@@ -1639,6 +1651,17 @@ struct kvm_hyperv_tlb_flush_inhibit {
 #define KVM_HYPERV_INHIBIT_TLB_FLUSH 1
 	__u8  inhibit;
 	__u8  reserved[5];
+};
+
+#define KVM_SET_REGISTER_FILTER	_IOW(KVMIO,  0xf7, struct kvm_register_filter)
+
+struct kvm_register_filter {
+	__u64 nmregs;
+#define KVM_REG_READ 0b01
+#define KVM_REG_WRITE 0b10
+	__u8  mask;
+	__u8  padding[7];
+	__u64 *regs;
 };
 
 #endif /* __LINUX_KVM_H */

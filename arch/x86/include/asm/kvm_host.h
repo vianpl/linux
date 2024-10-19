@@ -1197,6 +1197,19 @@ struct kvm_x86_msr_filter {
 	struct msr_bitmap_range ranges[16];
 };
 
+#define KVM_X86_REG_READ 0b01
+#define KVM_X86_REG_WRITE 0b10
+
+struct kvm_x86_reg_filter {
+	u8 crs[16];
+	u8 drs[8];
+	unsigned xcr0:2;
+	unsigned ldtr:2;
+	unsigned tr:2;
+	unsigned gdtr:2;
+	unsigned idtr:2;
+};
+
 struct kvm_x86_pmu_event_filter {
 	__u32 action;
 	__u32 nevents;
@@ -1453,6 +1466,8 @@ struct kvm_arch {
 	u32 user_space_msr_mask;
 	struct kvm_x86_msr_filter __rcu *msr_filter;
 
+	struct kvm_x86_reg_filter reg_filter;
+
 	u32 hypercall_exit_enabled;
 
 	/* Guest can access the SGX PROVISIONKEY. */
@@ -1689,6 +1704,10 @@ struct kvm_x86_ops {
 	unsigned long (*get_rflags)(struct kvm_vcpu *vcpu);
 	void (*set_rflags)(struct kvm_vcpu *vcpu, unsigned long rflags);
 	bool (*get_if_flag)(struct kvm_vcpu *vcpu);
+
+	void (*filter_cr0)(struct kvm_vcpu *vcpu);
+	void (*filter_cr4)(struct kvm_vcpu *vcpu);
+	void (*filter_desc)(struct kvm_vcpu *vcpu);
 
 	void (*flush_tlb_all)(struct kvm_vcpu *vcpu);
 	void (*flush_tlb_current)(struct kvm_vcpu *vcpu);
@@ -2095,6 +2114,13 @@ int kvm_emulate_halt(struct kvm_vcpu *vcpu);
 int kvm_emulate_halt_noskip(struct kvm_vcpu *vcpu);
 int kvm_emulate_ap_reset_hold(struct kvm_vcpu *vcpu);
 int kvm_emulate_wbinvd(struct kvm_vcpu *vcpu);
+
+int kvm_check_cr(struct kvm_vcpu *vcpu, int cr, u8 mode, u64 value);
+int kvm_check_dr(struct kvm_vcpu *vcpu, int dr, u8 mode, u64 value);
+int kvm_check_desc(struct kvm_vcpu *vcpu, int desc, u8 mode, u64 value);
+
+int kvm_vm_has_dr_filter(struct kvm *vm);
+int kvm_vm_has_desc_filter(struct kvm *vm);
 
 void kvm_get_segment(struct kvm_vcpu *vcpu, struct kvm_segment *var, int seg);
 void kvm_set_segment(struct kvm_vcpu *vcpu, struct kvm_segment *var, int seg);

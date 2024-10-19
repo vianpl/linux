@@ -566,6 +566,13 @@ static inline uint64_t get_cr4(void)
 	return cr4;
 }
 
+static inline void set_cr0(uint64_t cr0)
+{
+	__asm__ __volatile__("mov %[cr0], %%cr0"
+			     :: [cr0]"r"(cr0)
+			     : "memory");
+}
+
 static inline void set_cr4(uint64_t val)
 {
 	__asm__ __volatile__("mov %0, %%cr4" : : "r" (val) : "memory");

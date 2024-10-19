@@ -211,6 +211,8 @@ struct x86_emulate_ops {
 	void (*set_idt)(struct x86_emulate_ctxt *ctxt, struct desc_ptr *dt);
 	ulong (*get_cr)(struct x86_emulate_ctxt *ctxt, int cr);
 	int (*set_cr)(struct x86_emulate_ctxt *ctxt, int cr, ulong val);
+	int (*get_cr_with_filter)(struct x86_emulate_ctxt *ctxt, int cr, ulong *pdata);
+	int (*set_cr_with_filter)(struct x86_emulate_ctxt *ctxt, int cr, ulong val);
 	int (*cpl)(struct x86_emulate_ctxt *ctxt);
 	ulong (*get_dr)(struct x86_emulate_ctxt *ctxt, int dr);
 	int (*set_dr)(struct x86_emulate_ctxt *ctxt, int dr, ulong value);
@@ -509,6 +511,10 @@ enum x86_intercept {
 #elif defined(CONFIG_X86_64)
 #define X86EMUL_MODE_HOST X86EMUL_MODE_PROT64
 #endif
+
+int load_segment_descriptor(struct x86_emulate_ctxt *ctxt,
+			    u16 selector, int seg);
+int load_descriptor_table(struct x86_emulate_ctxt *ctxt, ulong addr, bool lgdt);
 
 int x86_decode_insn(struct x86_emulate_ctxt *ctxt, void *insn, int insn_len, int emulation_type);
 bool x86_page_table_writing_insn(struct x86_emulate_ctxt *ctxt);

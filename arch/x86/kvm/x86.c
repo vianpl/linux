@@ -128,6 +128,7 @@ static u64 __read_mostly cr4_reserved_bits = CR4_RESERVED_BITS;
 #define KVM_X2APIC_API_VALID_FLAGS (KVM_X2APIC_API_USE_32BIT_IDS | \
                                     KVM_X2APIC_API_DISABLE_BROADCAST_QUIRK)
 
+static int __kvm_set_xcr(struct kvm_vcpu *vcpu, u32 index, u64 xcr);
 static void update_cr8_intercept(struct kvm_vcpu *vcpu);
 static void process_nmi(struct kvm_vcpu *vcpu);
 static void __kvm_set_rflags(struct kvm_vcpu *vcpu, unsigned long rflags);
@@ -1048,6 +1049,197 @@ bool kvm_require_dr(struct kvm_vcpu *vcpu, int dr)
 }
 EXPORT_SYMBOL_GPL(kvm_require_dr);
 
+static int complete_emulated_rdreg(struct kvm_vcpu *vcpu)
+{
+	if (vcpu->run->reg.error)
+		return kvm_skip_emulated_instruction(vcpu);
+
+	int r = 0;
+
+	switch (vcpu->run->reg.reg) {
+	case KVM_X86_REG_CR(3): {
+		ulong t = kvm_read_cr3(vcpu);
+		kvm_set_cr3(vcpu, vcpu->run->reg.data);
+		r = kvm_emulate_instruction(vcpu, 0);
+		kvm_set_cr3(vcpu, t);
+		break;
+	}
+	case KVM_X86_REG_CR(8): {
+		ulong t = kvm_get_cr8(vcpu);
+		kvm_set_cr8(vcpu, vcpu->run->reg.data);
+		r = kvm_emulate_instruction(vcpu, 0);
+		kvm_set_cr8(vcpu, t);
+		break;
+	}
+	case KVM_X86_REG_DR(0):
+	case KVM_X86_REG_DR(1):
+	case KVM_X86_REG_DR(2):
+	case KVM_X86_REG_DR(3):
+	case KVM_X86_REG_DR(6):
+	case KVM_X86_REG_DR(7): {
+		int dr = (vcpu->run->reg.reg & KVM_X86_REG_INDEX_MASK) >> KVM_X86_REG_INDEX_SHIFT;
+
+		ulong t = kvm_get_dr(vcpu, dr);
+		kvm_set_dr(vcpu, dr, vcpu->run->reg.data);
+		r = kvm_emulate_instruction(vcpu, 0);
+		kvm_set_dr(vcpu, dr, t);
+		break;
+	}
+	case KVM_X86_REG_LDT: {
+		struct kvm_segment seg, t_seg;
+
+		kvm_get_segment(vcpu, &seg, VCPU_SREG_LDTR);
+		t_seg = seg;
+		seg.selector = vcpu->run->reg.reg;
+
+		kvm_set_segment(vcpu, &seg, VCPU_SREG_LDTR);
+		r = kvm_emulate_instruction(vcpu, 0);
+		kvm_set_segment(vcpu, &t_seg, VCPU_SREG_LDTR);
+		break;
+	}
+	case KVM_X86_REG_TR: {
+		struct kvm_segment seg, t_seg;
+
+		kvm_get_segment(vcpu, &seg, VCPU_SREG_TR);
+		t_seg = seg;
+		seg.selector = vcpu->run->reg.reg;
+
+		kvm_set_segment(vcpu, &seg, VCPU_SREG_TR);
+		r = kvm_emulate_instruction(vcpu, 0);
+		kvm_set_segment(vcpu, &t_seg, VCPU_SREG_TR);
+		break;
+	}
+	case KVM_X86_REG_IDT: {
+		struct kvm_dtable *user_idt = memdup_user((const void *) vcpu->run->reg.reg, sizeof(struct kvm_dtable));
+		struct desc_ptr idt, t_idt;
+
+		kvm_x86_call(get_idt)(vcpu, &idt);
+		t_idt = idt;
+		idt.address = user_idt->base;
+		idt.size = user_idt->limit;
+
+		kvm_x86_call(set_idt)(vcpu, &idt);
+		r = kvm_emulate_instruction(vcpu, 0);
+		kvm_x86_call(set_idt)(vcpu, &t_idt);
+
+		kfree(user_idt);
+		break;
+	}
+	case KVM_X86_REG_GDT: {
+		struct kvm_dtable *user_gdt = memdup_user((const void *) vcpu->run->reg.reg, sizeof(struct kvm_dtable));
+		struct desc_ptr gdt, t_gdt;
+
+		kvm_x86_call(get_gdt)(vcpu, &gdt);
+		t_gdt = gdt;
+		gdt.address = user_gdt->base;
+		gdt.size = user_gdt->limit;
+
+		kvm_x86_call(set_gdt)(vcpu, &gdt);
+		r = kvm_emulate_instruction(vcpu, 0);
+		kvm_x86_call(set_gdt)(vcpu, &t_gdt);
+
+		kfree(user_gdt);
+		break;
+	}
+	}
+
+	return r;
+}
+
+static int complete_emulated_wrreg(struct kvm_vcpu *vcpu)
+{
+	if (vcpu->run->reg.error)
+		return kvm_skip_emulated_instruction(vcpu);
+
+	int r = 0;
+
+	switch (vcpu->run->reg.reg) {
+	case KVM_X86_REG_CR(0): {
+		kvm_set_cr0(vcpu, vcpu->run->reg.data);
+		r = kvm_skip_emulated_instruction(vcpu);
+		break;
+	}
+	case KVM_X86_REG_CR(3): {
+		kvm_set_cr3(vcpu, vcpu->run->reg.data);
+		r = kvm_skip_emulated_instruction(vcpu);
+		break;
+	}
+	case KVM_X86_REG_CR(4): {
+		kvm_set_cr4(vcpu, vcpu->run->reg.data);
+		r = kvm_skip_emulated_instruction(vcpu);
+		break;
+	}
+	case KVM_X86_REG_CR(8): {
+		kvm_set_cr8(vcpu, vcpu->run->reg.data);
+		r = kvm_skip_emulated_instruction(vcpu);
+		break;
+	}
+	case KVM_X86_REG_XCR(0): {
+		if (kvm_x86_call(get_cpl)(vcpu) != 0 ||
+		    __kvm_set_xcr(vcpu, 0, vcpu->run->reg.data)) {
+			kvm_inject_gp(vcpu, 0);
+			r = 1;
+		} else {
+			r = kvm_skip_emulated_instruction(vcpu);
+		}
+		break;
+	}
+	case KVM_X86_REG_DR(0):
+	case KVM_X86_REG_DR(1):
+	case KVM_X86_REG_DR(2):
+	case KVM_X86_REG_DR(3):
+	case KVM_X86_REG_DR(6):
+	case KVM_X86_REG_DR(7): {
+		int dr = (vcpu->run->reg.reg & KVM_X86_REG_INDEX_MASK) >> KVM_X86_REG_INDEX_SHIFT;
+
+		kvm_set_dr(vcpu, dr, vcpu->run->reg.data);
+		r = kvm_skip_emulated_instruction(vcpu);
+		break;
+	}
+	case KVM_X86_REG_LDT: {
+		load_segment_descriptor(vcpu->arch.emulate_ctxt,
+					    vcpu->run->reg.data,
+					    VCPU_SREG_LDTR);
+		r = kvm_skip_emulated_instruction(vcpu);
+		break;
+	}
+	case KVM_X86_REG_TR: {
+		load_segment_descriptor(vcpu->arch.emulate_ctxt,
+					    vcpu->run->reg.data,
+					    VCPU_SREG_TR);
+		r = kvm_skip_emulated_instruction(vcpu);
+		break;
+	}
+	case KVM_X86_REG_IDT: {
+		load_descriptor_table(vcpu->arch.emulate_ctxt,
+				      vcpu->run->reg.data, false);
+		r = kvm_skip_emulated_instruction(vcpu);
+		break;
+	}
+	case KVM_X86_REG_GDT: {
+		load_descriptor_table(vcpu->arch.emulate_ctxt,
+				      vcpu->run->reg.data, true);
+		r = kvm_skip_emulated_instruction(vcpu);
+		break;
+	}
+	}
+
+	return r;
+}
+
+static int kvm_reg_user_space(struct kvm_vcpu *vcpu, u64 reg, u64 value,
+			      u32 exit_reason,
+			      int (*completion)(struct kvm_vcpu *vcpu))
+{
+	vcpu->run->exit_reason = exit_reason;
+	vcpu->run->reg.reason = KVM_REG_EXIT_REASON_FILTER;
+	vcpu->run->reg.reg = reg;
+	vcpu->run->reg.data = value;
+	vcpu->arch.complete_userspace_io = completion;
+
+	return 1;
+}
+
 static inline u64 pdptr_rsvd_bits(struct kvm_vcpu *vcpu)
 {
 	return vcpu->arch.reserved_gpa_bits | rsvd_bits(5, 8) | rsvd_bits(1, 2);
@@ -1307,9 +1499,22 @@ static int __kvm_set_xcr(struct kvm_vcpu *vcpu, u32 index, u64 xcr)
 
 int kvm_emulate_xsetbv(struct kvm_vcpu *vcpu)
 {
+	int index = kvm_rcx_read(vcpu);
+	u64 value = kvm_read_edx_eax(vcpu);
+
+	if (vcpu->kvm->arch.reg_filter.xcr0 & KVM_X86_REG_WRITE) {
+		if (kvm_reg_user_space(vcpu,
+				       KVM_X86_REG_XCR(index), value,
+				       KVM_EXIT_WRITE_REG,
+				       complete_emulated_wrreg))
+			return 0;
+
+		return 0;
+	}
+
 	/* Note, #UD due to CR4.OSXSAVE=0 has priority over the intercept. */
 	if (kvm_x86_call(get_cpl)(vcpu) != 0 ||
-	    __kvm_set_xcr(vcpu, kvm_rcx_read(vcpu), kvm_read_edx_eax(vcpu))) {
+	    __kvm_set_xcr(vcpu, index, value)) {
 		kvm_inject_gp(vcpu, 0);
 		return 1;
 	}
@@ -6982,6 +7187,110 @@ long kvm_arch_vm_compat_ioctl(struct file *filp, unsigned int ioctl,
 }
 #endif
 
+static void kvm_set_all_cr0_guest_host_masks(struct kvm *kvm) {
+	struct kvm_vcpu *vcpu;
+	unsigned long i;
+
+	kvm_for_each_vcpu(i, vcpu, kvm) {
+		static_call(kvm_x86_filter_cr0)(vcpu);
+	}
+}
+
+static void kvm_set_all_cr4_guest_host_masks(struct kvm *kvm) {
+	struct kvm_vcpu *vcpu;
+	unsigned long i;
+
+	kvm_for_each_vcpu(i, vcpu, kvm) {
+		static_call(kvm_x86_filter_cr4)(vcpu);
+	}
+}
+
+static void kvm_filter_all_desc(struct kvm *kvm) {
+	struct kvm_vcpu *vcpu;
+	unsigned long i;
+
+	kvm_for_each_vcpu(i, vcpu, kvm) {
+		static_call(kvm_x86_filter_desc)(vcpu);
+	}
+}
+
+int kvm_arch_vm_ioctl_set_register_filter(struct kvm *kvm,
+					  struct kvm_register_filter *filter)
+{
+	struct kvm_x86_reg_filter old_filter = kvm->arch.reg_filter;
+	int r = 0;
+
+	u64 *regs = memdup_user(filter->regs, filter->nmregs * 8);
+
+	for (u64 i = 0; i < filter->nmregs; i++) {
+		u64 reg = regs[i];
+		u32 index = reg & KVM_X86_REG_INDEX_MASK;
+
+		switch ((reg & KVM_X86_REG_TYPE_MASK) >> KVM_X86_REG_TYPE_SHIFT) {
+		case KVM_X86_REG_TYPE_CR: {
+			if (reg == 1 ||
+			    (index > 4 && index != 8)) {
+				r = -EINVAL;
+				goto fail;
+			}
+
+			if ((reg == 0 || reg == 4) &&
+			    (filter->mask & KVM_X86_REG_READ)) {
+				r = -EOPNOTSUPP;
+				goto fail;
+			}
+
+			kvm->arch.reg_filter.crs[index] = filter->mask & 0x3;
+
+			if (index == 0)
+				kvm_set_all_cr0_guest_host_masks(kvm);
+			else if (index == 4)
+				kvm_set_all_cr4_guest_host_masks(kvm);
+
+			break;
+		}
+		case KVM_X86_REG_TYPE_XCR: {
+			kvm->arch.reg_filter.xcr0 = filter->mask;
+			break;
+		}
+		case KVM_X86_REG_TYPE_DESCRIPTOR_TABLE: {
+			if (index == 0)
+				kvm->arch.reg_filter.ldtr = filter->mask;
+			else if (index == 1)
+				kvm->arch.reg_filter.tr = filter->mask;
+			else if (index == 2)
+				kvm->arch.reg_filter.gdtr = filter->mask;
+			else if (index == 3)
+				kvm->arch.reg_filter.idtr = filter->mask;
+
+			kvm_filter_all_desc(kvm);
+			break;
+		}
+		case KVM_X86_REG_TYPE_DR: {
+			if (index == 4 || index == 5) {
+				r = -EINVAL;
+				goto fail;
+			}
+
+			kvm->arch.reg_filter.drs[index] = filter->mask & 0x3;
+
+			break;
+		}
+		default: {
+			r = -EOPNOTSUPP;
+			goto fail;
+		}
+		}
+	}
+
+	kfree(regs);
+
+	return r;
+fail:
+	kvm->arch.reg_filter = old_filter;
+	return r;
+}
+
 #ifdef CONFIG_HAVE_KVM_PM_NOTIFIER
 static int kvm_arch_suspend_notifier(struct kvm *kvm)
 {
@@ -8363,6 +8672,116 @@ static u64 mk_cr_64(u64 curr_cr, u32 new_val)
 	return (curr_cr & ~((1ULL << 32) - 1)) | new_val;
 }
 
+int kvm_check_cr(struct kvm_vcpu *vcpu, int cr, u8 mode, u64 value)
+{
+	struct kvm_x86_reg_filter *filter = &vcpu->kvm->arch.reg_filter;
+
+	if (filter->crs[cr] & mode) {
+		if (mode == KVM_X86_REG_WRITE) {
+			if (kvm_reg_user_space(vcpu,
+					       KVM_X86_REG_CR(cr), value,
+					       KVM_EXIT_WRITE_REG,
+					       complete_emulated_wrreg))
+				return X86EMUL_IO_NEEDED;
+		} else {
+			if (kvm_reg_user_space(vcpu,
+					       KVM_X86_REG_CR(cr), value,
+					       KVM_EXIT_READ_REG,
+					       complete_emulated_rdreg))
+				return X86EMUL_IO_NEEDED;
+		}
+
+		return X86EMUL_PROPAGATE_FAULT;
+	}
+
+	return 0;
+}
+
+int kvm_check_dr(struct kvm_vcpu *vcpu, int dr, u8 mode, u64 value) {
+	struct kvm_x86_reg_filter *filter = &vcpu->kvm->arch.reg_filter;
+
+	if (filter->drs[dr] & mode) {
+		if (mode == KVM_X86_REG_WRITE) {
+			if (kvm_reg_user_space(vcpu,
+					       KVM_X86_REG_DR(dr), value,
+					       KVM_EXIT_WRITE_REG,
+					       complete_emulated_wrreg))
+				return X86EMUL_IO_NEEDED;
+		} else {
+			if (kvm_reg_user_space(vcpu,
+					       KVM_X86_REG_DR(dr), value,
+					       KVM_EXIT_READ_REG,
+					       complete_emulated_rdreg))
+				return X86EMUL_IO_NEEDED;
+		}
+
+		return X86EMUL_PROPAGATE_FAULT;
+	}
+
+	return 0;
+}
+
+int kvm_check_desc(struct kvm_vcpu *vcpu, int desc, u8 mode, u64 value)
+{
+	struct kvm_x86_reg_filter *filter = &vcpu->kvm->arch.reg_filter;
+
+	switch (desc) {
+	case 0:
+		if (filter->ldtr & mode)
+			goto filter;
+		break;
+	case 1:
+		if (filter->tr & mode)
+			goto filter;
+		break;
+	case 2:
+		if (filter->gdtr & mode)
+			goto filter;
+		break;
+	case 3:
+		if (filter->idtr & mode)
+			goto filter;
+		break;
+	default:
+		break;
+	}
+
+	return 0;
+filter:
+	if (mode == KVM_X86_REG_WRITE) {
+		if (kvm_reg_user_space(vcpu,
+				       KVM_X86_REG_DESCRIPTOR_TABLE(desc),
+				       value,
+				       KVM_EXIT_WRITE_REG,
+				       complete_emulated_wrreg))
+			return X86EMUL_IO_NEEDED;
+	} else {
+		if (kvm_reg_user_space(vcpu,
+				       KVM_X86_REG_DESCRIPTOR_TABLE(desc),
+				       value,
+				       KVM_EXIT_READ_REG,
+				       complete_emulated_rdreg))
+			return X86EMUL_IO_NEEDED;
+	}
+
+	return X86EMUL_PROPAGATE_FAULT;
+}
+
+int kvm_vm_has_dr_filter(struct kvm *vm)
+{
+	for (int i = 0; i < ARRAY_SIZE(vm->arch.reg_filter.drs); i++) {
+		if (vm->arch.reg_filter.drs[i])
+			return 1;
+	}
+	return 0;
+}
+
+int kvm_vm_has_desc_filter(struct kvm *vm)
+{
+	return vm->arch.reg_filter.ldtr || vm->arch.reg_filter.tr ||
+	       vm->arch.reg_filter.gdtr || vm->arch.reg_filter.idtr;
+}
+
 static unsigned long emulator_get_cr(struct x86_emulate_ctxt *ctxt, int cr)
 {
 	struct kvm_vcpu *vcpu = emul_to_vcpu(ctxt);
@@ -8396,6 +8815,81 @@ static int emulator_set_cr(struct x86_emulate_ctxt *ctxt, int cr, ulong val)
 {
 	struct kvm_vcpu *vcpu = emul_to_vcpu(ctxt);
 	int res = 0;
+
+	switch (cr) {
+	case 0:
+		res = kvm_set_cr0(vcpu, mk_cr_64(kvm_read_cr0(vcpu), val));
+		break;
+	case 2:
+		vcpu->arch.cr2 = val;
+		break;
+	case 3:
+		res = kvm_set_cr3(vcpu, val);
+		break;
+	case 4:
+		res = kvm_set_cr4(vcpu, mk_cr_64(kvm_read_cr4(vcpu), val));
+		break;
+	case 8:
+		res = kvm_set_cr8(vcpu, val);
+		break;
+	default:
+		kvm_err("%s: unexpected cr %u\n", __func__, cr);
+		res = -1;
+	}
+
+	return res;
+}
+
+static int emulator_get_cr_with_filter(struct x86_emulate_ctxt *ctxt, int cr,
+				       unsigned long *pdata)
+{
+	struct kvm_vcpu *vcpu = emul_to_vcpu(ctxt);
+	unsigned long value;
+	int res;
+
+	switch (cr) {
+	case 0:
+		value = kvm_read_cr0(vcpu);
+		break;
+	case 2:
+		value = vcpu->arch.cr2;
+		break;
+	case 3:
+		value = kvm_read_cr3(vcpu);
+		break;
+	case 4:
+		value = kvm_read_cr4(vcpu);
+		break;
+	case 8:
+		value = kvm_get_cr8(vcpu);
+		break;
+	default:
+		kvm_err("%s: unexpected cr %u\n", __func__, cr);
+		return X86EMUL_PROPAGATE_FAULT;
+	}
+
+	res = kvm_check_cr(vcpu, cr, KVM_X86_REG_READ, value);
+	if (res != 0) {
+		trace_kvm_cr_read(cr, value);
+		return res;
+	}
+
+	*pdata = value;
+
+	return 0;
+}
+
+static int emulator_set_cr_with_filter(struct x86_emulate_ctxt *ctxt, int cr,
+				       ulong val)
+{
+	struct kvm_vcpu *vcpu = emul_to_vcpu(ctxt);
+	int res = 0;
+
+	res = kvm_check_cr(vcpu, cr, KVM_X86_REG_WRITE, val);
+	if (res != 0) {
+		trace_kvm_cr_write(cr, val);
+		return res;
+	}
 
 	switch (cr) {
 	case 0:
@@ -8704,6 +9198,8 @@ static const struct x86_emulate_ops emulate_ops = {
 	.set_idt	     = emulator_set_idt,
 	.get_cr              = emulator_get_cr,
 	.set_cr              = emulator_set_cr,
+	.get_cr_with_filter = emulator_get_cr_with_filter,
+	.set_cr_with_filter = emulator_set_cr_with_filter,
 	.cpl                 = emulator_get_cpl,
 	.get_dr              = emulator_get_dr,
 	.set_dr              = emulator_set_dr,
