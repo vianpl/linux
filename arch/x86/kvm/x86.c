@@ -1148,11 +1148,14 @@ static int complete_emulated_rdreg(struct kvm_vcpu *vcpu)
 
 static int complete_emulated_wrreg(struct kvm_vcpu *vcpu)
 {
-	if (vcpu->run->reg.error)
-		return kvm_skip_emulated_instruction(vcpu);
+	if (vcpu->run->reg.error) {
+		vcpu->run->reg.error = 0;
+		return 1; // kvm_skip_emulated_instruction(vcpu);
+	}
 
 	int r = 0;
 
+	trace_printk("write, reg %llx\n", vcpu->run->reg.reg);
 	switch (vcpu->run->reg.reg) {
 	case KVM_X86_REG_CR(0): {
 		kvm_set_cr0(vcpu, vcpu->run->reg.data);
@@ -8749,6 +8752,8 @@ int kvm_check_desc(struct kvm_vcpu *vcpu, int desc, u8 mode, u64 value)
 	return 0;
 filter:
 	if (mode == KVM_X86_REG_WRITE) {
+		trace_printk("write, desc %d reg %llx, val %llx\n", desc,
+			     KVM_X86_REG_DESCRIPTOR_TABLE(desc), value);
 		if (kvm_reg_user_space(vcpu,
 				       KVM_X86_REG_DESCRIPTOR_TABLE(desc),
 				       value,
