@@ -16,7 +16,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <linux/kernel.h>
-#include <linux/memfd.h>
 
 #define KVM_UTIL_MIN_PFN	2
 
@@ -35,10 +34,6 @@ int open_path_or_exit(const char *path, int flags)
 	TEST_ASSERT(fd >= 0, "Failed to open '%s'", path);
 
 	return fd;
-}
-
-static inline int memfd_create(const char *name, unsigned int flags) {
-    return syscall(SYS_memfd_create, name, flags);
 }
 
 /*
