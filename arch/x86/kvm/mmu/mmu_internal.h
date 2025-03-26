@@ -192,6 +192,7 @@ struct kvm_page_fault {
 	const gpa_t addr;
 	const u64 error_code;
 	const bool prefetch;
+	const u8 insn_len;
 
 	/* Derived from error_code.  */
 	const bool exec;
@@ -288,16 +289,18 @@ static inline void kvm_mmu_prepare_memory_fault_exit(struct kvm_vcpu *vcpu,
 {
 	kvm_prepare_memory_fault_exit(vcpu, fault->gfn << PAGE_SHIFT,
 				      PAGE_SIZE, fault->write, fault->exec,
-				      fault->is_private);
+				      fault->is_private, fault->insn_len);
 }
 
 static inline int kvm_mmu_do_page_fault(struct kvm_vcpu *vcpu, gpa_t cr2_or_gpa,
 					u64 err, bool prefetch,
-					int *emulation_type, u8 *level)
+					int *emulation_type, u8 *level,
+					u8 insn_len)
 {
 	struct kvm_page_fault fault = {
 		.addr = cr2_or_gpa,
 		.error_code = err,
+		.insn_len = insn_len,
 		.exec = err & PFERR_FETCH_MASK,
 		.write = err & PFERR_WRITE_MASK,
 		.present = err & PFERR_PRESENT_MASK,

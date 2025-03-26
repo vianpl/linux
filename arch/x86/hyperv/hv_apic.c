@@ -121,9 +121,8 @@ static bool __send_ipi_mask_ex(const struct cpumask *mask, int vector,
 	if (unlikely(!ipi_arg))
 		goto ipi_mask_ex_done;
 
+	memset(ipi_arg, 0, sizeof(*ipi_arg));
 	ipi_arg->vector = vector;
-	ipi_arg->reserved = 0;
-	ipi_arg->vp_set.valid_bank_mask = 0;
 
 	/*
 	 * Use HV_GENERIC_SET_ALL and avoid converting cpumask to VP_SET
