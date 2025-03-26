@@ -1451,7 +1451,7 @@ static int kvm_hv_set_msr_pw(struct kvm_vcpu *vcpu, u32 msr, u64 data,
 			return kvm_hv_msr_set_crash_ctl(kvm, data);
 
 		if (data & HV_CRASH_CTL_CRASH_NOTIFY) {
-			vcpu_debug(vcpu, "hv crash (0x%llx 0x%llx 0x%llx 0x%llx 0x%llx)\n",
+			vcpu_err(vcpu, "hv crash (0x%llx 0x%llx 0x%llx 0x%llx 0x%llx)\n",
 				   hv->hv_crash_param[0],
 				   hv->hv_crash_param[1],
 				   hv->hv_crash_param[2],
@@ -2822,13 +2822,19 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 	case HVCALL_MODIFY_VTL_PROTECTION_MASK:
 	case HVCALL_ENABLE_PARTITION_VTL:
 	case HVCALL_ENABLE_VP_VTL:
-	case HVCALL_VTL_CALL:
-	case HVCALL_VTL_RETURN:
 	case HVCALL_GET_VP_REGISTERS:
 	case HVCALL_SET_VP_REGISTERS:
 	case HVCALL_TRANSLATE_VIRTUAL_ADDRESS:
 	case HVCALL_START_VP:
 	case HVCALL_GET_VP_ID_FROM_APIC_ID:
+		goto hypercall_userspace_exit;
+	case HVCALL_VTL_CALL:
+	case HVCALL_VTL_RETURN:
+		trace_printk("-------------------------------------------KVM:0x%llx|VCPU%d---------------------------------\n", (long long)vcpu->kvm, vcpu->vcpu_id);
+		trace_printk("Exiting to user-space with code 0x%x\n", hc.code);
+		dump_ftrace_vmcs(vcpu);
+		dump_ftrace_vcpu_state(vcpu);
+		trace_printk("---------------------------------------------------------------------------\n");
 		goto hypercall_userspace_exit;
 	default:
 		ret = HV_STATUS_INVALID_HYPERCALL_CODE;
@@ -3127,4 +3133,26 @@ void kvm_hv_vcpu_unsuspend_tlb_flush(struct kvm_vcpu *vcpu)
 	}
 
 	kvm_make_vcpus_request_mask(vcpu->kvm, KVM_REQ_EVENT, vcpu_mask);
+}
+
+static bool hv_read_vtl_control(struct kvm_vcpu *vcpu, struct hv_vp_vtl_control *vtl_control)
+{
+       /* VTL control is a part of VP assist page, which is accessed through pv_eoi */
+	if (!vcpu->arch.pv_eoi.data.len ||
+	     vcpu->arch.pv_eoi.data.len < sizeof(struct hv_vp_assist_page))
+		return 0;
+
+	return !kvm_read_guest_offset_cached(vcpu->kvm, &vcpu->arch.pv_eoi.data, vtl_control,
+			offsetof(struct hv_vp_assist_page, vtl_control), sizeof(*vtl_control));
+}
+
+void dump_ftrace_vcpu_hyperv(struct kvm_vcpu *vcpu)
+{
+	struct hv_vp_vtl_control vtl_control;
+
+	trace_printk("*** HyperV VTL state ***\n");
+	if (hv_read_vtl_control(vcpu, &vtl_control))
+		trace_printk("entry_reason 0x%x, vina %d, rax %llx, rcx %llx\n",
+			     vtl_control.vtl_entry_reason, vtl_control.vina_asserted,
+			     vtl_control.vtl_ret_x64rax, vtl_control.vtl_ret_x64rcx);
 }
