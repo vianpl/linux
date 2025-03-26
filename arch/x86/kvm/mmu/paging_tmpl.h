@@ -198,7 +198,8 @@ static inline unsigned FNAME(gpte_access)(u64 gpte)
 static int FNAME(update_accessed_dirty_bits)(struct kvm_vcpu *vcpu,
 					     struct kvm_mmu *mmu,
 					     struct guest_walker *walker,
-					     gpa_t addr, int write_fault)
+					     gpa_t addr, int write_fault,
+					     u16 *status)
 {
 	unsigned level, index;
 	pt_element_t pte, orig_pte;
@@ -244,8 +245,11 @@ static int FNAME(update_accessed_dirty_bits)(struct kvm_vcpu *vcpu,
 		 * overwrite the read-only memory to set the accessed and dirty
 		 * bits.
 		 */
-		if (unlikely(!walker->pte_writable[level - 1]))
+		if (unlikely(!walker->pte_writable[level - 1])) {
+			if (status)
+				*status |= PWALK_STATUS_READ_ONLY_PTE_GPA;
 			continue;
+		}
 
 		ret = __try_cmpxchg_user(ptep_user, &orig_pte, pte, fault);
 		if (ret)
@@ -302,7 +306,8 @@ static inline bool FNAME(is_last_gpte)(struct kvm_mmu *mmu,
  */
 static int FNAME(walk_addr_generic)(struct guest_walker *walker,
 				    struct kvm_vcpu *vcpu, struct kvm_mmu *mmu,
-				    gpa_t addr, u64 access)
+				    gpa_t addr, u64 access, u64 flags,
+				    u16 *status)
 {
 	int ret;
 	pt_element_t pte;
@@ -318,6 +323,9 @@ static int FNAME(walk_addr_generic)(struct guest_walker *walker,
 	const int write_fault = access & PFERR_WRITE_MASK;
 	const int user_fault  = access & PFERR_USER_MASK;
 	const int fetch_fault = access & PFERR_FETCH_MASK;
+	const int set_accessed = flags & PWALK_SET_ACCESSED;
+	const int set_dirty = flags & PWALK_SET_DIRTY;
+	const int force_set = flags & PWALK_FORCE_SET_ACCESSED;
 	u16 errcode = 0;
 	gpa_t real_gpa;
 	gfn_t gfn;
@@ -340,6 +348,11 @@ retry_walk:
 	}
 #endif
 	walker->max_level = walker->level;
+
+	walker->fault.flags = 0;
+
+	if (status)
+		*status = 0;
 
 	/*
 	 * FIXME: on Intel processors, loads of the PDPTE registers for PAE paging
@@ -379,7 +392,8 @@ retry_walk:
 		walker->pte_gpa[walker->level - 1] = pte_gpa;
 
 		real_gpa = kvm_translate_gpa(vcpu, mmu, gfn_to_gpa(table_gfn),
-					     nested_access, &walker->fault);
+					     nested_access, flags,
+					     &walker->fault, status);
 
 		/*
 		 * FIXME: This can happen if emulation (for of an INS/OUTS
@@ -392,11 +406,13 @@ retry_walk:
 		 * fields.
 		 */
 		if (unlikely(real_gpa == INVALID_GPA))
-			return 0;
+			goto late_exit;
 
 		slot = kvm_vcpu_gfn_to_memslot(vcpu, gpa_to_gfn(real_gpa));
-		if (!kvm_is_visible_memslot(slot))
+		if (!kvm_is_visible_memslot(slot)) {
+			walker->fault.flags = KVM_X86_UNMAPPED_PTE_GPA;
 			goto error;
+		}
 
 		host_addr = gfn_to_hva_memslot_prot(slot, gpa_to_gfn(real_gpa),
 					    &walker->pte_writable[walker->level - 1]);
@@ -433,6 +449,12 @@ retry_walk:
 			goto error;
 		}
 
+		/* Convert to ACC_*_MASK flags for struct guest_walker.  */
+		walker->pte_access = FNAME(gpte_access)(pte_access ^ walk_nx_mask);
+		errcode = permission_fault(vcpu, mmu, walker->pte_access, pte_pkey, access);
+		if (unlikely(errcode))
+			goto error;
+
 		walker->ptes[walker->level - 1] = pte;
 
 		/* Convert to ACC_*_MASK flags for struct guest_walker.  */
@@ -442,12 +464,6 @@ retry_walk:
 	pte_pkey = FNAME(gpte_pkeys)(vcpu, pte);
 	accessed_dirty = have_ad ? pte_access & PT_GUEST_ACCESSED_MASK : 0;
 
-	/* Convert to ACC_*_MASK flags for struct guest_walker.  */
-	walker->pte_access = FNAME(gpte_access)(pte_access ^ walk_nx_mask);
-	errcode = permission_fault(vcpu, mmu, walker->pte_access, pte_pkey, access);
-	if (unlikely(errcode))
-		goto error;
-
 	gfn = gpte_to_gfn_lvl(pte, walker->level);
 	gfn += (addr & PT_LVL_OFFSET_MASK(walker->level)) >> PAGE_SHIFT;
 
@@ -456,9 +472,10 @@ retry_walk:
 		gfn += pse36_gfn_delta(pte);
 #endif
 
-	real_gpa = kvm_translate_gpa(vcpu, mmu, gfn_to_gpa(gfn), access, &walker->fault);
+	real_gpa = kvm_translate_gpa(vcpu, mmu, gfn_to_gpa(gfn), access, flags,
+				     &walker->fault, status);
 	if (real_gpa == INVALID_GPA)
-		return 0;
+		goto late_exit;
 
 	walker->gfn = real_gpa >> PAGE_SHIFT;
 
@@ -473,9 +490,10 @@ retry_walk:
 		accessed_dirty &= pte >>
 			(PT_GUEST_DIRTY_SHIFT - PT_GUEST_ACCESSED_SHIFT);
 
-	if (unlikely(!accessed_dirty)) {
-		ret = FNAME(update_accessed_dirty_bits)(vcpu, mmu, walker,
-							addr, write_fault);
+	if (unlikely(set_accessed && !accessed_dirty)) {
+		ret = FNAME(update_accessed_dirty_bits)(vcpu, mmu, walker, addr,
+							write_fault && set_dirty,
+							status);
 		if (unlikely(ret < 0))
 			goto error;
 		else if (ret)
@@ -492,6 +510,7 @@ error:
 	walker->fault.vector = PF_VECTOR;
 	walker->fault.error_code_valid = true;
 	walker->fault.error_code = errcode;
+	walker->fault.gpa_page_fault = real_gpa;
 
 #if PTTYPE == PTTYPE_EPT
 	/*
@@ -530,14 +549,26 @@ error:
 	walker->fault.async_page_fault = false;
 
 	trace_kvm_mmu_walker_error(walker->fault.error_code);
+
+late_exit:
+	if (force_set) {
+		/*
+		 * Don't set the accessed bit for the page table that caused the
+		 * walk to fail.
+		 */
+		++walker->level;
+		FNAME(update_accessed_dirty_bits)(vcpu, mmu, walker, addr,
+		 false, status);
+		--walker->level;
+	}
 	return 0;
 }
 
-static int FNAME(walk_addr)(struct guest_walker *walker,
-			    struct kvm_vcpu *vcpu, gpa_t addr, u64 access)
+static int FNAME(walk_addr)(struct guest_walker *walker, struct kvm_vcpu *vcpu,
+			    gpa_t addr, u64 access, u64 flags)
 {
 	return FNAME(walk_addr_generic)(walker, vcpu, vcpu->arch.mmu, addr,
-					access);
+					access, flags, NULL);
 }
 
 static bool
@@ -802,7 +833,8 @@ static int FNAME(page_fault)(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault
 	 * The bit needs to be cleared before walking guest page tables.
 	 */
 	r = FNAME(walk_addr)(&walker, vcpu, fault->addr,
-			     fault->error_code & ~PFERR_RSVD_MASK);
+			     fault->error_code & ~PFERR_RSVD_MASK,
+			     PWALK_SET_ALL);
 
 	/*
 	 * The page is not mapped by the guest.  Let the guest handle it.
@@ -887,8 +919,8 @@ static gpa_t FNAME(get_level1_sp_gpa)(struct kvm_mmu_page *sp)
 
 /* Note, @addr is a GPA when gva_to_gpa() translates an L2 GPA to an L1 GPA. */
 static gpa_t FNAME(gva_to_gpa)(struct kvm_vcpu *vcpu, struct kvm_mmu *mmu,
-			       gpa_t addr, u64 access,
-			       struct x86_exception *exception)
+			       gpa_t addr, u64 access, u64 flags,
+			       struct x86_exception *exception, u16 *status)
 {
 	struct guest_walker walker;
 	gpa_t gpa = INVALID_GPA;
@@ -899,7 +931,7 @@ static gpa_t FNAME(gva_to_gpa)(struct kvm_vcpu *vcpu, struct kvm_mmu *mmu,
 	WARN_ON_ONCE((addr >> 32) && mmu == vcpu->arch.walk_mmu);
 #endif
 
-	r = FNAME(walk_addr_generic)(&walker, vcpu, mmu, addr, access);
+	r = FNAME(walk_addr_generic)(&walker, vcpu, mmu, addr, access, flags, status);
 
 	if (r) {
 		gpa = gfn_to_gpa(walker.gfn);
