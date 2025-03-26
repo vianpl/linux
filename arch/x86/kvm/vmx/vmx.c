@@ -7638,7 +7638,7 @@ fastpath_t vmx_vcpu_run(struct kvm_vcpu *vcpu, bool force_immediate_exit)
 	if (vcpu->run->dump_state_on_run) {
 		trace_printk("-------------------------------------------KVM:0x%llx|VCPU%d---------------------------------\n", (long long)vcpu->kvm, vcpu->vcpu_id);
 		trace_printk("Entering guest\n");
-		dump_ftrace_vmcs(vcpu);
+		//dump_ftrace_vmcs(vcpu);
 		dump_ftrace_vcpu_state(vcpu);
 		trace_printk("---------------------------------------------------------------------------\n");
 		vcpu->run->dump_state_on_run = false;
@@ -7650,7 +7650,7 @@ fastpath_t vmx_vcpu_run(struct kvm_vcpu *vcpu, bool force_immediate_exit)
 	if (vcpu->run->dump_state_on_run) {
 		trace_printk("-------------------------------------------KVM:0x%llx|VCPU%d---------------------------------\n", (long long)vcpu->kvm, vcpu->vcpu_id);
 		trace_printk("Exiting guest\n");
-		dump_ftrace_vmcs(vcpu);
+		//dump_ftrace_vmcs(vcpu);
 		dump_ftrace_vcpu_state(vcpu);
 		trace_printk("---------------------------------------------------------------------------\n");
 		vcpu->run->dump_state_on_run = false;

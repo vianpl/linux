@@ -2832,7 +2832,7 @@ int kvm_hv_hypercall(struct kvm_vcpu *vcpu)
 	case HVCALL_VTL_RETURN:
 		trace_printk("-------------------------------------------KVM:0x%llx|VCPU%d---------------------------------\n", (long long)vcpu->kvm, vcpu->vcpu_id);
 		trace_printk("Exiting to user-space with code 0x%x\n", hc.code);
-		dump_ftrace_vmcs(vcpu);
+		//dump_ftrace_vmcs(vcpu);
 		dump_ftrace_vcpu_state(vcpu);
 		trace_printk("---------------------------------------------------------------------------\n");
 		goto hypercall_userspace_exit;
