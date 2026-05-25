@@ -1187,3 +1187,136 @@ void arch_haltpoll_disable(unsigned int cpu)
 }
 EXPORT_SYMBOL_GPL(arch_haltpoll_disable);
 #endif
+
+/*
+ * Guest -> hypervisor low-latency vCPU hint.
+ *
+ * Userspace writes a cpulist to /proc/sys/kvm/low_latency_vcpus; on each
+ * write we re-issue KVM_HC_GUEST_HINT(KVM_HINT_LOW_LATENCY_VCPU). The knob
+ * is registered only if the host advertises both the hypercall feature
+ * (KVM_FEATURE_GUEST_HINTS) and the LOW_LATENCY_VCPU type via the query
+ * subop.
+ */
+static struct cpumask kvm_low_latency_vcpus_mask __read_mostly;
+static unsigned long *kvm_low_latency_vcpus_bits =
+	cpumask_bits(&kvm_low_latency_vcpus_mask);
+static DEFINE_MUTEX(kvm_low_latency_vcpus_mutex);
+
+static long kvm_hint_hypercall_errno(unsigned long ret)
+{
+	long sret = (long)ret;
+
+	if (sret == -KVM_ENOSYS)
+		return -ENOSYS;
+	return sret;
+}
+
+static int kvm_hint_query_supports(unsigned int type)
+{
+	struct kvm_hint_query_response *resp;
+	unsigned long ret;
+	int word, bit;
+	int rc;
+
+	resp = (struct kvm_hint_query_response *)get_zeroed_page(GFP_KERNEL);
+	if (!resp)
+		return -ENOMEM;
+
+	resp->nr_types = 64;
+	ret = kvm_hypercall4(KVM_HC_GUEST_HINT, KVM_HINT_QUERY,
+			     virt_to_phys(resp),
+			     sizeof(*resp) + sizeof(resp->bitmap[0]), 0);
+	rc = kvm_hint_hypercall_errno(ret);
+	if (rc)
+		goto out;
+
+	word = type / 64;
+	bit = type % 64;
+	rc = (resp->bitmap[word] & BIT_ULL(bit)) ? 0 : -ENOTSUPP;
+out:
+	free_page((unsigned long)resp);
+	return rc;
+}
+
+static int kvm_send_low_latency_vcpus_hint(const struct cpumask *mask)
+{
+	struct kvm_hint_low_latency_vcpu *hint;
+	unsigned int nr = nr_cpu_ids;
+	size_t bitmap_words = BITS_TO_U64(nr);
+	size_t len = sizeof(*hint) + bitmap_words * sizeof(__u64);
+	unsigned long ret;
+	unsigned int cpu;
+	int rc;
+
+	if (len > PAGE_SIZE)
+		return -EINVAL;
+
+	hint = (struct kvm_hint_low_latency_vcpu *)get_zeroed_page(GFP_KERNEL);
+	if (!hint)
+		return -ENOMEM;
+
+	hint->flags = 0;
+	hint->nr_vcpus = nr;
+	for_each_cpu(cpu, mask) {
+		if (cpu >= nr)
+			break;
+		hint->bitmap[cpu / 64] |= BIT_ULL(cpu % 64);
+	}
+
+	ret = kvm_hypercall4(KVM_HC_GUEST_HINT, KVM_HINT_LOW_LATENCY_VCPU,
+			     virt_to_phys(hint), len, 0);
+	rc = kvm_hint_hypercall_errno(ret);
+
+	free_page((unsigned long)hint);
+	return rc;
+}
+
+static int proc_kvm_low_latency_vcpus(const struct ctl_table *table, int dir,
+				      void *buffer, size_t *lenp, loff_t *ppos)
+{
+	int err;
+
+	mutex_lock(&kvm_low_latency_vcpus_mutex);
+
+	err = proc_do_large_bitmap(table, dir, buffer, lenp, ppos);
+	if (!err && SYSCTL_USER_TO_KERN(dir)) {
+		cpumask_and(&kvm_low_latency_vcpus_mask,
+			    &kvm_low_latency_vcpus_mask, cpu_possible_mask);
+		err = kvm_send_low_latency_vcpus_hint(&kvm_low_latency_vcpus_mask);
+	}
+
+	mutex_unlock(&kvm_low_latency_vcpus_mutex);
+	return err;
+}
+
+static const struct ctl_table kvm_guest_sysctls[] = {
+	{
+		.procname	= "low_latency_vcpus",
+		.data		= &kvm_low_latency_vcpus_bits,
+		.maxlen		= NR_CPUS,
+		.mode		= 0644,
+		.proc_handler	= proc_kvm_low_latency_vcpus,
+	},
+};
+
+static int __init kvm_guest_register_sysctls(void)
+{
+	int rc;
+
+	if (!kvm_para_available() || nopv)
+		return 0;
+	if (!kvm_para_has_feature(KVM_FEATURE_GUEST_HINTS)) {
+		pr_info("KVM_FEATURE_GUEST_HINTS not advertised by host\n");
+		return 0;
+	}
+	rc = kvm_hint_query_supports(KVM_HINT_LOW_LATENCY_VCPU);
+	if (rc) {
+		pr_info("low-latency-vCPU hint unsupported (%d)\n", rc);
+		return 0;
+	}
+
+	register_sysctl_init("kvm", kvm_guest_sysctls);
+	pr_info("registered /proc/sys/kvm/low_latency_vcpus\n");
+	return 0;
+}
+late_initcall(kvm_guest_register_sysctls);
