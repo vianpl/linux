@@ -190,3 +190,36 @@ the KVM_CAP_EXIT_HYPERCALL capability. Userspace must enable that capability
 before advertising KVM_FEATURE_HC_MAP_GPA_RANGE in the guest CPUID.  In
 addition, if the guest supports KVM_FEATURE_MIGRATION_CONTROL, userspace
 must also set up an MSR filter to process writes to MSR_KVM_MIGRATION_CONTROL.
+
+10. KVM_HC_GUEST_HINT
+---------------------
+:Architecture: x86
+:Status: active
+:Purpose: Pass a scheduling/configuration hint from the guest to the
+          hypervisor.
+
+a0: hint type (KVM_HINT_*)
+a1: guest physical address of payload (must be page-aligned)
+a2: payload length in bytes (1..PAGE_SIZE)
+a3: reserved (must be zero)
+
+Defined hint types:
+
+  * KVM_HINT_QUERY (0): the payload is filled by userspace with
+    struct kvm_hint_query_response, advertising which other hint types
+    userspace will accept.
+  * KVM_HINT_LOW_LATENCY_VCPU (1): the payload is
+    struct kvm_hint_low_latency_vcpu describing which vCPUs are
+    latency-sensitive ("isolated") versus available for housekeeping
+    work.
+
+KVM validates only the framing (page-aligned gpa, length within a page,
+reserved arg zero) and forwards the hypercall to userspace via
+KVM_EXIT_HYPERCALL. The semantics of every hint type, including which
+types are accepted, live entirely in userspace.
+
+**Implementation note**: this hypercall is implemented in userspace via
+the KVM_CAP_EXIT_HYPERCALL capability. Userspace must enable that
+capability with BIT(KVM_HC_GUEST_HINT) before advertising
+KVM_FEATURE_GUEST_HINTS in the guest CPUID. Without the cap bit the
+hypercall returns -KVM_ENOSYS to the guest.

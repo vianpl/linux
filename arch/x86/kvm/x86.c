@@ -119,7 +119,8 @@ u64 __read_mostly efer_reserved_bits = ~((u64)(EFER_SCE | EFER_LME | EFER_LMA));
 static u64 __read_mostly efer_reserved_bits = ~((u64)EFER_SCE);
 #endif
 
-#define KVM_EXIT_HYPERCALL_VALID_MASK (1 << KVM_HC_MAP_GPA_RANGE)
+#define KVM_EXIT_HYPERCALL_VALID_MASK ((1 << KVM_HC_MAP_GPA_RANGE) | \
+				       (1 << KVM_HC_GUEST_HINT))
 
 #define KVM_CAP_PMU_VALID_MASK KVM_PMU_CAP_DISABLE
 
@@ -10511,6 +10512,38 @@ int ____kvm_emulate_hypercall(struct kvm_vcpu *vcpu, int cpl,
 		vcpu->run->hypercall.args[1]  = npages;
 		vcpu->run->hypercall.args[2]  = attrs;
 		vcpu->run->hypercall.flags    = 0;
+		if (op_64_bit)
+			vcpu->run->hypercall.flags |= KVM_EXIT_HYPERCALL_LONG_MODE;
+
+		WARN_ON_ONCE(vcpu->run->hypercall.flags & KVM_EXIT_HYPERCALL_MBZ);
+		vcpu->arch.complete_userspace_io = complete_hypercall;
+		return 0;
+	}
+	case KVM_HC_GUEST_HINT: {
+		u64 type = a0, gpa = a1, len = a2;
+
+		ret = -KVM_ENOSYS;
+		if (!user_exit_on_hypercall(vcpu->kvm, KVM_HC_GUEST_HINT))
+			break;
+
+		/*
+		 * KVM only validates the framing (page-aligned gpa, length
+		 * within a single page). Type semantics, including which
+		 * types are supported and which discovery payload format
+		 * to fill, are owned by userspace.
+		 */
+		if (!PAGE_ALIGNED(gpa) || !len || len > PAGE_SIZE || a3) {
+			ret = -KVM_EINVAL;
+			break;
+		}
+
+		vcpu->run->exit_reason       = KVM_EXIT_HYPERCALL;
+		vcpu->run->hypercall.nr      = KVM_HC_GUEST_HINT;
+		vcpu->run->hypercall.ret     = 0;
+		vcpu->run->hypercall.args[0] = type;
+		vcpu->run->hypercall.args[1] = gpa;
+		vcpu->run->hypercall.args[2] = len;
+		vcpu->run->hypercall.flags   = 0;
 		if (op_64_bit)
 			vcpu->run->hypercall.flags |= KVM_EXIT_HYPERCALL_LONG_MODE;
 

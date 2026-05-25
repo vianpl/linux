@@ -103,6 +103,12 @@ KVM_FEATURE_HC_MAP_GPA_RANGE       16          guest checks this feature bit bef
 KVM_FEATURE_MIGRATION_CONTROL      17          guest checks this feature bit before
                                                using MSR_KVM_MIGRATION_CONTROL
 
+KVM_FEATURE_GUEST_HINTS          18          guest checks this feature bit before
+                                               using the KVM_HC_GUEST_HINT
+                                               hypercall to pass scheduling and
+                                               configuration hints to the
+                                               hypervisor
+
 KVM_FEATURE_CLOCKSOURCE_STABLE_BIT 24          host will warn if no guest-side
                                                per-cpu warps are expected in
                                                kvmclock
