@@ -5,6 +5,13 @@
 #include <linux/init.h>
 #include <linux/tick.h>
 
+#ifdef CONFIG_KVM_GUEST
+void kvm_guest_isolation_changed(const struct cpumask *isol_mask);
+#else
+static inline void
+kvm_guest_isolation_changed(const struct cpumask *isol_mask) { }
+#endif
+
 enum hk_type {
 	/* Inverse of boot-time isolcpus= argument */
 	HK_TYPE_DOMAIN_BOOT,

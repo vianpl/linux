@@ -157,6 +157,8 @@ int housekeeping_update(struct cpumask *isol_mask)
 	err = kthreads_update_housekeeping();
 	WARN_ON_ONCE(err < 0);
 
+	kvm_guest_isolation_changed(isol_mask);
+
 	kfree(old);
 
 	return 0;

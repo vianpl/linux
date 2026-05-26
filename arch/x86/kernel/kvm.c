@@ -31,6 +31,7 @@
 #include <linux/efi.h>
 #include <linux/kvm_types.h>
 #include <linux/sched/cputime.h>
+#include <linux/sched/isolation.h>
 #include <asm/timer.h>
 #include <asm/cpu.h>
 #include <asm/traps.h>
@@ -1187,3 +1188,134 @@ void arch_haltpoll_disable(unsigned int cpu)
 }
 EXPORT_SYMBOL_GPL(arch_haltpoll_disable);
 #endif
+
+/*
+ * Guest -> hypervisor low-latency vCPU hint, driven by cgroup v2 isolated
+ * partitions (and the boot-time isolcpus= argument).
+ *
+ * housekeeping_update() is the canonical "the set of isolated CPUs has
+ * changed" event in the kernel. cgroup v2 calls it through
+ * cpuset_update_sd_hk_unlock() whenever a cpuset partition's isolated
+ * state changes, after dropping cpuset_mutex and cpus_read_lock, so it
+ * is safe to allocate, sleep, and issue the hypercall here.
+ *
+ * The hypercall is gated by KVM_FEATURE_GUEST_HINTS in CPUID and the
+ * KVM_HINT_LOW_LATENCY_VCPU type being advertised via KVM_HINT_QUERY.
+ * If either gate fails, kvm_guest_isolation_changed() becomes a no-op.
+ */
+
+static bool kvm_low_latency_vcpus_supported __read_mostly;
+
+static long kvm_hint_hypercall_errno(unsigned long ret)
+{
+	long sret = (long)ret;
+
+	if (sret == -KVM_ENOSYS)
+		return -ENOSYS;
+	return sret;
+}
+
+static int kvm_hint_query_supports(unsigned int type)
+{
+	struct kvm_hint_query_response *resp;
+	unsigned long ret;
+	int word, bit;
+	int rc;
+
+	resp = (struct kvm_hint_query_response *)get_zeroed_page(GFP_KERNEL);
+	if (!resp)
+		return -ENOMEM;
+
+	resp->nr_types = 64;
+	ret = kvm_hypercall4(KVM_HC_GUEST_HINT, KVM_HINT_QUERY,
+			     virt_to_phys(resp),
+			     sizeof(*resp) + sizeof(resp->bitmap[0]), 0);
+	rc = kvm_hint_hypercall_errno(ret);
+	if (rc)
+		goto out;
+
+	word = type / 64;
+	bit = type % 64;
+	rc = (resp->bitmap[word] & BIT_ULL(bit)) ? 0 : -ENOTSUPP;
+out:
+	free_page((unsigned long)resp);
+	return rc;
+}
+
+static int kvm_send_low_latency_vcpus_hint(const struct cpumask *mask)
+{
+	struct kvm_hint_low_latency_vcpu *hint;
+	unsigned int nr = nr_cpu_ids;
+	size_t bitmap_words = BITS_TO_U64(nr);
+	size_t len = sizeof(*hint) + bitmap_words * sizeof(__u64);
+	unsigned long ret;
+	unsigned int cpu;
+	int rc;
+
+	if (len > PAGE_SIZE)
+		return -EINVAL;
+
+	hint = (struct kvm_hint_low_latency_vcpu *)get_zeroed_page(GFP_KERNEL);
+	if (!hint)
+		return -ENOMEM;
+
+	hint->flags = 0;
+	hint->nr_vcpus = nr;
+	for_each_cpu(cpu, mask) {
+		if (cpu >= nr)
+			break;
+		hint->bitmap[cpu / 64] |= BIT_ULL(cpu % 64);
+	}
+
+	ret = kvm_hypercall4(KVM_HC_GUEST_HINT, KVM_HINT_LOW_LATENCY_VCPU,
+			     virt_to_phys(hint), len, 0);
+	rc = kvm_hint_hypercall_errno(ret);
+
+	free_page((unsigned long)hint);
+	return rc;
+}
+
+void kvm_guest_isolation_changed(const struct cpumask *isol_mask)
+{
+	if (!kvm_low_latency_vcpus_supported)
+		return;
+
+	WARN_ON_ONCE(kvm_send_low_latency_vcpus_hint(isol_mask));
+}
+
+static int __init kvm_guest_init_isolation_hint(void)
+{
+	cpumask_var_t isol;
+	int rc;
+
+	if (!kvm_para_available() || nopv)
+		return 0;
+	if (!kvm_para_has_feature(KVM_FEATURE_GUEST_HINTS)) {
+		pr_info("KVM_FEATURE_GUEST_HINTS not advertised by host\n");
+		return 0;
+	}
+	rc = kvm_hint_query_supports(KVM_HINT_LOW_LATENCY_VCPU);
+	if (rc) {
+		pr_info("low-latency-vCPU hint unsupported (%d)\n", rc);
+		return 0;
+	}
+
+	kvm_low_latency_vcpus_supported = true;
+
+	/*
+	 * Send an initial hint reflecting the current isolated set
+	 * (which at this point is driven by the boot-time isolcpus=
+	 * argument). Subsequent updates flow through
+	 * kvm_guest_isolation_changed() from housekeeping_update().
+	 */
+	if (!alloc_cpumask_var(&isol, GFP_KERNEL))
+		return 0;
+	cpumask_andnot(isol, cpu_possible_mask,
+		       housekeeping_cpumask(HK_TYPE_DOMAIN));
+	kvm_guest_isolation_changed(isol);
+	free_cpumask_var(isol);
+
+	pr_info("low-latency-vCPU hint driven by cpuset isolated partitions\n");
+	return 0;
+}
+late_initcall(kvm_guest_init_isolation_hint);
