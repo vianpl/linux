@@ -216,6 +216,7 @@ static void test_collapse(int fd, u64 flags)
 	 * mapping beyond shared ranges into host userspace page
 	 * tables.
 	 */
+#define MADV_COLLAPSE 25
 	TEST_ASSERT_EQ(madvise(mem, pmd_size, MADV_COLLAPSE), -1);
 	TEST_ASSERT_EQ(errno, EINVAL);
 
